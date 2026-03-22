@@ -40,10 +40,7 @@ try {
 // --- WebSocket ---
 const wsServer = new GameWebSocketServer(server, game, game.conversations);
 
-// Broadcast tick events to WebSocket clients
-game.on('*', () => {
-  wsServer.broadcast({ type: 'tick', data: { tick: game.currentTick } });
-});
+// No wildcard broadcast — the client polls /api/debug/players for updates.
 
 // --- Routes ---
 app.get('/health', async (_req, res) => {

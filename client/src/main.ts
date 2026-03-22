@@ -1,12 +1,11 @@
 import { GameClient } from './network.js';
 import { GameRenderer } from './renderer.js';
 import { UI } from './ui.js';
-import type { Player, FullGameState, TileType } from './types.js';
+import type { FullGameState, TileType } from './types.js';
 
 // State
 let gameState: FullGameState | null = null;
 let selfId: string | null = null;
-let mapTiles: TileType[][] | null = null;
 let mapLoaded = false;
 
 // Init
@@ -18,34 +17,55 @@ const ui = new UI();
 async function start() {
   await renderer.init();
 
-  // Fetch map data for tile rendering
-  const mapRes = await fetch('/api/debug/state');
-  const stateData = await mapRes.json();
+  // Load map tiles eagerly
+  try {
+    const mapRes = await fetch('/data/map.json');
+    if (mapRes.ok) {
+      const mapData = await mapRes.json();
+      const actRes = await fetch('/api/debug/activities');
+      const activities = actRes.ok ? await actRes.json() : [];
+      renderer.renderMap(mapData.tiles, activities);
+      mapLoaded = true;
+    }
+  } catch (err) {
+    console.error('Failed to load map:', err);
+  }
 
-  // Fetch actual tile data from debug map endpoint
-  const mapJsonRes = await fetch('/api/debug/map?format=json');
-  const mapJson = await mapJsonRes.json();
+  // Fallback: render blank map from state dimensions
+  if (!mapLoaded) {
+    const stateRes = await fetch('/api/debug/state');
+    if (stateRes.ok) {
+      const state = await stateRes.json();
+      const w = state.world?.width ?? 20;
+      const h = state.world?.height ?? 20;
+      const tiles: TileType[][] = [];
+      for (let y = 0; y < h; y++) {
+        const row: TileType[] = [];
+        for (let x = 0; x < w; x++) {
+          row.push(x === 0 || x === w - 1 || y === 0 || y === h - 1 ? 'wall' : 'floor');
+        }
+        tiles.push(row);
+      }
+      renderer.renderMap(tiles, []);
+      mapLoaded = true;
+    }
+  }
 
+  // Connect WebSocket
   client.connect();
 
   client.onMessage((msg) => {
     switch (msg.type) {
       case 'state': {
         gameState = msg.data;
-        if (!mapLoaded) {
-          loadMapFromServer();
-        }
-        ui.updatePlayerList(gameState!.players);
-        ui.setStatus(`Connected | Tick: ${gameState!.tick} | Players: ${gameState!.players.length}`);
+        ui.updatePlayerList(gameState.players);
+        ui.setStatus(`Connected | Tick: ${gameState.tick} | Players: ${gameState.players.length}`);
         break;
       }
 
       case 'tick': {
-        // Re-fetch state on each tick for simplicity
-        // In production, apply deltas instead
         if (gameState) {
           gameState.tick = msg.data.tick;
-          ui.setStatus(`Connected | Tick: ${gameState.tick} | Players: ${gameState.players.length}`);
         }
         break;
       }
@@ -60,7 +80,7 @@ async function start() {
         }
         ui.updatePlayerList(gameState.players);
 
-        // If this is our join confirmation
+        // If this is our join confirmation (first non-NPC join we see)
         if (!selfId && !msg.data.isNpc) {
           selfId = msg.data.id;
           renderer.setSelfId(selfId);
@@ -121,6 +141,9 @@ async function start() {
     joinBtn.setAttribute('disabled', 'true');
     nameInput.setAttribute('disabled', 'true');
   });
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') joinBtn.click();
+  });
 
   // Chat
   ui.onChatSubmit((text) => {
@@ -145,53 +168,21 @@ async function start() {
   }
   renderLoop();
 
-  // Periodic state refresh (since we don't get full delta updates yet)
+  // Periodic player state refresh (since server doesn't push deltas yet)
   setInterval(async () => {
     if (!gameState) return;
     try {
       const res = await fetch('/api/debug/players');
-      const players = await res.json();
-      gameState.players = players;
-      ui.updatePlayerList(players);
+      if (res.ok) {
+        const players = await res.json();
+        gameState.players = players;
+        ui.updatePlayerList(players);
+        ui.setStatus(`Connected | Tick: ${gameState.tick} | Players: ${players.length}`);
+      }
     } catch {
-      // ignore
+      // ignore fetch errors
     }
-  }, 1000);
-}
-
-async function loadMapFromServer() {
-  try {
-    // Fetch map.json directly
-    const res = await fetch('/api/debug/activities');
-    const activities = await res.json();
-
-    if (gameState) {
-      // We need the tile data. Fetch it via a custom endpoint or use the state info
-      const mapRes = await fetch('/data/map.json');
-      if (mapRes.ok) {
-        const mapData = await mapRes.json();
-        renderer.renderMap(mapData.tiles, activities);
-        mapLoaded = true;
-        return;
-      }
-    }
-  } catch {
-    // Fallback: generate a basic map from world dimensions
-  }
-
-  // Fallback: render blank map from state dimensions
-  if (gameState) {
-    const tiles: TileType[][] = [];
-    for (let y = 0; y < gameState.world.height; y++) {
-      const row: TileType[] = [];
-      for (let x = 0; x < gameState.world.width; x++) {
-        row.push(x === 0 || x === gameState.world.width - 1 || y === 0 || y === gameState.world.height - 1 ? 'wall' : 'floor');
-      }
-      tiles.push(row);
-    }
-    renderer.renderMap(tiles, []);
-    mapLoaded = true;
-  }
+  }, 2000);
 }
 
 start().catch(console.error);

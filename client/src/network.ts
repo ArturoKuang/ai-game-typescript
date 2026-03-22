@@ -9,7 +9,8 @@ export class GameClient {
 
   constructor(url?: string) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    this.url = url ?? `${protocol}//${window.location.host}`;
+    // Connect directly to the game server, bypassing Vite proxy
+    this.url = url ?? `${protocol}//${window.location.hostname}:3001`;
   }
 
   connect(): void {
