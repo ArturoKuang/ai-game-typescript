@@ -1,16 +1,16 @@
-# AI Town — Project Instructions
+# AI Town -- Project Instructions
 
 ## Overview
 
-AI Town is a multiplayer social simulation game server where human players and AI-driven NPCs inhabit a tile-based town, move around, and have conversations. The server is a Node.js/TypeScript application with a WebSocket interface for real-time clients and a REST debug API.
+AI Town is a multiplayer social simulation game where human players and AI-driven NPCs inhabit a tile-based town, move around, and have conversations. The server is a Node.js/TypeScript application with a WebSocket interface for real-time clients and a REST debug API. A browser client renders the world with PixiJS.
 
 ## Project Structure
 
 ```
-server/              # All application code lives here
+server/              # Game server (Docker)
   src/
-    index.ts         # Entry point — Express + WebSocket bootstrap
-    engine/          # Core simulation
+    index.ts         # Entry point -- Express + WebSocket bootstrap
+    engine/          # Core simulation (no I/O, fully testable)
       gameLoop.ts    # Tick-based game loop (stepped or realtime mode)
       world.ts       # Tile grid, collision, spawn points
       pathfinding.ts # A* pathfinding (4-directional)
@@ -24,10 +24,11 @@ server/              # All application code lives here
     db/
       client.ts      # PostgreSQL connection pool (pg)
       migrate.ts     # Schema migration runner
-      repository.ts  # Persistence layer
+      repository.ts  # Persistence layer (memories, game log)
       schema.sql     # Full DDL (pgvector enabled)
     npc/
       embedding.ts   # Placeholder embedder + cosine similarity
+      memory.ts      # Memory manager (scoring, retrieval, reflection)
     debug/
       router.ts      # Express debug API routes
       asciiMap.ts    # Terminal map renderer
@@ -35,112 +36,138 @@ server/              # All application code lives here
   test/              # Vitest test files
     helpers/
       testGame.ts    # Shared test fixtures (mini map, default map)
+client/              # Browser client (runs on host)
+  src/
+    main.ts          # Entry point -- wires PixiJS, WebSocket, UI
+    renderer.ts      # PixiJS tile map + player sprites
+    network.ts       # WebSocket client (connects to :3001)
+    ui.ts            # Chat panel, player list, status bar
+    types.ts         # Mirrors server protocol types
 data/
   map.json           # 20x20 town map (tiles, activities, spawn points)
+  characters.ts      # NPC personality definitions
+docs/
+  architecture.md    # System diagrams, tick lifecycle, state machines
+  debug-api.md       # Full API reference with curl examples
+  getting-started.md # Setup and first-run guide
 ```
 
 ## Development Workflow
 
 When implementing features or fixing bugs, follow this workflow:
 
-1. **Read state** — understand the current game state and relevant code before changing anything
-2. **Implement** — write the code changes
-3. **Write tests** — add vitest tests using `createTestGame()` or `createMiniGame()` from `test/helpers/testGame.ts`
-4. **Run tests** — `cd server && npm test` — fix until green
-5. **Verify** — if the server is running, check via debug API (`GET /api/debug/map`, `GET /api/debug/state`)
-6. **Report** — show test results and ASCII map snapshot
+1. **Read state** -- understand the current game state and relevant code before changing anything
+2. **Implement** -- write the code changes
+3. **Write tests** -- add vitest tests using `TestGame` from `test/helpers/testGame.ts`
+4. **Run tests** -- `docker compose exec game-server npx vitest run` -- fix until green
+5. **Verify** -- if the server is running, check via debug API (`GET /api/debug/map`, `GET /api/debug/state`)
+6. **Report** -- show test results and ASCII map snapshot
 
 Before committing, always run tests and verify via the debug API.
-
-**Skills available:** Use `/implement` for the full workflow, `/verify` for quick test + check, `/debug` for API reference, `/scenario` to load presets.
 
 ## Tech Stack
 
 - **Runtime**: Node.js 20, ES modules (`"type": "module"`)
 - **Language**: TypeScript 5.7 (strict mode, ES2022 target, NodeNext module resolution)
-- **Framework**: Express 4
+- **Server**: Express 4
 - **WebSocket**: ws 8
 - **Database**: PostgreSQL 16 + pgvector (1536-dim embeddings)
 - **Testing**: Vitest 3
 - **Runner**: tsx (dev and production)
+- **Client**: PixiJS 8, Vite 6
+- **Infrastructure**: Docker Compose (db + game-server)
 
 ## Commands
 
-All commands run from the `server/` directory:
+Server (run inside Docker or from `server/` directory):
 
 ```bash
-npm test              # Run all tests once (vitest run)
-npm run test:watch    # Watch mode
-npm run dev           # Start dev server with hot reload (tsx watch)
-npm start             # Start server (tsx src/index.ts)
+docker compose exec game-server npx vitest run   # Run all tests
+docker compose up --build -d                      # Start server + database
+docker compose logs game-server                   # View server logs
 ```
 
-Docker (from repo root):
+Client (from `client/` directory, runs on host):
 
 ```bash
-docker-compose up     # PostgreSQL on :5432, server on :3001
+npm install    # First time only
+npm run dev    # Vite dev server on :5173
 ```
 
 ## Code Conventions
 
-- **ES modules only** — use `.js` extensions in import paths (TypeScript NodeNext resolution requires this).
-- **Strict TypeScript** — no `any` unless unavoidable. All types live in `engine/types.ts` or `network/protocol.ts`.
-- **No classes for game state** — the game loop, world, and conversation manager use functional patterns with plain objects and interfaces.
-- **Tick-based simulation** — all game logic advances via `tick()`. Time is measured in ticks, not wall-clock time.
-- **Seeded RNG** — use the `rng.ts` PRNG for anything that should be reproducible. Never use `Math.random()` in game logic.
-- **Tests are pure unit tests** — no database or network required. Tests use in-memory game loops created via `test/helpers/testGame.ts`.
+- **ES modules only** -- use `.js` extensions in import paths (TypeScript NodeNext resolution requires this).
+- **Strict TypeScript** -- no `any` unless unavoidable. All types live in `engine/types.ts` or `network/protocol.ts`.
+- **Tick-based simulation** -- all game logic advances via `tick()`. Time is measured in ticks, not wall-clock time.
+- **Seeded RNG** -- use the `rng.ts` PRNG for anything that should be reproducible. Never use `Math.random()` in game logic.
+- **Tests are pure unit tests** -- no database or network required. Tests use in-memory game loops created via `test/helpers/testGame.ts`.
+- **Engine is I/O-free** -- `engine/` has no database, network, or filesystem dependencies.
 
 ## Architecture Notes
 
 - **GameLoop** is the central coordinator. It owns players, the world, conversations, and the event logger.
-- **Two modes**: `stepped` (call `tick()` or POST `/api/debug/tick`) and `realtime` (auto-ticks at configurable interval, default 500ms).
-- **Conversations** follow a state machine: `invited → walking → active → ended`. The ConversationManager auto-navigates participants to a midpoint.
+- **Two modes**: `stepped` (call `tick()` or POST `/api/debug/tick`) and `realtime` (auto-ticks at configurable interval).
+- **Conversations** follow a state machine: `invited -> walking -> active -> ended`. The ConversationManager auto-navigates participants toward each other.
 - **WebSocket protocol** is defined in `network/protocol.ts` with discriminated unions (`ClientMessage`, `ServerMessage`).
 - **A* pathfinding** uses 4-directional movement on the tile grid. Walls and water are impassable.
 - **Player states**: `idle`, `walking`, `conversing`, `doing_activity`.
+- **Memory system**: Memories are stored in PostgreSQL with pgvector embeddings. Retrieval uses a composite score of recency (exponential decay), importance (1-10), and relevance (cosine similarity). Reflections are generated when cumulative importance exceeds a threshold.
+
+See `docs/architecture.md` for diagrams and detailed data flow.
 
 ## Testing Patterns
 
 - Test files live in `server/test/` and match `*.test.ts`.
-- Use `createTestGame()` or `createMiniGame()` from `test/helpers/testGame.ts` to get a pre-configured `GameLoop`.
+- Use `TestGame` from `test/helpers/testGame.ts` to get a pre-configured `GameLoop` in stepped mode with seeded RNG.
 - Assert on tick results (`TickResult.events`) and player state after ticking.
-- WebSocket tests create real server instances on ephemeral ports.
-
-### Test Helpers (`test/helpers/testGame.ts`)
-
-`createMiniGame()` — 5x5 map (walls on edges, open floor interior). Fast, use for unit tests.
-`createTestGame()` — full 20x20 map with activities and spawn points.
 
 **TestGame methods:**
-- `spawn(id, x, y)` — create a player at position
-- `tick(count?)` — advance N ticks (default 1), returns `TickResult[]`
-- `move(id, x, y)` — set player movement target
-- `getPlayer(id)` — get player state (throws if not found)
-- `spawnNearby(id1, id2, distance?)` — spawn two players close together
-- `destroy()` — reset game state
+- `spawn(id, x, y, isNpc?)` -- create a player at position
+- `tick(count?)` -- advance N ticks (default 1), returns `TickResult[]`
+- `move(id, x, y)` -- set player movement target
+- `getPlayer(id)` -- get player state (throws if not found)
+- `spawnNearby(id1, id2, distance?)` -- spawn two players close together
+- `destroy()` -- reset game state
 
 ## Debug API
 
-The debug API is mounted at `/api/debug/` and is useful for inspecting game state:
+The debug API is mounted at `/api/debug/` and is the primary interface for observing and controlling the game.
 
-- `GET /state` — tick, mode, player count
-- `GET /map?format=ascii|json` — map visualization
-- `GET /players` — all players with full state
-- `GET /conversations` — active conversations
-- `GET /log?limit=N&type=T&player=P` — filtered event log
-- `POST /tick` — advance N ticks (`{ "count": N }`)
-- `POST /spawn` — add a player
-- `POST /move` — set movement target (`{ "playerId", "x", "y" }`)
-- `POST /reset` — clear all state
-- `POST /scenario` — load a preset (`empty`, `two_npcs_near_cafe`, `crowded_town`)
+**Read endpoints:**
+- `GET /state` -- tick, mode, player count, world dimensions
+- `GET /map` -- ASCII map visualization (add `?format=json` for structured output)
+- `GET /players` -- all players with full state
+- `GET /players/:id` -- single player detail
+- `GET /conversations` -- all conversations with messages
+- `GET /conversations/:id` -- single conversation
+- `GET /activities` -- activity locations on the map
+- `GET /log` -- filtered event log (`?since=N&limit=N&playerId=X`)
+- `GET /scenarios` -- list available scenarios
+- `GET /memories/:playerId` -- NPC memories (`?type=X&limit=N`)
+- `GET /memories/:playerId/search` -- vector search (`?q=text&k=N`)
+
+**Command endpoints:**
+- `POST /tick` -- advance N ticks (`{ "count": N }`)
+- `POST /spawn` -- add a player (`{ "id", "name", "x", "y", "isNpc" }`)
+- `POST /move` -- set movement target (`{ "playerId", "x", "y" }`)
+- `POST /start-convo` -- start a conversation (`{ "player1Id", "player2Id" }`)
+- `POST /say` -- send a message (`{ "playerId", "convoId", "content" }`)
+- `POST /end-convo` -- end a conversation (`{ "convoId" }`)
+- `POST /reset` -- clear all game state
+- `POST /scenario` -- load a preset (`{ "name": "crowded_town" }`)
+- `POST /mode` -- switch mode (`{ "mode": "realtime" }` or `"stepped"`)
+- `POST /memories` -- create a memory directly
+- `POST /remember-convo` -- generate memories for both conversation participants
+
+See `docs/debug-api.md` for full request/response examples.
 
 ## Environment
 
-Copy `.env.example` to `.env`:
+The server runs in Docker with these defaults (configured in `docker-compose.yml`):
 
 ```
-DATABASE_URL=postgres://aitown:aitown_dev@localhost:5432/aitown
+DATABASE_URL=postgres://aitown:aitown_dev@db:5432/aitown
 PORT=3001
 ```
 
-The server runs without a database for in-memory-only mode (tests always use this).
+Tests run in-memory without a database.
