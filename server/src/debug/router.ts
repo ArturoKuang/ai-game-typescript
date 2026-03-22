@@ -57,6 +57,19 @@ export function createDebugRouter(game: GameLoop): Router {
     res.json(listScenarios());
   });
 
+  router.get('/conversations', (_req, res) => {
+    res.json(game.conversations.getAllConversations());
+  });
+
+  router.get('/conversations/:id', (req, res) => {
+    const convo = game.conversations.getConversation(parseInt(req.params.id, 10));
+    if (!convo) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    res.json(convo);
+  });
+
   // --- Command endpoints ---
 
   router.post('/tick', (req, res) => {
@@ -119,6 +132,48 @@ export function createDebugRouter(game: GameLoop): Router {
       playerCount: game.playerCount,
       tick: game.currentTick,
     });
+  });
+
+  router.post('/start-convo', (req, res) => {
+    const { player1Id, player2Id } = req.body;
+    if (!player1Id || !player2Id) {
+      res.status(400).json({ error: 'Missing required fields: player1Id, player2Id' });
+      return;
+    }
+    try {
+      const convo = game.conversations.startConversation(player1Id, player2Id, game.currentTick);
+      res.json(convo);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.post('/end-convo', (req, res) => {
+    const { convoId } = req.body;
+    if (!convoId) {
+      res.status(400).json({ error: 'Missing required field: convoId' });
+      return;
+    }
+    try {
+      const convo = game.conversations.endConversation(convoId, game.currentTick);
+      res.json(convo);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.post('/say', (req, res) => {
+    const { playerId, convoId, content } = req.body;
+    if (!playerId || !convoId || !content) {
+      res.status(400).json({ error: 'Missing required fields: playerId, convoId, content' });
+      return;
+    }
+    try {
+      const msg = game.conversations.addMessage(convoId, playerId, content, game.currentTick);
+      res.json(msg);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   router.post('/mode', (req, res) => {

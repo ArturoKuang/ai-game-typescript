@@ -8,6 +8,7 @@ import { runMigrations } from './db/migrate.js';
 import { createDebugRouter } from './debug/router.js';
 import { GameLoop } from './engine/gameLoop.js';
 import type { MapData } from './engine/types.js';
+import { GameWebSocketServer } from './network/websocket.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -30,6 +31,14 @@ try {
   console.error('Failed to load map:', err);
 }
 
+// --- WebSocket ---
+const wsServer = new GameWebSocketServer(server, game, game.conversations);
+
+// Broadcast tick events to WebSocket clients
+game.on('*', () => {
+  wsServer.broadcast({ type: 'tick', data: { tick: game.currentTick } });
+});
+
 // --- Routes ---
 app.get('/health', async (_req, res) => {
   const dbConnected = await checkConnection();
@@ -47,6 +56,7 @@ async function start() {
     await runMigrations();
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`Game server listening on port ${PORT}`);
+      console.log(`WebSocket server ready on ws://0.0.0.0:${PORT}`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);

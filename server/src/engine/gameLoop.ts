@@ -1,3 +1,4 @@
+import { ConversationManager } from './conversation.js';
 import { GameLogger } from './logger.js';
 import { findPath } from './pathfinding.js';
 import { SeededRNG } from './rng.js';
@@ -24,6 +25,7 @@ export class GameLoop {
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private eventHandlers: Map<string, EventHandler[]> = new Map();
   private logger_: GameLogger = new GameLogger();
+  private convoManager_: ConversationManager = new ConversationManager();
 
   constructor(options: GameLoopOptions = {}) {
     this.rng_ = new SeededRNG(options.seed ?? Date.now());
@@ -127,6 +129,18 @@ export class GameLoop {
       }
     }
 
+    // Process conversations
+    const convoEvents = this.convoManager_.processTick(
+      this.tick_,
+      (id) => this.players_.get(id),
+      (playerId, x, y) => this.setPlayerTarget(playerId, x, y),
+    );
+    for (const e of convoEvents) this.emit(e);
+    events.push(...convoEvents);
+
+    // Sync player convo state
+    this.syncPlayerConvoState();
+
     return { tick: this.tick_, events };
   }
 
@@ -184,6 +198,21 @@ export class GameLoop {
       return dx > 0 ? 'right' : 'left';
     }
     return dy > 0 ? 'down' : 'up';
+  }
+
+  /** Keep player.state and player.currentConvoId in sync with ConversationManager */
+  private syncPlayerConvoState(): void {
+    for (const player of this.players_.values()) {
+      const convo = this.convoManager_.getPlayerConversation(player.id);
+      if (convo && convo.state === 'active') {
+        player.state = 'conversing';
+        player.currentConvoId = convo.id;
+      } else if (player.state === 'conversing') {
+        // Conversation ended or not found
+        player.state = 'idle';
+        player.currentConvoId = undefined;
+      }
+    }
   }
 
   // --- Realtime mode ---
@@ -255,11 +284,16 @@ export class GameLoop {
     return this.logger_;
   }
 
+  get conversations(): ConversationManager {
+    return this.convoManager_;
+  }
+
   reset(): void {
     this.stop();
     this.tick_ = 0;
     this.players_.clear();
     this.world_ = null;
     this.logger_.clear();
+    this.convoManager_.clear();
   }
 }
