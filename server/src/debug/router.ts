@@ -161,6 +161,29 @@ export function createDebugRouter(
     res.json({ path });
   });
 
+  router.post("/input", (req, res) => {
+    const { playerId, direction, active } = req.body;
+    if (
+      !playerId ||
+      !direction ||
+      !["up", "down", "left", "right"].includes(direction) ||
+      typeof active !== "boolean"
+    ) {
+      res.status(400).json({
+        error:
+          "Missing/invalid fields: playerId (string), direction (up|down|left|right), active (boolean)",
+      });
+      return;
+    }
+    game.setPlayerInput(playerId, direction, active);
+    const player = game.getPlayer(playerId);
+    if (!player) {
+      res.status(404).json({ error: "Player not found" });
+      return;
+    }
+    res.json(player);
+  });
+
   router.post("/reset", (_req, res) => {
     game.reset();
     res.json({ ok: true });

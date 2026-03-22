@@ -1,8 +1,10 @@
+import { PLAYER_RADIUS, moveWithCollision } from "./collision.js";
 import { ConversationManager } from "./conversation.js";
 import { GameLogger } from "./logger.js";
 import { findPath } from "./pathfinding.js";
 import { SeededRNG } from "./rng.js";
 import type {
+  Command,
   GameEvent,
   MapData,
   Orientation,
@@ -34,6 +36,7 @@ export class GameLoop {
   private eventHandlers: Map<string, EventHandler[]> = new Map();
   private logger_: GameLogger = new GameLogger();
   private convoManager_: ConversationManager = new ConversationManager();
+  private commandQueue_: Command[] = [];
   private afterTickCallbacks: ((result: TickResult) => void)[] = [];
 
   constructor(options: GameLoopOptions = {}) {
@@ -80,6 +83,12 @@ export class GameLoop {
       orientation: "down",
       speed: params.speed ?? 1.0,
       state: "idle",
+      vx: 0,
+      vy: 0,
+      inputX: 0,
+      inputY: 0,
+      radius: PLAYER_RADIUS,
+      moveSpeed: 5.0,
     };
 
     this.players_.set(params.id, player);
@@ -166,12 +175,145 @@ export class GameLoop {
 
     this.emit({
       tick: this.tick_,
-      type: "move_end",
+      type: "move_direction",
       playerId,
-      data: { x: newX, y: newY },
+      data: { x: newX, y: newY, orientation: direction, player: { ...player } },
     });
 
     return true;
+  }
+
+  /** Set input direction for a player (from input_start/input_stop messages). */
+  setPlayerInput(
+    playerId: string,
+    direction: "up" | "down" | "left" | "right",
+    active: boolean,
+  ): void {
+    const player = this.players_.get(playerId);
+    if (!player) return;
+    if (player.state === "conversing") return;
+
+    const dx = direction === "left" ? -1 : direction === "right" ? 1 : 0;
+    const dy = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+
+    if (active) {
+      // Cancel any existing A* path
+      player.path = undefined;
+      player.pathIndex = undefined;
+      player.targetX = undefined;
+      player.targetY = undefined;
+
+      player.inputX = dx;
+      player.inputY = dy;
+    } else {
+      // Only clear the axis that matches this direction
+      if (dx !== 0 && player.inputX === dx) player.inputX = 0;
+      if (dy !== 0 && player.inputY === dy) player.inputY = 0;
+    }
+  }
+
+  // --- Command Queue ---
+
+  /** Queue a command for processing on the next tick */
+  enqueue(command: Command): void {
+    this.commandQueue_.push(command);
+  }
+
+  private processCommands(): void {
+    const commands = this.commandQueue_;
+    this.commandQueue_ = [];
+
+    for (const cmd of commands) {
+      switch (cmd.type) {
+        case "spawn": {
+          try {
+            this.spawnPlayer({
+              id: cmd.playerId,
+              name: cmd.data.name,
+              x: cmd.data.x,
+              y: cmd.data.y,
+              isNpc: cmd.data.isNpc,
+              description: cmd.data.description,
+              personality: cmd.data.personality,
+              speed: cmd.data.speed,
+            });
+          } catch {
+            // Player already exists — skip
+          }
+          break;
+        }
+        case "remove": {
+          this.removePlayer(cmd.playerId);
+          break;
+        }
+        case "move_to": {
+          this.setPlayerTarget(cmd.playerId, cmd.data.x, cmd.data.y);
+          break;
+        }
+        case "move_direction": {
+          this.movePlayerDirection(cmd.playerId, cmd.data.direction);
+          break;
+        }
+        case "start_convo": {
+          try {
+            const convo = this.convoManager_.startConversation(
+              cmd.playerId,
+              cmd.data.targetId,
+              this.tick_,
+            );
+            this.emit({
+              tick: this.tick_,
+              type: "convo_started",
+              playerId: cmd.playerId,
+              data: {
+                convoId: convo.id,
+                targetId: cmd.data.targetId,
+                conversation: { ...convo },
+              },
+            });
+          } catch {
+            // Already in conversation — skip
+          }
+          break;
+        }
+        case "end_convo": {
+          try {
+            const convo = this.convoManager_.endConversation(
+              cmd.data.convoId,
+              this.tick_,
+            );
+            this.emit({
+              tick: this.tick_,
+              type: "convo_ended",
+              playerId: cmd.playerId,
+              data: { convoId: cmd.data.convoId, conversation: { ...convo } },
+            });
+          } catch {
+            // Conversation not found or already ended
+          }
+          break;
+        }
+        case "say": {
+          try {
+            const msg = this.convoManager_.addMessage(
+              cmd.data.convoId,
+              cmd.playerId,
+              cmd.data.content,
+              this.tick_,
+            );
+            this.emit({
+              tick: this.tick_,
+              type: "convo_message",
+              playerId: cmd.playerId,
+              data: { message: { ...msg }, convoId: cmd.data.convoId },
+            });
+          } catch {
+            // Not in active conversation — skip
+          }
+          break;
+        }
+      }
+    }
   }
 
   // --- Tick ---
@@ -180,7 +322,28 @@ export class GameLoop {
     this.tick_++;
     const events: GameEvent[] = [];
 
-    // Process movement for all walking players
+    // 1. Drain command queue
+    this.processCommands();
+
+    // 2. Process input-driven movement (velocity-based, continuous)
+    const dt = 1 / this.tickRate_;
+    for (const player of this.players_.values()) {
+      if (player.state === "conversing") continue;
+      if (player.inputX !== 0 || player.inputY !== 0) {
+        const inputEvents = this.processInputMovement(player, dt);
+        for (const e of inputEvents) this.emit(e);
+        events.push(...inputEvents);
+      } else if (player.vx !== 0 || player.vy !== 0) {
+        // Input stopped — zero velocity
+        player.vx = 0;
+        player.vy = 0;
+        if (player.state === "walking" && !player.path) {
+          player.state = "idle";
+        }
+      }
+    }
+
+    // 3. Process path-following movement for all walking players
     for (const player of this.players_.values()) {
       if (
         player.state === "walking" &&
@@ -193,7 +356,25 @@ export class GameLoop {
       }
     }
 
-    // Process conversations
+    // 4. Emit player_update for moving players (for broadcasting)
+    for (const player of this.players_.values()) {
+      if (
+        player.state === "walking" ||
+        player.vx !== 0 ||
+        player.vy !== 0
+      ) {
+        const evt: GameEvent = {
+          tick: this.tick_,
+          type: "player_update",
+          playerId: player.id,
+          data: { player: { ...player } },
+        };
+        this.emit(evt);
+        events.push(evt);
+      }
+    }
+
+    // 5. Process conversations
     const convoEvents = this.convoManager_.processTick(
       this.tick_,
       (id) => this.players_.get(id),
@@ -202,8 +383,17 @@ export class GameLoop {
     for (const e of convoEvents) this.emit(e);
     events.push(...convoEvents);
 
-    // Sync player convo state
+    // 6. Sync player convo state
     this.syncPlayerConvoState();
+
+    // 7. Emit tick_complete
+    const tickEvt: GameEvent = {
+      tick: this.tick_,
+      type: "tick_complete",
+      data: { tick: this.tick_ },
+    };
+    this.emit(tickEvt);
+    events.push(tickEvt);
 
     const result = { tick: this.tick_, events };
     for (const cb of this.afterTickCallbacks) cb(result);
@@ -213,6 +403,56 @@ export class GameLoop {
   /** Register a callback that runs after every tick */
   onAfterTick(callback: (result: TickResult) => void): void {
     this.afterTickCallbacks.push(callback);
+  }
+
+  /** Process velocity-based input movement for a player */
+  private processInputMovement(player: Player, dt: number): GameEvent[] {
+    const events: GameEvent[] = [];
+
+    // Normalize diagonal input so diagonal speed = cardinal speed
+    let ix = player.inputX;
+    let iy = player.inputY;
+    const mag = Math.sqrt(ix * ix + iy * iy);
+    if (mag > 0) {
+      ix /= mag;
+      iy /= mag;
+    }
+
+    // Set velocity
+    player.vx = ix * player.moveSpeed;
+    player.vy = iy * player.moveSpeed;
+
+    const dx = player.vx * dt;
+    const dy = player.vy * dt;
+
+    const result = moveWithCollision(
+      player.x,
+      player.y,
+      dx,
+      dy,
+      player.radius,
+      this.world,
+    );
+
+    player.x = result.x;
+    player.y = result.y;
+    player.state = "walking";
+
+    // Update orientation based on input
+    if (Math.abs(player.inputX) > Math.abs(player.inputY)) {
+      player.orientation = player.inputX > 0 ? "right" : "left";
+    } else if (player.inputY !== 0) {
+      player.orientation = player.inputY > 0 ? "down" : "up";
+    }
+
+    events.push({
+      tick: this.tick_,
+      type: "input_move",
+      playerId: player.id,
+      data: { x: player.x, y: player.y, vx: player.vx, vy: player.vy },
+    });
+
+    return events;
   }
 
   private processMovement(player: Player): GameEvent[] {
@@ -375,5 +615,6 @@ export class GameLoop {
     this.world_ = null;
     this.logger_.clear();
     this.convoManager_.clear();
+    this.commandQueue_ = [];
   }
 }
