@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool } from "pg";
 
 export interface MemoryRow {
   id: number;
@@ -16,7 +16,7 @@ export interface MemoryRow {
 export interface Memory {
   id: number;
   playerId: string;
-  type: 'observation' | 'conversation' | 'reflection';
+  type: "observation" | "conversation" | "reflection";
   content: string;
   importance: number;
   embedding?: number[];
@@ -47,7 +47,7 @@ export class Repository {
     tick: number;
   }): Promise<Memory> {
     const embeddingStr = params.embedding
-      ? `[${params.embedding.join(',')}]`
+      ? `[${params.embedding.join(",")}]`
       : null;
 
     const result = await this.pool.query(
@@ -72,7 +72,7 @@ export class Repository {
     playerId: string,
     options?: { limit?: number; type?: string },
   ): Promise<Memory[]> {
-    let query = 'SELECT * FROM memories WHERE player_id = $1';
+    let query = "SELECT * FROM memories WHERE player_id = $1";
     const params: unknown[] = [playerId];
 
     if (options?.type) {
@@ -80,7 +80,7 @@ export class Repository {
       query += ` AND type = $${params.length}`;
     }
 
-    query += ' ORDER BY tick DESC';
+    query += " ORDER BY tick DESC";
 
     if (options?.limit) {
       params.push(options.limit);
@@ -96,7 +96,7 @@ export class Repository {
     embedding: number[],
     k: number,
   ): Promise<{ memory: Memory; similarity: number }[]> {
-    const embeddingStr = `[${embedding.join(',')}]`;
+    const embeddingStr = `[${embedding.join(",")}]`;
 
     const result = await this.pool.query(
       `SELECT *, 1 - (embedding <=> $1::vector) AS similarity
@@ -109,26 +109,26 @@ export class Repository {
 
     return result.rows.map((r: MemoryRow & { similarity: number }) => ({
       memory: this.rowToMemory(r),
-      similarity: parseFloat(String(r.similarity)),
+      similarity: Number.parseFloat(String(r.similarity)),
     }));
   }
 
   async updateMemoryAccess(id: number, tick: number): Promise<void> {
     await this.pool.query(
-      'UPDATE memories SET last_accessed_tick = $1 WHERE id = $2',
+      "UPDATE memories SET last_accessed_tick = $1 WHERE id = $2",
       [tick, id],
     );
   }
 
   async getMemoryCount(playerId: string, sinceId?: number): Promise<number> {
-    let query = 'SELECT COUNT(*) FROM memories WHERE player_id = $1';
+    let query = "SELECT COUNT(*) FROM memories WHERE player_id = $1";
     const params: unknown[] = [playerId];
     if (sinceId !== undefined) {
       params.push(sinceId);
       query += ` AND id > $${params.length}`;
     }
     const result = await this.pool.query(query, params);
-    return parseInt(result.rows[0].count, 10);
+    return Number.parseInt(result.rows[0].count, 10);
   }
 
   async getRecentMemories(
@@ -136,7 +136,7 @@ export class Repository {
     limit: number,
     sinceId?: number,
   ): Promise<Memory[]> {
-    let query = 'SELECT * FROM memories WHERE player_id = $1';
+    let query = "SELECT * FROM memories WHERE player_id = $1";
     const params: unknown[] = [playerId];
     if (sinceId !== undefined) {
       params.push(sinceId);
@@ -148,10 +148,13 @@ export class Repository {
     return result.rows.map((r: MemoryRow) => this.rowToMemory(r));
   }
 
-  async deleteOldMemories(maxAgeTicks: number, currentTick: number): Promise<number> {
+  async deleteOldMemories(
+    maxAgeTicks: number,
+    currentTick: number,
+  ): Promise<number> {
     const cutoff = currentTick - maxAgeTicks;
     const result = await this.pool.query(
-      'DELETE FROM memories WHERE tick < $1',
+      "DELETE FROM memories WHERE tick < $1",
       [cutoff],
     );
     return result.rowCount ?? 0;
@@ -159,9 +162,14 @@ export class Repository {
 
   // --- Game Log ---
 
-  async logEvent(tick: number, eventType: string, playerId?: string, data?: Record<string, unknown>): Promise<void> {
+  async logEvent(
+    tick: number,
+    eventType: string,
+    playerId?: string,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     await this.pool.query(
-      'INSERT INTO game_log (tick, event_type, player_id, data) VALUES ($1, $2, $3, $4)',
+      "INSERT INTO game_log (tick, event_type, player_id, data) VALUES ($1, $2, $3, $4)",
       [tick, eventType, playerId ?? null, data ? JSON.stringify(data) : null],
     );
   }
@@ -170,8 +178,15 @@ export class Repository {
     since?: number;
     limit?: number;
     playerId?: string;
-  }): Promise<{ tick: number; eventType: string; playerId?: string; data?: Record<string, unknown> }[]> {
-    let query = 'SELECT * FROM game_log WHERE 1=1';
+  }): Promise<
+    {
+      tick: number;
+      eventType: string;
+      playerId?: string;
+      data?: Record<string, unknown>;
+    }[]
+  > {
+    let query = "SELECT * FROM game_log WHERE 1=1";
     const params: unknown[] = [];
 
     if (options?.since !== undefined) {
@@ -183,7 +198,7 @@ export class Repository {
       query += ` AND player_id = $${params.length}`;
     }
 
-    query += ' ORDER BY tick DESC';
+    query += " ORDER BY tick DESC";
 
     if (options?.limit) {
       params.push(options.limit);
@@ -191,12 +206,19 @@ export class Repository {
     }
 
     const result = await this.pool.query(query, params);
-    return result.rows.map((r: { tick: number; event_type: string; player_id: string | null; data: Record<string, unknown> | null }) => ({
-      tick: r.tick,
-      eventType: r.event_type,
-      playerId: r.player_id ?? undefined,
-      data: r.data ?? undefined,
-    }));
+    return result.rows.map(
+      (r: {
+        tick: number;
+        event_type: string;
+        player_id: string | null;
+        data: Record<string, unknown> | null;
+      }) => ({
+        tick: r.tick,
+        eventType: r.event_type,
+        playerId: r.player_id ?? undefined,
+        data: r.data ?? undefined,
+      }),
+    );
   }
 
   // --- Helpers ---
@@ -205,7 +227,7 @@ export class Repository {
     return {
       id: row.id,
       playerId: row.player_id,
-      type: row.type as Memory['type'],
+      type: row.type as Memory["type"],
       content: row.content,
       importance: row.importance,
       relatedIds: row.related_ids ?? [],

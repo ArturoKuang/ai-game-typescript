@@ -3,15 +3,15 @@ export interface Position {
   y: number;
 }
 
-export type TileType = 'floor' | 'wall' | 'water';
+export type TileType = "floor" | "wall" | "water";
 
 export interface Tile {
   type: TileType;
   activityId?: number;
 }
 
-export type Orientation = 'up' | 'down' | 'left' | 'right';
-export type PlayerState = 'idle' | 'walking' | 'conversing' | 'doing_activity';
+export type Orientation = "up" | "down" | "left" | "right";
+export type PlayerState = "idle" | "walking" | "conversing" | "doing_activity";
 
 export interface Player {
   id: string;

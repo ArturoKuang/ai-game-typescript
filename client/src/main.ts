@@ -1,7 +1,7 @@
-import { GameClient } from './network.js';
-import { GameRenderer } from './renderer.js';
-import { UI } from './ui.js';
-import type { FullGameState, TileType } from './types.js';
+import { GameClient } from "./network.js";
+import { GameRenderer } from "./renderer.js";
+import type { FullGameState, TileType } from "./types.js";
+import { UI } from "./ui.js";
 
 // State
 let gameState: FullGameState | null = null;
@@ -9,7 +9,7 @@ let selfId: string | null = null;
 let mapLoaded = false;
 
 // Init
-const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+const canvas = document.getElementById("game-canvas") as HTMLCanvasElement;
 const renderer = new GameRenderer(canvas);
 const client = new GameClient();
 const ui = new UI();
@@ -19,21 +19,21 @@ async function start() {
 
   // Load map tiles eagerly
   try {
-    const mapRes = await fetch('/data/map.json');
+    const mapRes = await fetch("/data/map.json");
     if (mapRes.ok) {
       const mapData = await mapRes.json();
-      const actRes = await fetch('/api/debug/activities');
+      const actRes = await fetch("/api/debug/activities");
       const activities = actRes.ok ? await actRes.json() : [];
       renderer.renderMap(mapData.tiles, activities);
       mapLoaded = true;
     }
   } catch (err) {
-    console.error('Failed to load map:', err);
+    console.error("Failed to load map:", err);
   }
 
   // Fallback: render blank map from state dimensions
   if (!mapLoaded) {
-    const stateRes = await fetch('/api/debug/state');
+    const stateRes = await fetch("/api/debug/state");
     if (stateRes.ok) {
       const state = await stateRes.json();
       const w = state.world?.width ?? 20;
@@ -42,7 +42,9 @@ async function start() {
       for (let y = 0; y < h; y++) {
         const row: TileType[] = [];
         for (let x = 0; x < w; x++) {
-          row.push(x === 0 || x === w - 1 || y === 0 || y === h - 1 ? 'wall' : 'floor');
+          row.push(
+            x === 0 || x === w - 1 || y === 0 || y === h - 1 ? "wall" : "floor",
+          );
         }
         tiles.push(row);
       }
@@ -56,23 +58,27 @@ async function start() {
 
   client.onMessage((msg) => {
     switch (msg.type) {
-      case 'state': {
+      case "state": {
         gameState = msg.data;
         ui.updatePlayerList(gameState.players);
-        ui.setStatus(`Connected | Tick: ${gameState.tick} | Players: ${gameState.players.length}`);
+        ui.setStatus(
+          `Connected | Tick: ${gameState.tick} | Players: ${gameState.players.length}`,
+        );
         break;
       }
 
-      case 'tick': {
+      case "tick": {
         if (gameState) {
           gameState.tick = msg.data.tick;
         }
         break;
       }
 
-      case 'player_joined': {
+      case "player_joined": {
         if (!gameState) break;
-        const existing = gameState.players.findIndex(p => p.id === msg.data.id);
+        const existing = gameState.players.findIndex(
+          (p) => p.id === msg.data.id,
+        );
         if (existing >= 0) {
           gameState.players[existing] = msg.data;
         } else {
@@ -86,76 +92,82 @@ async function start() {
           renderer.setSelfId(selfId);
           ui.setSelfId(selfId);
           ui.enableChat();
-          ui.addChatMessage('', `You joined as ${msg.data.name}`, true);
+          ui.addChatMessage("", `You joined as ${msg.data.name}`, true);
         }
         break;
       }
 
-      case 'player_left': {
+      case "player_left": {
         if (!gameState) break;
-        const name = gameState.players.find(p => p.id === msg.data.id)?.name;
-        gameState.players = gameState.players.filter(p => p.id !== msg.data.id);
+        const name = gameState.players.find((p) => p.id === msg.data.id)?.name;
+        gameState.players = gameState.players.filter(
+          (p) => p.id !== msg.data.id,
+        );
         ui.updatePlayerList(gameState.players);
-        if (name) ui.addChatMessage('', `${name} left`, true);
+        if (name) ui.addChatMessage("", `${name} left`, true);
         break;
       }
 
-      case 'player_update': {
+      case "player_update": {
         if (!gameState) break;
-        const idx = gameState.players.findIndex(p => p.id === msg.data.id);
+        const idx = gameState.players.findIndex((p) => p.id === msg.data.id);
         if (idx >= 0) gameState.players[idx] = msg.data;
         ui.updatePlayerList(gameState.players);
         break;
       }
 
-      case 'convo_update': {
+      case "convo_update": {
         if (!gameState) break;
-        const ci = gameState.conversations.findIndex(c => c.id === msg.data.id);
+        const ci = gameState.conversations.findIndex(
+          (c) => c.id === msg.data.id,
+        );
         if (ci >= 0) gameState.conversations[ci] = msg.data;
         else gameState.conversations.push(msg.data);
         break;
       }
 
-      case 'message': {
-        const sender = gameState?.players.find(p => p.id === msg.data.playerId);
+      case "message": {
+        const sender = gameState?.players.find(
+          (p) => p.id === msg.data.playerId,
+        );
         const senderName = sender?.name ?? msg.data.playerId;
         ui.addChatMessage(senderName, msg.data.content);
         renderer.showChatBubble(msg.data.playerId, msg.data.content);
         break;
       }
 
-      case 'error': {
-        ui.addChatMessage('', `Error: ${msg.data.message}`, true);
+      case "error": {
+        ui.addChatMessage("", `Error: ${msg.data.message}`, true);
         break;
       }
     }
   });
 
   // Join button
-  const joinBtn = document.getElementById('join-btn')!;
-  const nameInput = document.getElementById('name-input') as HTMLInputElement;
-  joinBtn.addEventListener('click', () => {
+  const joinBtn = document.getElementById("join-btn")!;
+  const nameInput = document.getElementById("name-input") as HTMLInputElement;
+  joinBtn.addEventListener("click", () => {
     const name = nameInput.value.trim();
     if (!name) return;
-    client.send({ type: 'join', data: { name } });
-    joinBtn.setAttribute('disabled', 'true');
-    nameInput.setAttribute('disabled', 'true');
+    client.send({ type: "join", data: { name } });
+    joinBtn.setAttribute("disabled", "true");
+    nameInput.setAttribute("disabled", "true");
   });
-  nameInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') joinBtn.click();
+  nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") joinBtn.click();
   });
 
   // Chat
   ui.onChatSubmit((text) => {
-    client.send({ type: 'say', data: { content: text } });
+    client.send({ type: "say", data: { content: text } });
   });
 
   // Click to move
-  canvas.addEventListener('click', (e) => {
+  canvas.addEventListener("click", (e) => {
     if (!selfId) return;
     const tile = renderer.screenToTile(e.clientX, e.clientY);
     if (tile) {
-      client.send({ type: 'move', data: { x: tile.x, y: tile.y } });
+      client.send({ type: "move", data: { x: tile.x, y: tile.y } });
     }
   });
 
@@ -172,12 +184,14 @@ async function start() {
   setInterval(async () => {
     if (!gameState) return;
     try {
-      const res = await fetch('/api/debug/players');
+      const res = await fetch("/api/debug/players");
       if (res.ok) {
         const players = await res.json();
         gameState.players = players;
         ui.updatePlayerList(players);
-        ui.setStatus(`Connected | Tick: ${gameState.tick} | Players: ${players.length}`);
+        ui.setStatus(
+          `Connected | Tick: ${gameState.tick} | Players: ${players.length}`,
+        );
       }
     } catch {
       // ignore fetch errors

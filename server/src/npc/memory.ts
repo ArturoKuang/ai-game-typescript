@@ -1,6 +1,6 @@
-import type { Repository, Memory, ScoredMemory } from '../db/repository.js';
-import type { Embedder } from './embedding.js';
-import { cosineSimilarity } from './embedding.js';
+import type { Memory, Repository, ScoredMemory } from "../db/repository.js";
+import type { Embedder } from "./embedding.js";
+import { cosineSimilarity } from "./embedding.js";
 
 const RECENCY_DECAY = 0.99; // per tick
 const REFLECTION_THRESHOLD = 50; // cumulative importance to trigger reflection
@@ -15,7 +15,7 @@ export class MemoryManager {
   /** Create a new memory with embedding */
   async addMemory(params: {
     playerId: string;
-    type: 'observation' | 'conversation' | 'reflection';
+    type: "observation" | "conversation" | "reflection";
     content: string;
     importance: number;
     tick: number;
@@ -39,15 +39,20 @@ export class MemoryManager {
 
     // Build a simple summary from the messages
     const transcript = messages
-      .map(m => `${m.playerId === playerId ? 'I' : partnerName}: ${m.content}`)
-      .join('. ');
+      .map(
+        (m) => `${m.playerId === playerId ? "I" : partnerName}: ${m.content}`,
+      )
+      .join(". ");
 
     const summary = `Had a conversation with ${partnerName}. ${transcript}`;
-    const importance = Math.min(9, Math.max(1, Math.ceil(messages.length * 1.5)));
+    const importance = Math.min(
+      9,
+      Math.max(1, Math.ceil(messages.length * 1.5)),
+    );
 
     return this.addMemory({
       playerId,
-      type: 'conversation',
+      type: "conversation",
       content: summary,
       importance,
       tick,
@@ -87,7 +92,7 @@ export class MemoryManager {
     // Score each candidate
     const scored: ScoredMemory[] = candidates.map(({ memory, similarity }) => {
       const ticksAgo = Math.max(0, currentTick - memory.tick);
-      const recencyScore = Math.pow(RECENCY_DECAY, ticksAgo);
+      const recencyScore = RECENCY_DECAY ** ticksAgo;
       const importanceScore = memory.importance / 10;
       const relevanceScore = Math.max(0, similarity); // cosine sim can be negative
 
@@ -108,7 +113,10 @@ export class MemoryManager {
 
     // Update access timestamps (throttled)
     for (const m of topK) {
-      if (!m.lastAccessedTick || currentTick - m.lastAccessedTick > MEMORY_ACCESS_THROTTLE) {
+      if (
+        !m.lastAccessedTick ||
+        currentTick - m.lastAccessedTick > MEMORY_ACCESS_THROTTLE
+      ) {
         await this.repo.updateMemoryAccess(m.id, currentTick);
       }
     }
@@ -124,7 +132,11 @@ export class MemoryManager {
   }): Promise<ScoredMemory[]> {
     const { playerId, query, k = 5 } = params;
     const queryEmbedding = await this.embedder.embed(query);
-    const candidates = await this.repo.searchMemoriesByVector(playerId, queryEmbedding, k);
+    const candidates = await this.repo.searchMemoriesByVector(
+      playerId,
+      queryEmbedding,
+      k,
+    );
 
     return candidates.map(({ memory, similarity }) => ({
       ...memory,
@@ -163,21 +175,22 @@ export class MemoryManager {
 
     // Generate a template-based reflection (Phase 7 upgrades to LLM)
     const topics = recentMemories
-      .filter(m => m.type === 'conversation')
+      .filter((m) => m.type === "conversation")
       .slice(0, 5)
-      .map(m => m.content.split('.')[0]);
+      .map((m) => m.content.split(".")[0]);
 
-    const reflectionContent = topics.length > 0
-      ? `Reflecting on recent experiences: ${topics.join('; ')}. These interactions have shaped my understanding of the community.`
-      : `I've been observing the town and reflecting on what I've experienced so far.`;
+    const reflectionContent =
+      topics.length > 0
+        ? `Reflecting on recent experiences: ${topics.join("; ")}. These interactions have shaped my understanding of the community.`
+        : `I've been observing the town and reflecting on what I've experienced so far.`;
 
     const reflection = await this.addMemory({
       playerId,
-      type: 'reflection',
+      type: "reflection",
       content: reflectionContent,
       importance: 8,
       tick: currentTick,
-      relatedIds: recentMemories.slice(0, 5).map(m => m.id),
+      relatedIds: recentMemories.slice(0, 5).map((m) => m.id),
     });
 
     return reflection;

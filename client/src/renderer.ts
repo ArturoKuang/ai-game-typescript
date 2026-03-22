@@ -1,5 +1,5 @@
-import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
-import type { Activity, Player, TileType } from './types.js';
+import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
+import type { Activity, Player, TileType } from "./types.js";
 
 const TILE_SIZE = 32;
 
@@ -29,8 +29,8 @@ export class GameRenderer {
   private playerContainer: Container = new Container();
   private lineContainer: Container = new Container();
   private playerSprites: Map<string, PlayerSprite> = new Map();
-  private mapWidth: number = 0;
-  private mapHeight: number = 0;
+  private mapWidth = 0;
+  private mapHeight = 0;
   private selfId: string | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -91,7 +91,7 @@ export class GameRenderer {
   }
 
   updatePlayers(players: Player[]): void {
-    const currentIds = new Set(players.map(p => p.id));
+    const currentIds = new Set(players.map((p) => p.id));
 
     // Remove sprites for departed players
     for (const [id, sprite] of this.playerSprites) {
@@ -119,8 +119,12 @@ export class GameRenderer {
       sprite.container.y += (targetY - sprite.container.y) * 0.3;
 
       // Update color based on identity
-      const color = player.id === this.selfId ? SELF_COLOR
-        : player.isNpc ? NPC_COLOR : HUMAN_COLOR;
+      const color =
+        player.id === this.selfId
+          ? SELF_COLOR
+          : player.isNpc
+            ? NPC_COLOR
+            : HUMAN_COLOR;
       sprite.circle.clear();
       sprite.circle.circle(0, 0, TILE_SIZE * 0.35);
       sprite.circle.fill(color);
@@ -128,7 +132,7 @@ export class GameRenderer {
       sprite.circle.stroke({ width: 2, color: 0xffffff, alpha: 0.5 });
 
       // State indicator
-      if (player.state === 'conversing') {
+      if (player.state === "conversing") {
         sprite.circle.circle(0, 0, TILE_SIZE * 0.42);
         sprite.circle.stroke({ width: 1.5, color: CONVO_LINE_COLOR });
       }
@@ -140,7 +144,7 @@ export class GameRenderer {
     for (const p of players) {
       if (p.currentConvoId) {
         const partner = players.find(
-          o => o.id !== p.id && o.currentConvoId === p.currentConvoId
+          (o) => o.id !== p.id && o.currentConvoId === p.currentConvoId,
         );
         if (partner && !convoPartners.has(partner.id)) {
           convoPartners.set(p.id, partner.id);
@@ -175,7 +179,8 @@ export class GameRenderer {
     }
 
     const bubble = new Container();
-    const truncated = content.length > 40 ? content.slice(0, 37) + '...' : content;
+    const truncated =
+      content.length > 40 ? `${content.slice(0, 37)}...` : content;
     const text = new Text({
       text: truncated,
       style: new TextStyle({
@@ -215,11 +220,15 @@ export class GameRenderer {
   }
 
   /** Convert screen coordinates to tile coordinates */
-  screenToTile(screenX: number, screenY: number): { x: number; y: number } | null {
+  screenToTile(
+    screenX: number,
+    screenY: number,
+  ): { x: number; y: number } | null {
     const rect = this.canvas.getBoundingClientRect();
     const x = Math.floor((screenX - rect.left) / TILE_SIZE);
     const y = Math.floor((screenY - rect.top) / TILE_SIZE);
-    if (x < 0 || x >= this.mapWidth || y < 0 || y >= this.mapHeight) return null;
+    if (x < 0 || x >= this.mapWidth || y < 0 || y >= this.mapHeight)
+      return null;
     return { x, y };
   }
 
@@ -231,7 +240,7 @@ export class GameRenderer {
     circle.fill(player.isNpc ? NPC_COLOR : HUMAN_COLOR);
 
     const nameLabel = new Text({
-      text: player.name.split(' ')[0],
+      text: player.name.split(" ")[0],
       style: new TextStyle({ fontSize: 10, fill: 0xffffff }),
     });
     nameLabel.anchor.set(0.5, 0);
@@ -243,6 +252,12 @@ export class GameRenderer {
     container.x = player.x * TILE_SIZE + TILE_SIZE / 2;
     container.y = player.y * TILE_SIZE + TILE_SIZE / 2;
 
-    return { container, circle, nameLabel, chatBubble: null, chatTimeout: null };
+    return {
+      container,
+      circle,
+      nameLabel,
+      chatBubble: null,
+      chatTimeout: null,
+    };
   }
 }

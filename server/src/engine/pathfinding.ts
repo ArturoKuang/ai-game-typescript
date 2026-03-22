@@ -1,5 +1,5 @@
-import type { Position } from './types.js';
-import type { World } from './world.js';
+import type { Position } from "./types.js";
+import type { World } from "./world.js";
 
 interface Node {
   x: number;
@@ -22,7 +22,11 @@ function posKey(x: number, y: number): string {
  * A* pathfinding on a tile grid. 4-directional movement only.
  * Returns array of positions from start to goal (inclusive), or null if unreachable.
  */
-export function findPath(world: World, start: Position, goal: Position): Position[] | null {
+export function findPath(
+  world: World,
+  start: Position,
+  goal: Position,
+): Position[] | null {
   // Goal must be walkable
   if (!world.isWalkable(goal.x, goal.y)) return null;
 
@@ -85,7 +89,9 @@ export function findPath(world: World, start: Position, goal: Position): Positio
 
       // Remove worse duplicate from open list
       if (existing !== undefined) {
-        const idx = open.findIndex(n => n.x === neighbor.x && n.y === neighbor.y);
+        const idx = open.findIndex(
+          (n) => n.x === neighbor.x && n.y === neighbor.y,
+        );
         if (idx !== -1) open.splice(idx, 1);
       }
 

@@ -1,4 +1,4 @@
-import type { Activity, MapData, Position, Tile, TileType } from './types.js';
+import type { Activity, MapData, Position, Tile, TileType } from "./types.js";
 
 export class World {
   readonly width: number;
@@ -18,8 +18,8 @@ export class World {
     for (let y = 0; y < this.height; y++) {
       const row: Tile[] = [];
       for (let x = 0; x < this.width; x++) {
-        const tileType: TileType = mapData.tiles[y]?.[x] ?? 'wall';
-        const activity = this.activities.find(a => a.x === x && a.y === y);
+        const tileType: TileType = mapData.tiles[y]?.[x] ?? "wall";
+        const activity = this.activities.find((a) => a.x === x && a.y === y);
         row.push({ type: tileType, activityId: activity?.id });
       }
       this.tiles.push(row);
@@ -33,16 +33,16 @@ export class World {
 
   isWalkable(x: number, y: number): boolean {
     const tile = this.getTile(x, y);
-    return tile !== null && tile.type === 'floor';
+    return tile !== null && tile.type === "floor";
   }
 
   /** Returns 4-directional walkable neighbors */
   getNeighbors(pos: Position): Position[] {
     const dirs: Position[] = [
       { x: 0, y: -1 }, // up
-      { x: 0, y: 1 },  // down
+      { x: 0, y: 1 }, // down
       { x: -1, y: 0 }, // left
-      { x: 1, y: 0 },  // right
+      { x: 1, y: 0 }, // right
     ];
     const result: Position[] = [];
     for (const d of dirs) {
@@ -58,7 +58,7 @@ export class World {
   getActivity(x: number, y: number): Activity | undefined {
     const tile = this.getTile(x, y);
     if (!tile?.activityId) return undefined;
-    return this.activities.find(a => a.id === tile.activityId);
+    return this.activities.find((a) => a.id === tile.activityId);
   }
 
   getActivities(): Activity[] {

@@ -13,7 +13,7 @@ export interface Embedder {
 export class PlaceholderEmbedder implements Embedder {
   readonly dimension: number;
 
-  constructor(dimension: number = 1536) {
+  constructor(dimension = 1536) {
     this.dimension = dimension;
   }
 
@@ -27,7 +27,7 @@ export class PlaceholderEmbedder implements Embedder {
 
     // Generate deterministic vector using splitmix32
     const vec: number[] = [];
-    let z = (hash >>> 0) || 1;
+    let z = hash >>> 0 || 1;
     for (let i = 0; i < this.dimension; i++) {
       z = (z + 0x9e3779b9) >>> 0;
       let t = z ^ (z >>> 16);
@@ -36,7 +36,7 @@ export class PlaceholderEmbedder implements Embedder {
       t = Math.imul(t, 0x735a2d97);
       t = t ^ (t >>> 15);
       // Normalize to [-1, 1]
-      vec.push((t >>> 0) / 0x100000000 * 2 - 1);
+      vec.push(((t >>> 0) / 0x100000000) * 2 - 1);
     }
 
     // Normalize to unit length

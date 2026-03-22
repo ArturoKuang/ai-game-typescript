@@ -1,4 +1,4 @@
-import type { GameEvent } from './types.js';
+import type { GameEvent } from "./types.js";
 
 const DEFAULT_MAX_SIZE = 1000;
 
@@ -22,15 +22,19 @@ export class GameLogger {
   }
 
   /** Get events since a given tick, with optional limit */
-  getEvents(options?: { since?: number; limit?: number; playerId?: string }): GameEvent[] {
+  getEvents(options?: {
+    since?: number;
+    limit?: number;
+    playerId?: string;
+  }): GameEvent[] {
     let events = this.buffer;
 
     if (options?.since !== undefined) {
-      events = events.filter(e => e.tick >= options.since!);
+      events = events.filter((e) => e.tick >= options.since!);
     }
 
     if (options?.playerId) {
-      events = events.filter(e => e.playerId === options.playerId);
+      events = events.filter((e) => e.playerId === options.playerId);
     }
 
     if (options?.limit) {

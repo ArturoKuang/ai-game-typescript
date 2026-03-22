@@ -1,4 +1,4 @@
-import type { Player, Message } from './types.js';
+import type { Message, Player } from "./types.js";
 
 export class UI {
   private playerListEl: HTMLUListElement;
@@ -9,11 +9,17 @@ export class UI {
   private selfId: string | null = null;
 
   constructor() {
-    this.playerListEl = document.getElementById('player-list') as HTMLUListElement;
-    this.chatMessagesEl = document.getElementById('chat-messages') as HTMLDivElement;
-    this.chatInputEl = document.getElementById('chat-input') as HTMLInputElement;
-    this.chatBtnEl = document.getElementById('chat-btn') as HTMLButtonElement;
-    this.statusEl = document.getElementById('status-bar') as HTMLDivElement;
+    this.playerListEl = document.getElementById(
+      "player-list",
+    ) as HTMLUListElement;
+    this.chatMessagesEl = document.getElementById(
+      "chat-messages",
+    ) as HTMLDivElement;
+    this.chatInputEl = document.getElementById(
+      "chat-input",
+    ) as HTMLInputElement;
+    this.chatBtnEl = document.getElementById("chat-btn") as HTMLButtonElement;
+    this.statusEl = document.getElementById("status-bar") as HTMLDivElement;
   }
 
   setSelfId(id: string): void {
@@ -35,22 +41,31 @@ export class UI {
   }
 
   updatePlayerList(players: Player[]): void {
-    this.playerListEl.innerHTML = '';
+    this.playerListEl.innerHTML = "";
     for (const p of players) {
-      const li = document.createElement('li');
+      const li = document.createElement("li");
       const isSelf = p.id === this.selfId;
-      li.className = isSelf ? 'player-self' : p.isNpc ? 'player-npc' : 'player-human';
-      const stateIcon = p.state === 'conversing' ? ' 💬'
-        : p.state === 'walking' ? ' 🚶'
-        : p.state === 'doing_activity' ? ' 📖' : '';
-      li.textContent = `${p.name}${isSelf ? ' (you)' : ''}${stateIcon}`;
+      li.className = isSelf
+        ? "player-self"
+        : p.isNpc
+          ? "player-npc"
+          : "player-human";
+      const stateIcon =
+        p.state === "conversing"
+          ? " 💬"
+          : p.state === "walking"
+            ? " 🚶"
+            : p.state === "doing_activity"
+              ? " 📖"
+              : "";
+      li.textContent = `${p.name}${isSelf ? " (you)" : ""}${stateIcon}`;
       this.playerListEl.appendChild(li);
     }
   }
 
-  addChatMessage(senderName: string, content: string, isSystem: boolean = false): void {
-    const div = document.createElement('div');
-    div.className = 'chat-msg';
+  addChatMessage(senderName: string, content: string, isSystem = false): void {
+    const div = document.createElement("div");
+    div.className = "chat-msg";
     if (isSystem) {
       div.innerHTML = `<span class="system">${content}</span>`;
     } else {
@@ -65,17 +80,17 @@ export class UI {
       const text = this.chatInputEl.value.trim();
       if (!text) return;
       callback(text);
-      this.chatInputEl.value = '';
+      this.chatInputEl.value = "";
     };
 
-    this.chatBtnEl.addEventListener('click', submit);
-    this.chatInputEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') submit();
+    this.chatBtnEl.addEventListener("click", submit);
+    this.chatInputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
     });
   }
 
   private escapeHtml(text: string): string {
-    const div = document.createElement('div');
+    const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
   }

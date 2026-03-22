@@ -1,131 +1,131 @@
-import { describe, expect, it, afterEach } from 'vitest';
-import { TestGame } from './helpers/testGame.js';
-import { renderAsciiMap } from '../src/debug/asciiMap.js';
-import { SCENARIOS } from '../src/debug/scenarios.js';
-import { GameLogger } from '../src/engine/logger.js';
+import { afterEach, describe, expect, it } from "vitest";
+import { renderAsciiMap } from "../src/debug/asciiMap.js";
+import { SCENARIOS } from "../src/debug/scenarios.js";
+import { GameLogger } from "../src/engine/logger.js";
+import { TestGame } from "./helpers/testGame.js";
 
-describe('ASCII Map Renderer', () => {
+describe("ASCII Map Renderer", () => {
   let tg: TestGame;
 
   afterEach(() => {
     tg?.destroy();
   });
 
-  it('renders empty map with walls and floor', () => {
+  it("renders empty map with walls and floor", () => {
     tg = new TestGame();
     const { ascii } = renderAsciiMap(tg.game);
-    expect(ascii).toContain('┌');
-    expect(ascii).toContain('┘');
-    expect(ascii).toContain('#'); // walls
-    expect(ascii).toContain('.'); // floor
+    expect(ascii).toContain("┌");
+    expect(ascii).toContain("┘");
+    expect(ascii).toContain("#"); // walls
+    expect(ascii).toContain("."); // floor
   });
 
-  it('renders players on the map', () => {
+  it("renders players on the map", () => {
     tg = new TestGame();
-    tg.spawn('alice', 2, 2);
+    tg.spawn("alice", 2, 2);
     const { ascii, legend } = renderAsciiMap(tg.game);
-    expect(ascii).toContain('A');
-    expect(legend['A']).toContain('alice');
+    expect(ascii).toContain("A");
+    expect(legend.A).toContain("alice");
   });
 
-  it('renders activities on default map', () => {
-    tg = new TestGame({ map: 'default' });
+  it("renders activities on default map", () => {
+    tg = new TestGame({ map: "default" });
     const { ascii } = renderAsciiMap(tg.game);
     // Should contain activity emoji first chars
-    expect(ascii).toContain('Legend:');
+    expect(ascii).toContain("Legend:");
   });
 
-  it('shows player state in legend', () => {
+  it("shows player state in legend", () => {
     tg = new TestGame();
-    tg.spawn('alice', 1, 1);
-    tg.move('alice', 3, 1);
+    tg.spawn("alice", 1, 1);
+    tg.move("alice", 3, 1);
     const { legend } = renderAsciiMap(tg.game);
-    expect(legend['A']).toContain('walking');
+    expect(legend.A).toContain("walking");
   });
 });
 
-describe('Scenarios', () => {
+describe("Scenarios", () => {
   let tg: TestGame;
 
   afterEach(() => {
     tg?.destroy();
   });
 
-  it('empty scenario spawns no players', () => {
-    tg = new TestGame({ map: 'default' });
+  it("empty scenario spawns no players", () => {
+    tg = new TestGame({ map: "default" });
     SCENARIOS.empty.setup(tg.game);
     expect(tg.game.getPlayers()).toHaveLength(0);
   });
 
-  it('two_npcs_near_cafe spawns 2 NPCs', () => {
-    tg = new TestGame({ map: 'default' });
+  it("two_npcs_near_cafe spawns 2 NPCs", () => {
+    tg = new TestGame({ map: "default" });
     SCENARIOS.two_npcs_near_cafe.setup(tg.game);
     const players = tg.game.getPlayers();
     expect(players).toHaveLength(2);
-    expect(players.every(p => p.isNpc)).toBe(true);
+    expect(players.every((p) => p.isNpc)).toBe(true);
   });
 
-  it('crowded_town spawns 5 NPCs', () => {
-    tg = new TestGame({ map: 'default' });
+  it("crowded_town spawns 5 NPCs", () => {
+    tg = new TestGame({ map: "default" });
     SCENARIOS.crowded_town.setup(tg.game);
     expect(tg.game.getPlayers()).toHaveLength(5);
   });
 });
 
-describe('GameLogger', () => {
-  it('logs and retrieves events', () => {
+describe("GameLogger", () => {
+  it("logs and retrieves events", () => {
     const logger = new GameLogger();
-    logger.log({ tick: 1, type: 'spawn', playerId: 'alice' });
-    logger.log({ tick: 2, type: 'move_start', playerId: 'alice' });
-    logger.log({ tick: 3, type: 'spawn', playerId: 'bob' });
+    logger.log({ tick: 1, type: "spawn", playerId: "alice" });
+    logger.log({ tick: 2, type: "move_start", playerId: "alice" });
+    logger.log({ tick: 3, type: "spawn", playerId: "bob" });
 
     expect(logger.size).toBe(3);
     expect(logger.getEvents()).toHaveLength(3);
   });
 
-  it('filters by since', () => {
+  it("filters by since", () => {
     const logger = new GameLogger();
-    logger.log({ tick: 1, type: 'a' });
-    logger.log({ tick: 5, type: 'b' });
-    logger.log({ tick: 10, type: 'c' });
+    logger.log({ tick: 1, type: "a" });
+    logger.log({ tick: 5, type: "b" });
+    logger.log({ tick: 10, type: "c" });
 
     const events = logger.getEvents({ since: 5 });
     expect(events).toHaveLength(2);
-    expect(events[0].type).toBe('b');
+    expect(events[0].type).toBe("b");
   });
 
-  it('filters by playerId', () => {
+  it("filters by playerId", () => {
     const logger = new GameLogger();
-    logger.log({ tick: 1, type: 'a', playerId: 'alice' });
-    logger.log({ tick: 2, type: 'b', playerId: 'bob' });
-    logger.log({ tick: 3, type: 'c', playerId: 'alice' });
+    logger.log({ tick: 1, type: "a", playerId: "alice" });
+    logger.log({ tick: 2, type: "b", playerId: "bob" });
+    logger.log({ tick: 3, type: "c", playerId: "alice" });
 
-    const events = logger.getEvents({ playerId: 'alice' });
+    const events = logger.getEvents({ playerId: "alice" });
     expect(events).toHaveLength(2);
   });
 
-  it('limits results', () => {
+  it("limits results", () => {
     const logger = new GameLogger();
     for (let i = 0; i < 100; i++) {
-      logger.log({ tick: i, type: 'test' });
+      logger.log({ tick: i, type: "test" });
     }
     const events = logger.getEvents({ limit: 10 });
     expect(events).toHaveLength(10);
     expect(events[0].tick).toBe(90); // last 10
   });
 
-  it('enforces max buffer size', () => {
+  it("enforces max buffer size", () => {
     const logger = new GameLogger(5);
     for (let i = 0; i < 10; i++) {
-      logger.log({ tick: i, type: 'test' });
+      logger.log({ tick: i, type: "test" });
     }
     expect(logger.size).toBe(5);
     expect(logger.getEvents()[0].tick).toBe(5);
   });
 
-  it('clears all events', () => {
+  it("clears all events", () => {
     const logger = new GameLogger();
-    logger.log({ tick: 1, type: 'test' });
+    logger.log({ tick: 1, type: "test" });
     logger.clear();
     expect(logger.size).toBe(0);
   });

@@ -1,4 +1,4 @@
-import type { ClientMessage, ServerMessage } from './types.js';
+import type { ClientMessage, ServerMessage } from "./types.js";
 
 export type MessageHandler = (msg: ServerMessage) => void;
 
@@ -8,7 +8,7 @@ export class GameClient {
   private url: string;
 
   constructor(url?: string) {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     // Connect directly to the game server, bypassing Vite proxy
     this.url = url ?? `${protocol}//${window.location.hostname}:3001`;
   }
@@ -17,7 +17,7 @@ export class GameClient {
     this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
-      console.log('WebSocket connected');
+      console.log("WebSocket connected");
     };
 
     this.ws.onmessage = (event) => {
@@ -25,17 +25,17 @@ export class GameClient {
         const msg = JSON.parse(event.data) as ServerMessage;
         for (const h of this.handlers) h(msg);
       } catch (err) {
-        console.error('Failed to parse message:', err);
+        console.error("Failed to parse message:", err);
       }
     };
 
     this.ws.onclose = () => {
-      console.log('WebSocket disconnected, reconnecting in 2s...');
+      console.log("WebSocket disconnected, reconnecting in 2s...");
       setTimeout(() => this.connect(), 2000);
     };
 
     this.ws.onerror = (err) => {
-      console.error('WebSocket error:', err);
+      console.error("WebSocket error:", err);
     };
   }
 

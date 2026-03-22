@@ -1,10 +1,13 @@
 // Mirrors server types
 
-export interface Position { x: number; y: number; }
+export interface Position {
+  x: number;
+  y: number;
+}
 
-export type TileType = 'floor' | 'wall' | 'water';
-export type Orientation = 'up' | 'down' | 'left' | 'right';
-export type PlayerState = 'idle' | 'walking' | 'conversing' | 'doing_activity';
+export type TileType = "floor" | "wall" | "water";
+export type Orientation = "up" | "down" | "left" | "right";
+export type PlayerState = "idle" | "walking" | "conversing" | "doing_activity";
 
 export interface Player {
   id: string;
@@ -56,20 +59,20 @@ export interface FullGameState {
 
 // Server -> Client
 export type ServerMessage =
-  | { type: 'state'; data: FullGameState }
-  | { type: 'tick'; data: { tick: number } }
-  | { type: 'player_update'; data: Player }
-  | { type: 'player_joined'; data: Player }
-  | { type: 'player_left'; data: { id: string } }
-  | { type: 'convo_update'; data: Conversation }
-  | { type: 'message'; data: Message }
-  | { type: 'error'; data: { message: string } };
+  | { type: "state"; data: FullGameState }
+  | { type: "tick"; data: { tick: number } }
+  | { type: "player_update"; data: Player }
+  | { type: "player_joined"; data: Player }
+  | { type: "player_left"; data: { id: string } }
+  | { type: "convo_update"; data: Conversation }
+  | { type: "message"; data: Message }
+  | { type: "error"; data: { message: string } };
 
 // Client -> Server
 export type ClientMessage =
-  | { type: 'join'; data: { name: string } }
-  | { type: 'move'; data: { x: number; y: number } }
-  | { type: 'say'; data: { content: string } }
-  | { type: 'start_convo'; data: { targetId: string } }
-  | { type: 'end_convo' }
-  | { type: 'ping' };
+  | { type: "join"; data: { name: string } }
+  | { type: "move"; data: { x: number; y: number } }
+  | { type: "say"; data: { content: string } }
+  | { type: "start_convo"; data: { targetId: string } }
+  | { type: "end_convo" }
+  | { type: "ping" };

@@ -19,7 +19,12 @@ export class SeededRNG {
       this.s[i] = t >>> 0;
     }
     // Ensure state is not all zeros
-    if (this.s[0] === 0 && this.s[1] === 0 && this.s[2] === 0 && this.s[3] === 0) {
+    if (
+      this.s[0] === 0 &&
+      this.s[1] === 0 &&
+      this.s[2] === 0 &&
+      this.s[3] === 0
+    ) {
       this.s[0] = 1;
     }
   }
