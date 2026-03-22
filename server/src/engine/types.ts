@@ -30,6 +30,12 @@ export interface Player {
   state: PlayerState;
   currentActivityId?: number;
   currentConvoId?: number;
+  vx: number;
+  vy: number;
+  inputX: number;
+  inputY: number;
+  radius: number;
+  moveSpeed: number;
 }
 
 export interface Activity {
@@ -42,9 +48,26 @@ export interface Activity {
   emoji: string;
 }
 
+// --- Game Events ---
+
+export type GameEventType =
+  | "spawn"
+  | "despawn"
+  | "move_start"
+  | "move_end"
+  | "move_direction"
+  | "player_update"
+  | "convo_accepted"
+  | "convo_active"
+  | "convo_ended"
+  | "convo_started"
+  | "convo_message"
+  | "input_move"
+  | "tick_complete";
+
 export interface GameEvent {
   tick: number;
-  type: string;
+  type: GameEventType;
   playerId?: string;
   data?: Record<string, unknown>;
 }
@@ -53,6 +76,52 @@ export interface TickResult {
   tick: number;
   events: GameEvent[];
 }
+
+// --- Commands (inputs to the game loop) ---
+
+export type Command =
+  | {
+      type: "spawn";
+      playerId: string;
+      data: {
+        name: string;
+        x: number;
+        y: number;
+        isNpc?: boolean;
+        description?: string;
+        personality?: string;
+        speed?: number;
+      };
+    }
+  | {
+      type: "remove";
+      playerId: string;
+    }
+  | {
+      type: "move_to";
+      playerId: string;
+      data: { x: number; y: number };
+    }
+  | {
+      type: "move_direction";
+      playerId: string;
+      data: { direction: Orientation };
+    }
+  | {
+      type: "start_convo";
+      playerId: string;
+      data: { targetId: string };
+    }
+  | {
+      type: "end_convo";
+      playerId: string;
+      data: { convoId: number };
+    }
+  | {
+      type: "say";
+      playerId: string;
+      data: { convoId: number; content: string };
+    };
 
 export interface MapData {
   width: number;
