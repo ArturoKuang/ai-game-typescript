@@ -56,7 +56,30 @@
               +---------+---------+
 ```
 
-## Tick Lifecycle
+## Movement Systems
+
+There are two movement systems:
+
+### WASD / Arrow Key Movement (human players)
+
+Processed **immediately** when the server receives a `move_direction` message — not on the tick loop. The server checks if the adjacent tile is walkable, moves the player one tile, and broadcasts a `player_update` to all clients. The client also applies **client-side prediction**, moving the local player sprite instantly before the server confirms.
+
+```
+Client                              Server
+  |                                    |
+  |-- keydown(W) ----------------->   |
+  |   predict: self.y -= 1            |  movePlayerDirection("up")
+  |   send move_direction("up")       |  check isWalkable(x, y-1)
+  |                                    |  player.y -= 1
+  |<-- player_update (y-1) ---------- |  broadcast player_update
+  |   reconcile position              |
+```
+
+### Click-to-Move / API Move (NPCs, debug)
+
+Uses A* pathfinding. The path is computed once, then the player walks along it at `speed` tiles per tick. Walking player positions are broadcast after every tick via `onAfterTick`.
+
+### Tick Lifecycle (20 ticks/sec in realtime mode)
 
 Every game tick executes these steps in order:
 
@@ -84,9 +107,10 @@ tick()
   |       If in active convo: state = conversing
   |       If convo ended: state = idle
   |
-  +-- 4. Emit events
+  +-- 4. Emit events + afterTick callbacks
         All events logged to GameLogger ring buffer
         Events returned in TickResult
+        afterTick: broadcast walking player positions via WebSocket
 ```
 
 ## Conversation State Machine
@@ -132,16 +156,17 @@ tick()
                 |
                 v
            +---------+
-      +--->|  idle   |<---+
-      |    +----+----+    |
-      |         |         |
-      |    setTarget()    | convo ends
-      |         |         |
-      |         v         |
-      |    +---------+    |
-      |    | walking |    |
-      |    +----+----+    |
-      |         |         |
+      +--->|  idle   |<---+---+
+      |    +----+----+    |   |
+      |         |         |   |
+      |    setTarget() /  |   | WASD moveDirection()
+      |    click-to-move  |   | (immediate, no walking state)
+      |         |         |   |
+      |         v         |   |
+      |    +---------+    |   |
+      |    | walking |    |   |
+      |    +----+----+    |   |
+      |         |         |   |
       |   reach dest  convo starts
       |         |     (accepted + close)
       |         v         |
@@ -172,15 +197,19 @@ Browser                    Vite Proxy              Game Server
   |<- { type:                |                         |
   |    "player_joined" } ----|<- player data ----------|
   |                           |                         |
-  |-- click tile (5,8) ----->|                         |
-  |-- { type: "move",        |                         |
-  |    x: 5, y: 8 } ------->|------------------------>|
-  |                           |                   setPlayerTarget()
-  |                           |                   findPath(A*)
+  |-- press W key             |                         |
+  |   (predict: y -= 1)      |                         |
+  |-- { type:                 |                         |
+  |    "move_direction",      |                         |
+  |    direction: "up" } --->|------------------------>|
+  |                           |                   movePlayerDirection()
+  |                           |                   check isWalkable()
+  |<- { type:                |                         |
+  |    "player_update" } ----|<- updated player --------|
   |                           |                         |
-  |   (client polls /api/debug/players every 2s)        |
-  |-- GET /api/debug/players->|------------------------>|
-  |<- [updated positions] ---|<- player array ----------|
+  |   (walking players broadcast every tick via WS)     |
+  |<- { type:                |                         |
+  |    "player_update" } ----|<- NPC positions ---------|
 ```
 
 ## Directory Structure
@@ -243,7 +272,7 @@ ai-game-typescript/
 ## Key Design Decisions
 
 - **Engine is pure** — `engine/` has zero I/O dependencies. It can be tested entirely in-memory without Docker or a database.
-- **Stepped mode first** — the game loop defaults to `stepped`, meaning nothing moves unless `tick()` is called. This makes tests deterministic and lets the debug API control time precisely.
+- **Realtime by default** — the server starts in `realtime` mode at 20 ticks/sec for responsive gameplay. Tests use `stepped` mode for determinism. The debug API can switch modes at any time via `POST /mode`.
 - **Seeded RNG** — all randomness flows through `rng.ts` so tests are reproducible.
 - **Debug API is the primary interface** — both AI agents and humans interact with the game primarily through HTTP endpoints. The browser client is a rendering layer on top.
 - **Conversations are in-memory** — the ConversationManager lives inside the GameLoop. Messages are stored in-memory during the conversation and only persisted to DB when creating memories after the conversation ends.

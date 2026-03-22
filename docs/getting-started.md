@@ -59,21 +59,11 @@ Open http://localhost:5173. You should see:
 
 1. Enter your name in the sidebar and click **Join**
 2. You appear as a yellow circle at a spawn point
-3. Click any floor tile to move there
+3. Use **WASD** or **arrow keys** to move around the map
 
-**Important:** The game defaults to **stepped mode** — nothing moves unless ticks advance. You need to either:
+Movement is immediate — the client predicts your position locally and the server confirms. WASD keys are disabled when the chat input is focused so you can type messages normally.
 
-**Option A:** Switch to realtime mode (game ticks automatically):
-```bash
-curl -X POST localhost:3001/api/debug/mode -H 'Content-Type: application/json' \
-  -d '{"mode":"realtime"}'
-```
-
-**Option B:** Manually tick:
-```bash
-curl -X POST localhost:3001/api/debug/tick -H 'Content-Type: application/json' \
-  -d '{"count":10}'
-```
+The server starts in **realtime mode** at 20 ticks/sec, so NPCs and pathfinding movement update automatically.
 
 ### 5. Have a conversation
 
@@ -131,6 +121,6 @@ docker compose ps
 
 **Client can't connect:** The WebSocket connects directly to `:3001`, not through Vite. Make sure the game server is running.
 
-**Player won't move:** The game is in stepped mode. Either switch to realtime or manually tick.
+**Player won't move:** Make sure the chat input is not focused (click on the canvas first). WASD/arrow keys only work when no text input has focus.
 
 **"Conversation is not active":** The conversation needs to progress through `invited -> walking -> active`. Tick 2-3 times after starting a conversation.

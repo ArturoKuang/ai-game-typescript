@@ -73,7 +73,7 @@ curl -X POST localhost:3001/api/debug/say \
   -d '{"playerId":"npc_alice","convoId":1,"content":"The cafe smells great today"}'
 ```
 
-**Play in the browser:** Open http://localhost:5173, enter your name, click Join, and click tiles to move.
+**Play in the browser:** Open http://localhost:5173, enter your name, click Join, and use **WASD** or **arrow keys** to move around the map.
 
 ## Architecture
 
@@ -87,8 +87,8 @@ Browser (PixiJS, :5173) ---ws---> Game Server (Node.js, :3001)
                                   PostgreSQL + pgvector (:5432)
 ```
 
-- **Game engine** is tick-based and fully deterministic (seeded RNG). Supports `stepped` mode (manual ticks for testing) and `realtime` mode (auto-ticks).
-- **A\* pathfinding** on a 20x20 tile grid with 4-directional movement.
+- **Game engine** is tick-based and fully deterministic (seeded RNG). Server defaults to `realtime` mode (20 ticks/sec). Tests use `stepped` mode (manual ticks).
+- **Two movement systems**: WASD/arrow keys for instant tile-by-tile movement (client-side prediction, no pathfinding), and A* pathfinding for NPC/API-driven movement on a 20x20 tile grid.
 - **Conversations** follow a state machine: `invited -> walking -> active -> ended`.
 - **Memory system** stores NPC memories as vector embeddings in PostgreSQL with pgvector. Retrieval ranks by recency, importance, and semantic relevance.
 - **Debug API** lets you observe and control everything via curl. See [docs/debug-api.md](docs/debug-api.md).
@@ -119,7 +119,7 @@ data/
 docker compose exec game-server npx vitest run
 ```
 
-68 tests covering: game loop, pathfinding, conversations, WebSocket protocol, ASCII map rendering, scenarios, event logging, embeddings, and memory scoring.
+79 tests covering: game loop, pathfinding, conversations, WebSocket protocol, ASCII map rendering, scenarios, event logging, embeddings, memory scoring, and performance benchmarks.
 
 ## Tech Stack
 

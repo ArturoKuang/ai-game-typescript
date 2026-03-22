@@ -98,7 +98,7 @@ npm run dev    # Vite dev server on :5173
 
 - **ES modules only** -- use `.js` extensions in import paths (TypeScript NodeNext resolution requires this).
 - **Strict TypeScript** -- no `any` unless unavoidable. All types live in `engine/types.ts` or `network/protocol.ts`.
-- **Tick-based simulation** -- all game logic advances via `tick()`. Time is measured in ticks, not wall-clock time.
+- **Tick-based simulation** -- NPC and conversation logic advances via `tick()`. Human WASD movement is processed immediately outside the tick loop via `movePlayerDirection()`.
 - **Seeded RNG** -- use the `rng.ts` PRNG for anything that should be reproducible. Never use `Math.random()` in game logic.
 - **Tests are pure unit tests** -- no database or network required. Tests use in-memory game loops created via `test/helpers/testGame.ts`.
 - **Engine is I/O-free** -- `engine/` has no database, network, or filesystem dependencies.
@@ -106,9 +106,12 @@ npm run dev    # Vite dev server on :5173
 ## Architecture Notes
 
 - **GameLoop** is the central coordinator. It owns players, the world, conversations, and the event logger.
-- **Two modes**: `stepped` (call `tick()` or POST `/api/debug/tick`) and `realtime` (auto-ticks at configurable interval).
+- **Two modes**: `stepped` (call `tick()` or POST `/api/debug/tick`) and `realtime` (auto-ticks at configurable interval). The server defaults to **realtime mode at 20 ticks/sec**.
+- **Two movement systems**:
+  - **WASD / arrow keys** (human players): Sends `move_direction` messages. Server moves the player one tile immediately (no pathfinding) and broadcasts the update. Client uses client-side prediction for instant feedback.
+  - **Click-to-move / API move** (NPCs and debug): Uses A* pathfinding. Player walks along the computed path at `speed` tiles per tick.
 - **Conversations** follow a state machine: `invited -> walking -> active -> ended`. The ConversationManager auto-navigates participants toward each other.
-- **WebSocket protocol** is defined in `network/protocol.ts` with discriminated unions (`ClientMessage`, `ServerMessage`).
+- **WebSocket protocol** is defined in `network/protocol.ts` with discriminated unions (`ClientMessage`, `ServerMessage`). The server broadcasts `player_update` messages in real time — no client-side polling needed.
 - **A* pathfinding** uses 4-directional movement on the tile grid. Walls and water are impassable.
 - **Player states**: `idle`, `walking`, `conversing`, `doing_activity`.
 - **Memory system**: Memories are stored in PostgreSQL with pgvector embeddings. Retrieval uses a composite score of recency (exponential decay), importance (1-10), and relevance (cosine similarity). Reflections are generated when cumulative importance exceeds a threshold.

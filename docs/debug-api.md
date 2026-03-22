@@ -17,8 +17,8 @@ curl localhost:3001/api/debug/state
 ```json
 {
   "tick": 42,
-  "mode": "stepped",
-  "tickRate": 2,
+  "mode": "realtime",
+  "tickRate": 20,
   "playerCount": 5,
   "world": { "width": 20, "height": 20 }
 }
@@ -224,7 +224,7 @@ curl -X POST localhost:3001/api/debug/move -H 'Content-Type: application/json' \
 { "path": [{"x":3,"y":3}, {"x":3,"y":4}, {"x":4,"y":4}, ...] }
 ```
 
-**Note:** Movement only happens when ticks advance. After calling `/move`, call `/tick` to see the player actually walk.
+**Note:** In realtime mode (default), the player walks automatically. In stepped mode, call `/tick` after `/move` to advance the player along the path.
 
 ### POST /start-convo
 
