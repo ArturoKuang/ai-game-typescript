@@ -1,10 +1,16 @@
+---
+name: debug
+description: Inspect and control the AI Town game server via the debug API. Use when checking game state, spawning NPCs, advancing ticks, or inspecting the map.
+argument-hint: "[command]"
+---
+
 # Debug Game State
 
 Inspect and control the AI Town game server via the debug API. Server runs on `localhost:3001`.
 
 ## Arguments
 
-- `{{command}}` — what to inspect or do (e.g., "show map", "spawn npc", "check state")
+- `$ARGUMENTS` — what to inspect or do (e.g., "show map", "spawn npc", "check state")
 
 ## Instructions
 

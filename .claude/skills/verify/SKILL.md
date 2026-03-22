@@ -1,3 +1,8 @@
+---
+name: verify
+description: Run tests and optionally verify via the debug API after code changes to confirm nothing is broken.
+---
+
 # Verify Changes
 
 Run tests and optionally verify via the debug API. Use this after quick edits to confirm nothing is broken.

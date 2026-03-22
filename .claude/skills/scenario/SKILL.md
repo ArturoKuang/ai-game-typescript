@@ -1,11 +1,17 @@
+---
+name: scenario
+description: Load a preset scenario into the AI Town game server, optionally advance ticks, and display the full game state.
+argument-hint: "[name] [ticks]"
+---
+
 # Load and Inspect Scenario
 
 Load a preset scenario, tick the simulation, and display the game state.
 
 ## Arguments
 
-- `{{name}}` — scenario name: `empty`, `two_npcs_near_cafe`, or `crowded_town` (default: `two_npcs_near_cafe`)
-- `{{ticks}}` — number of ticks to advance (default: 0)
+- `$1` — scenario name: `empty`, `two_npcs_near_cafe`, or `crowded_town` (default: `two_npcs_near_cafe`)
+- `$2` — number of ticks to advance (default: 0)
 
 ## Instructions
 
@@ -14,17 +20,17 @@ Load a preset scenario, tick the simulation, and display the game state.
 ```bash
 # Reset and load the scenario
 curl -s -X POST localhost:3001/api/debug/reset | jq .
-curl -s -X POST localhost:3001/api/debug/scenario -H 'Content-Type: application/json' -d '{"name": "{{name}}"}' | jq .
+curl -s -X POST localhost:3001/api/debug/scenario -H 'Content-Type: application/json' -d '{"name": "$1"}' | jq .
 ```
 
 If the server is not running, report the error and suggest starting it with `cd server && npm run dev`.
 
 ### Step 2: Advance Ticks (if requested)
 
-If `{{ticks}}` > 0:
+If `$2` > 0:
 
 ```bash
-curl -s -X POST localhost:3001/api/debug/tick -H 'Content-Type: application/json' -d '{"count": {{ticks}}}' | jq .
+curl -s -X POST localhost:3001/api/debug/tick -H 'Content-Type: application/json' -d '{"count": $2}' | jq .
 ```
 
 ### Step 3: Display State

@@ -1,10 +1,16 @@
+---
+name: implement
+description: Implement a game feature following the full development workflow — read state, implement, write tests, run tests, verify, and report.
+argument-hint: "[feature description]"
+---
+
 # Implement Feature
 
 Implement a game feature following the full development workflow.
 
 ## Arguments
 
-- `{{description}}` — what feature to implement
+- `$ARGUMENTS` — what feature to implement
 
 ## Instructions
 
@@ -26,7 +32,7 @@ If the server is not running, read the code directly. Focus on:
 
 ### Step 2: Implement
 
-Write the code changes for: **{{description}}**
+Write the code changes for: **$ARGUMENTS**
 
 Follow project conventions:
 - ES modules with `.js` import extensions
