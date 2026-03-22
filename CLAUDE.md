@@ -39,6 +39,21 @@ data/
   map.json           # 20x20 town map (tiles, activities, spawn points)
 ```
 
+## Development Workflow
+
+When implementing features or fixing bugs, follow this workflow:
+
+1. **Read state** — understand the current game state and relevant code before changing anything
+2. **Implement** — write the code changes
+3. **Write tests** — add vitest tests using `createTestGame()` or `createMiniGame()` from `test/helpers/testGame.ts`
+4. **Run tests** — `cd server && npm test` — fix until green
+5. **Verify** — if the server is running, check via debug API (`GET /api/debug/map`, `GET /api/debug/state`)
+6. **Report** — show test results and ASCII map snapshot
+
+Before committing, always run tests and verify via the debug API.
+
+**Skills available:** Use `/implement` for the full workflow, `/verify` for quick test + check, `/debug` for API reference, `/scenario` to load presets.
+
 ## Tech Stack
 
 - **Runtime**: Node.js 20, ES modules (`"type": "module"`)
@@ -90,6 +105,19 @@ docker-compose up     # PostgreSQL on :5432, server on :3001
 - Use `createTestGame()` or `createMiniGame()` from `test/helpers/testGame.ts` to get a pre-configured `GameLoop`.
 - Assert on tick results (`TickResult.events`) and player state after ticking.
 - WebSocket tests create real server instances on ephemeral ports.
+
+### Test Helpers (`test/helpers/testGame.ts`)
+
+`createMiniGame()` — 5x5 map (walls on edges, open floor interior). Fast, use for unit tests.
+`createTestGame()` — full 20x20 map with activities and spawn points.
+
+**TestGame methods:**
+- `spawn(id, x, y)` — create a player at position
+- `tick(count?)` — advance N ticks (default 1), returns `TickResult[]`
+- `move(id, x, y)` — set player movement target
+- `getPlayer(id)` — get player state (throws if not found)
+- `spawnNearby(id1, id2, distance?)` — spawn two players close together
+- `destroy()` — reset game state
 
 ## Debug API
 

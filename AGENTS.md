@@ -24,6 +24,19 @@ server/test/          # Vitest test suite
 data/map.json         # 20x20 tile-based town map
 ```
 
+## Development Workflow
+
+When implementing features or fixing bugs, follow this workflow:
+
+1. **Read state** — understand the current game state and relevant code before changing anything
+2. **Implement** — write the code changes
+3. **Write tests** — add vitest tests using `createTestGame()` or `createMiniGame()` from `test/helpers/testGame.ts`
+4. **Run tests** — `cd server && npm test` — fix until green
+5. **Verify** — if the server is running, check via debug API (`GET /api/debug/map`, `GET /api/debug/state`)
+6. **Report** — show test results and ASCII map snapshot
+
+Before committing, always run tests and verify via the debug API.
+
 ## Making Changes
 
 ### Before You Start
