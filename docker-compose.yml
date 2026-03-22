@@ -29,6 +29,9 @@ services:
         condition: service_healthy
     volumes:
       - ./server/src:/app/src
+      - ./server/test:/app/test
+      - ./server/vitest.config.ts:/app/vitest.config.ts
+      - ./data:/app/data
 
 volumes:
   pgdata:
