@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "scripts": {
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
+    "test": "cd server && npm test",
+    "test:perf": "cd server && npm run test:perf"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9"
+  }
+}
