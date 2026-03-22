@@ -1,11 +1,19 @@
-import { ConversationManager } from './conversation.js';
-import { GameLogger } from './logger.js';
-import { findPath } from './pathfinding.js';
-import { SeededRNG } from './rng.js';
-import type { GameEvent, MapData, Orientation, Player, PlayerState, Position, TickResult } from './types.js';
-import { World } from './world.js';
+import { ConversationManager } from "./conversation.js";
+import { GameLogger } from "./logger.js";
+import { findPath } from "./pathfinding.js";
+import { SeededRNG } from "./rng.js";
+import type {
+  GameEvent,
+  MapData,
+  Orientation,
+  Player,
+  PlayerState,
+  Position,
+  TickResult,
+} from "./types.js";
+import { World } from "./world.js";
 
-export type GameMode = 'stepped' | 'realtime';
+export type GameMode = "stepped" | "realtime";
 
 type EventHandler = (event: GameEvent) => void;
 
@@ -16,7 +24,7 @@ export interface GameLoopOptions {
 }
 
 export class GameLoop {
-  private tick_: number = 0;
+  private tick_ = 0;
   private mode_: GameMode;
   private tickRate_: number;
   private world_: World | null = null;
@@ -29,7 +37,7 @@ export class GameLoop {
 
   constructor(options: GameLoopOptions = {}) {
     this.rng_ = new SeededRNG(options.seed ?? Date.now());
-    this.mode_ = options.mode ?? 'stepped';
+    this.mode_ = options.mode ?? "stepped";
     this.tickRate_ = options.tickRate ?? 2;
   }
 
@@ -40,7 +48,7 @@ export class GameLoop {
   }
 
   get world(): World {
-    if (!this.world_) throw new Error('World not loaded');
+    if (!this.world_) throw new Error("World not loaded");
     return this.world_;
   }
 
@@ -63,24 +71,29 @@ export class GameLoop {
     const player: Player = {
       id: params.id,
       name: params.name,
-      description: params.description ?? '',
+      description: params.description ?? "",
       personality: params.personality,
       isNpc: params.isNpc ?? false,
       x: params.x,
       y: params.y,
-      orientation: 'down',
+      orientation: "down",
       speed: params.speed ?? 1.0,
-      state: 'idle',
+      state: "idle",
     };
 
     this.players_.set(params.id, player);
-    this.emit({ tick: this.tick_, type: 'spawn', playerId: params.id, data: { x: params.x, y: params.y } });
+    this.emit({
+      tick: this.tick_,
+      type: "spawn",
+      playerId: params.id,
+      data: { x: params.x, y: params.y },
+    });
     return player;
   }
 
   removePlayer(id: string): void {
     this.players_.delete(id);
-    this.emit({ tick: this.tick_, type: 'despawn', playerId: id });
+    this.emit({ tick: this.tick_, type: "despawn", playerId: id });
   }
 
   getPlayer(id: string): Player | undefined {
@@ -96,9 +109,12 @@ export class GameLoop {
   setPlayerTarget(playerId: string, x: number, y: number): Position[] | null {
     const player = this.players_.get(playerId);
     if (!player) return null;
-    if (player.state === 'conversing') return null;
+    if (player.state === "conversing") return null;
 
-    const start: Position = { x: Math.round(player.x), y: Math.round(player.y) };
+    const start: Position = {
+      x: Math.round(player.x),
+      y: Math.round(player.y),
+    };
     const goal: Position = { x, y };
 
     const path = findPath(this.world, start, goal);
@@ -108,9 +124,14 @@ export class GameLoop {
     player.pathIndex = 0;
     player.targetX = x;
     player.targetY = y;
-    player.state = 'walking';
+    player.state = "walking";
 
-    this.emit({ tick: this.tick_, type: 'move_start', playerId, data: { targetX: x, targetY: y, pathLength: path.length } });
+    this.emit({
+      tick: this.tick_,
+      type: "move_start",
+      playerId,
+      data: { targetX: x, targetY: y, pathLength: path.length },
+    });
     return path;
   }
 
@@ -122,7 +143,11 @@ export class GameLoop {
 
     // Process movement for all walking players
     for (const player of this.players_.values()) {
-      if (player.state === 'walking' && player.path && player.pathIndex !== undefined) {
+      if (
+        player.state === "walking" &&
+        player.path &&
+        player.pathIndex !== undefined
+      ) {
         const moveEvents = this.processMovement(player);
         for (const e of moveEvents) this.emit(e);
         events.push(...moveEvents);
@@ -148,11 +173,14 @@ export class GameLoop {
     const events: GameEvent[] = [];
     if (!player.path || player.pathIndex === undefined) return events;
 
+    const path = player.path;
+    let pathIndex = player.pathIndex;
+
     // Move along path by speed (tiles per tick)
     let remaining = player.speed;
-    while (remaining > 0 && player.pathIndex < player.path.length - 1) {
-      const nextIdx = player.pathIndex + 1;
-      const next = player.path[nextIdx];
+    while (remaining > 0 && pathIndex < path.length - 1) {
+      const nextIdx: number = pathIndex + 1;
+      const next = path[nextIdx];
       const dx = next.x - player.x;
       const dy = next.y - player.y;
       const dist = Math.abs(dx) + Math.abs(dy);
@@ -161,6 +189,7 @@ export class GameLoop {
         // Reach next waypoint
         player.x = next.x;
         player.y = next.y;
+        pathIndex = nextIdx;
         player.pathIndex = nextIdx;
         remaining -= dist;
 
@@ -177,17 +206,22 @@ export class GameLoop {
     }
 
     // Check if destination reached
-    if (player.pathIndex >= player.path.length - 1) {
+    if (pathIndex >= path.length - 1) {
       // Snap to final position
-      const final = player.path[player.path.length - 1];
+      const final = path[path.length - 1];
       player.x = final.x;
       player.y = final.y;
       player.path = undefined;
       player.pathIndex = undefined;
       player.targetX = undefined;
       player.targetY = undefined;
-      player.state = 'idle';
-      events.push({ tick: this.tick_, type: 'move_end', playerId: player.id, data: { x: player.x, y: player.y } });
+      player.state = "idle";
+      events.push({
+        tick: this.tick_,
+        type: "move_end",
+        playerId: player.id,
+        data: { x: player.x, y: player.y },
+      });
     }
 
     return events;
@@ -195,21 +229,21 @@ export class GameLoop {
 
   private getOrientation(dx: number, dy: number): Orientation {
     if (Math.abs(dx) > Math.abs(dy)) {
-      return dx > 0 ? 'right' : 'left';
+      return dx > 0 ? "right" : "left";
     }
-    return dy > 0 ? 'down' : 'up';
+    return dy > 0 ? "down" : "up";
   }
 
   /** Keep player.state and player.currentConvoId in sync with ConversationManager */
   private syncPlayerConvoState(): void {
     for (const player of this.players_.values()) {
       const convo = this.convoManager_.getPlayerConversation(player.id);
-      if (convo && convo.state === 'active') {
-        player.state = 'conversing';
+      if (convo && convo.state === "active") {
+        player.state = "conversing";
         player.currentConvoId = convo.id;
-      } else if (player.state === 'conversing') {
+      } else if (player.state === "conversing") {
         // Conversation ended or not found
-        player.state = 'idle';
+        player.state = "idle";
         player.currentConvoId = undefined;
       }
     }
@@ -218,7 +252,7 @@ export class GameLoop {
   // --- Realtime mode ---
 
   start(): void {
-    if (this.mode_ !== 'realtime') return;
+    if (this.mode_ !== "realtime") return;
     if (this.intervalId) return;
     const ms = Math.round(1000 / this.tickRate_);
     this.intervalId = setInterval(() => this.tick(), ms);
@@ -244,7 +278,7 @@ export class GameLoop {
     const handlers = this.eventHandlers.get(event.type) ?? [];
     for (const h of handlers) h(event);
     // Also emit to wildcard listeners
-    const allHandlers = this.eventHandlers.get('*') ?? [];
+    const allHandlers = this.eventHandlers.get("*") ?? [];
     for (const h of allHandlers) h(event);
   }
 
@@ -259,10 +293,10 @@ export class GameLoop {
   }
 
   set mode(m: GameMode) {
-    if (m === 'realtime' && this.mode_ !== 'realtime') {
+    if (m === "realtime" && this.mode_ !== "realtime") {
       this.mode_ = m;
       this.start();
-    } else if (m === 'stepped') {
+    } else if (m === "stepped") {
       this.stop();
       this.mode_ = m;
     }
