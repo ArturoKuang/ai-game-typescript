@@ -3,12 +3,15 @@ import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkConnection } from './db/client.js';
+import { checkConnection, pool } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
+import { Repository } from './db/repository.js';
 import { createDebugRouter } from './debug/router.js';
 import { GameLoop } from './engine/gameLoop.js';
 import type { MapData } from './engine/types.js';
 import { GameWebSocketServer } from './network/websocket.js';
+import { PlaceholderEmbedder } from './npc/embedding.js';
+import { MemoryManager } from './npc/memory.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -20,6 +23,9 @@ app.use(express.json());
 
 // --- Game setup ---
 const game = new GameLoop({ mode: 'stepped' });
+const repo = new Repository(pool);
+const embedder = new PlaceholderEmbedder();
+const memoryManager = new MemoryManager(repo, embedder);
 
 // Load default map
 const mapPath = join(__dirname, '..', 'data', 'map.json');
@@ -49,7 +55,7 @@ app.get('/health', async (_req, res) => {
   });
 });
 
-app.use('/api/debug', createDebugRouter(game));
+app.use('/api/debug', createDebugRouter(game, memoryManager, pool));
 
 async function start() {
   try {
