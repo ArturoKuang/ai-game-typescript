@@ -1,6 +1,6 @@
 import { GameClient } from "./network.js";
 import { GameRenderer } from "./renderer.js";
-import type { FullGameState, TileType } from "./types.js";
+import type { FullGameState, MoveDirection, TileType } from "./types.js";
 import { UI } from "./ui.js";
 
 // State
@@ -162,13 +162,106 @@ async function start() {
     client.send({ type: "say", data: { content: text } });
   });
 
-  // Click to move
+  // Click to move (pathfinding)
   canvas.addEventListener("click", (e) => {
     if (!selfId) return;
     const tile = renderer.screenToTile(e.clientX, e.clientY);
     if (tile) {
       client.send({ type: "move", data: { x: tile.x, y: tile.y } });
     }
+  });
+
+  // --- WASD / Arrow key movement with client-side prediction ---
+  const KEY_TO_DIR: Record<string, MoveDirection> = {
+    w: "up",
+    a: "left",
+    s: "down",
+    d: "right",
+    ArrowUp: "up",
+    ArrowLeft: "left",
+    ArrowDown: "down",
+    ArrowRight: "right",
+  };
+
+  const heldKeys = new Set<string>();
+  const MOVE_INTERVAL_MS = 120; // ms between moves while key held
+  let moveIntervalId: ReturnType<typeof setInterval> | null = null;
+
+  function isInputFocused(): boolean {
+    const tag = document.activeElement?.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
+
+  function tryMove(direction: MoveDirection): void {
+    if (!selfId || !gameState) return;
+    const self = gameState.players.find((p) => p.id === selfId);
+    if (!self || self.state === "conversing") return;
+
+    // Client-side prediction: move local position immediately
+    const dx = direction === "left" ? -1 : direction === "right" ? 1 : 0;
+    const dy = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+    self.x = Math.round(self.x) + dx;
+    self.y = Math.round(self.y) + dy;
+    self.orientation = direction;
+    self.state = "idle";
+
+    // Tell the server
+    client.send({ type: "move_direction", data: { direction } });
+  }
+
+  function getActiveDirection(): MoveDirection | null {
+    // Priority: last pressed key wins, but we check in a fixed order
+    for (const key of heldKeys) {
+      const dir = KEY_TO_DIR[key];
+      if (dir) return dir;
+    }
+    return null;
+  }
+
+  function startMoveLoop(): void {
+    if (moveIntervalId) return;
+    // Fire first move immediately
+    const dir = getActiveDirection();
+    if (dir) tryMove(dir);
+
+    moveIntervalId = setInterval(() => {
+      const d = getActiveDirection();
+      if (d) tryMove(d);
+    }, MOVE_INTERVAL_MS);
+  }
+
+  function stopMoveLoop(): void {
+    if (moveIntervalId) {
+      clearInterval(moveIntervalId);
+      moveIntervalId = null;
+    }
+  }
+
+  window.addEventListener("keydown", (e) => {
+    if (isInputFocused()) return;
+    const dir = KEY_TO_DIR[e.key];
+    if (!dir) return;
+
+    e.preventDefault();
+    if (!heldKeys.has(e.key)) {
+      heldKeys.add(e.key);
+      // Fresh key press — move immediately and start repeat
+      stopMoveLoop();
+      startMoveLoop();
+    }
+  });
+
+  window.addEventListener("keyup", (e) => {
+    heldKeys.delete(e.key);
+    if (heldKeys.size === 0) {
+      stopMoveLoop();
+    }
+  });
+
+  // Stop movement if window loses focus
+  window.addEventListener("blur", () => {
+    heldKeys.clear();
+    stopMoveLoop();
   });
 
   // Render loop
@@ -179,24 +272,6 @@ async function start() {
     requestAnimationFrame(renderLoop);
   }
   renderLoop();
-
-  // Periodic player state refresh (since server doesn't push deltas yet)
-  setInterval(async () => {
-    if (!gameState) return;
-    try {
-      const res = await fetch("/api/debug/players");
-      if (res.ok) {
-        const players = await res.json();
-        gameState.players = players;
-        ui.updatePlayerList(players);
-        ui.setStatus(
-          `Connected | Tick: ${gameState.tick} | Players: ${players.length}`,
-        );
-      }
-    } catch {
-      // ignore fetch errors
-    }
-  }, 2000);
 }
 
 start().catch(console.error);

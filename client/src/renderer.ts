@@ -114,9 +114,16 @@ export class GameRenderer {
       // Update position
       const targetX = player.x * TILE_SIZE + TILE_SIZE / 2;
       const targetY = player.y * TILE_SIZE + TILE_SIZE / 2;
-      // Smooth lerp
-      sprite.container.x += (targetX - sprite.container.x) * 0.3;
-      sprite.container.y += (targetY - sprite.container.y) * 0.3;
+
+      if (player.id === this.selfId) {
+        // Local player: snap instantly for responsive feel
+        sprite.container.x = targetX;
+        sprite.container.y = targetY;
+      } else {
+        // Other players: smooth lerp
+        sprite.container.x += (targetX - sprite.container.x) * 0.3;
+        sprite.container.y += (targetY - sprite.container.y) * 0.3;
+      }
 
       // Update color based on identity
       const color =

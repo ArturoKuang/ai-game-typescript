@@ -116,6 +116,23 @@ export class GameWebSocketServer {
       case "move": {
         if (!info.playerId) return;
         this.game.setPlayerTarget(info.playerId, msg.data.x, msg.data.y);
+        const movedPlayer = this.game.getPlayer(info.playerId);
+        if (movedPlayer) {
+          this.broadcast({ type: "player_update", data: movedPlayer });
+        }
+        break;
+      }
+
+      case "move_direction": {
+        if (!info.playerId) return;
+        const moved = this.game.movePlayerDirection(
+          info.playerId,
+          msg.data.direction,
+        );
+        if (moved) {
+          const p = this.game.getPlayer(info.playerId);
+          if (p) this.broadcast({ type: "player_update", data: p });
+        }
         break;
       }
 

@@ -34,6 +34,7 @@ export class GameLoop {
   private eventHandlers: Map<string, EventHandler[]> = new Map();
   private logger_: GameLogger = new GameLogger();
   private convoManager_: ConversationManager = new ConversationManager();
+  private afterTickCallbacks: ((result: TickResult) => void)[] = [];
 
   constructor(options: GameLoopOptions = {}) {
     this.rng_ = new SeededRNG(options.seed ?? Date.now());
@@ -135,6 +136,44 @@ export class GameLoop {
     return path;
   }
 
+  /** Move a player one tile in a direction immediately (no pathfinding). Returns true if moved. */
+  movePlayerDirection(
+    playerId: string,
+    direction: "up" | "down" | "left" | "right",
+  ): boolean {
+    const player = this.players_.get(playerId);
+    if (!player) return false;
+    if (player.state === "conversing") return false;
+
+    const dx = direction === "left" ? -1 : direction === "right" ? 1 : 0;
+    const dy = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+
+    const newX = Math.round(player.x) + dx;
+    const newY = Math.round(player.y) + dy;
+
+    if (!this.world.isWalkable(newX, newY)) return false;
+
+    // Cancel any existing pathfinding
+    player.path = undefined;
+    player.pathIndex = undefined;
+    player.targetX = undefined;
+    player.targetY = undefined;
+
+    player.x = newX;
+    player.y = newY;
+    player.orientation = direction;
+    player.state = "idle";
+
+    this.emit({
+      tick: this.tick_,
+      type: "move_end",
+      playerId,
+      data: { x: newX, y: newY },
+    });
+
+    return true;
+  }
+
   // --- Tick ---
 
   tick(): TickResult {
@@ -166,7 +205,14 @@ export class GameLoop {
     // Sync player convo state
     this.syncPlayerConvoState();
 
-    return { tick: this.tick_, events };
+    const result = { tick: this.tick_, events };
+    for (const cb of this.afterTickCallbacks) cb(result);
+    return result;
+  }
+
+  /** Register a callback that runs after every tick */
+  onAfterTick(callback: (result: TickResult) => void): void {
+    this.afterTickCallbacks.push(callback);
   }
 
   private processMovement(player: Player): GameEvent[] {

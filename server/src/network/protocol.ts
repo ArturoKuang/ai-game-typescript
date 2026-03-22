@@ -23,9 +23,12 @@ export interface FullGameState {
 
 // --- Client -> Server ---
 
+export type MoveDirection = "up" | "down" | "left" | "right";
+
 export type ClientMessage =
   | { type: "join"; data: { name: string; description?: string } }
   | { type: "move"; data: { x: number; y: number } }
+  | { type: "move_direction"; data: { direction: MoveDirection } }
   | { type: "say"; data: { content: string } }
   | { type: "start_convo"; data: { targetId: string } }
   | { type: "end_convo" }

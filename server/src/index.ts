@@ -22,7 +22,7 @@ const PORT = Number.parseInt(process.env.PORT || "3001", 10);
 app.use(express.json());
 
 // --- Game setup ---
-const game = new GameLoop({ mode: "stepped" });
+const game = new GameLoop({ mode: "realtime", tickRate: 20 });
 const repo = new Repository(pool);
 const embedder = new PlaceholderEmbedder();
 const memoryManager = new MemoryManager(repo, embedder);
@@ -40,7 +40,18 @@ try {
 // --- WebSocket ---
 const wsServer = new GameWebSocketServer(server, game, game.conversations);
 
-// No wildcard broadcast — the client polls /api/debug/players for updates.
+// Broadcast all walking player positions after every tick
+game.onAfterTick((result) => {
+  for (const player of game.getPlayers()) {
+    if (player.state === "walking") {
+      wsServer.broadcast({ type: "player_update", data: player });
+    }
+  }
+  wsServer.broadcast({ type: "tick", data: { tick: result.tick } });
+});
+
+// Start the realtime loop
+game.start();
 
 // --- Routes ---
 app.get("/health", async (_req, res) => {
