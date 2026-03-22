@@ -4,9 +4,11 @@
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "test": "cd server && npm test",
-    "test:perf": "cd server && npm run test:perf"
+    "test:perf": "cd server && npm run test:perf",
+    "dev": "concurrently -n server,client -c blue,green \"docker compose up --build\" \"cd client && npm run dev\""
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9"
+    "@biomejs/biome": "^1.9",
+    "concurrently": "^9.2.1"
   }
 }
