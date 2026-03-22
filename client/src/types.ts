@@ -22,6 +22,10 @@ export interface Player {
   speed: number;
   state: PlayerState;
   currentConvoId?: number;
+  vx: number;
+  vy: number;
+  moveSpeed: number;
+  radius: number;
 }
 
 export interface Activity {
@@ -75,6 +79,8 @@ export type ClientMessage =
   | { type: "join"; data: { name: string } }
   | { type: "move"; data: { x: number; y: number } }
   | { type: "move_direction"; data: { direction: MoveDirection } }
+  | { type: "input_start"; data: { direction: MoveDirection } }
+  | { type: "input_stop"; data: { direction: MoveDirection } }
   | { type: "say"; data: { content: string } }
   | { type: "start_convo"; data: { targetId: string } }
   | { type: "end_convo" }

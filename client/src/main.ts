@@ -7,6 +7,7 @@ import { UI } from "./ui.js";
 let gameState: FullGameState | null = null;
 let selfId: string | null = null;
 let mapLoaded = false;
+let mapTiles: TileType[][] | null = null;
 
 // Init
 const canvas = document.getElementById("game-canvas") as HTMLCanvasElement;
@@ -25,6 +26,7 @@ async function start() {
       const actRes = await fetch("/api/debug/activities");
       const activities = actRes.ok ? await actRes.json() : [];
       renderer.renderMap(mapData.tiles, activities);
+      mapTiles = mapData.tiles;
       mapLoaded = true;
     }
   } catch (err) {
@@ -111,7 +113,31 @@ async function start() {
       case "player_update": {
         if (!gameState) break;
         const idx = gameState.players.findIndex((p) => p.id === msg.data.id);
-        if (idx >= 0) gameState.players[idx] = msg.data;
+        if (idx >= 0) {
+          if (msg.data.id === selfId) {
+            // Server reconciliation for self
+            const local = gameState.players[idx];
+            const dx = msg.data.x - local.x;
+            const dy = msg.data.y - local.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > 2) {
+              // Snap if too far off
+              local.x = msg.data.x;
+              local.y = msg.data.y;
+            } else if (dist > 0.01) {
+              // Gentle lerp toward server position
+              local.x += dx * 0.15;
+              local.y += dy * 0.15;
+            }
+            // Update non-position fields from server
+            local.state = msg.data.state;
+            local.orientation = msg.data.orientation;
+            local.vx = msg.data.vx;
+            local.vy = msg.data.vy;
+          } else {
+            gameState.players[idx] = msg.data;
+          }
+        }
         ui.updatePlayerList(gameState.players);
         break;
       }
@@ -171,7 +197,10 @@ async function start() {
     }
   });
 
-  // --- WASD / Arrow key movement with client-side prediction ---
+  // --- WASD / Arrow key continuous movement with input_start/input_stop ---
+  const MOVE_SPEED = 5.0;
+  const PLAYER_RADIUS = 0.4;
+
   const KEY_TO_DIR: Record<string, MoveDirection> = {
     w: "up",
     a: "left",
@@ -183,58 +212,91 @@ async function start() {
     ArrowRight: "right",
   };
 
-  const heldKeys = new Set<string>();
-  const MOVE_INTERVAL_MS = 120; // ms between moves while key held
-  let moveIntervalId: ReturnType<typeof setInterval> | null = null;
+  const heldDirections = new Set<MoveDirection>();
 
   function isInputFocused(): boolean {
     const tag = document.activeElement?.tagName;
     return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
   }
 
-  function tryMove(direction: MoveDirection): void {
-    if (!selfId || !gameState) return;
-    const self = gameState.players.find((p) => p.id === selfId);
-    if (!self || self.state === "conversing") return;
-
-    // Client-side prediction: move local position immediately
-    const dx = direction === "left" ? -1 : direction === "right" ? 1 : 0;
-    const dy = direction === "up" ? -1 : direction === "down" ? 1 : 0;
-    self.x = Math.round(self.x) + dx;
-    self.y = Math.round(self.y) + dy;
-    self.orientation = direction;
-    self.state = "idle";
-
-    // Tell the server
-    client.send({ type: "move_direction", data: { direction } });
+  /** Compute input vector from held directions */
+  function getInputVector(): { ix: number; iy: number } {
+    let ix = 0;
+    let iy = 0;
+    if (heldDirections.has("left")) ix -= 1;
+    if (heldDirections.has("right")) ix += 1;
+    if (heldDirections.has("up")) iy -= 1;
+    if (heldDirections.has("down")) iy += 1;
+    return { ix, iy };
   }
 
-  function getActiveDirection(): MoveDirection | null {
-    // Priority: last pressed key wins, but we check in a fixed order
-    for (const key of heldKeys) {
-      const dir = KEY_TO_DIR[key];
-      if (dir) return dir;
+  /** Client-side collision matching server logic */
+  function clientMoveWithCollision(
+    x: number,
+    y: number,
+    dx: number,
+    dy: number,
+    radius: number,
+  ): { x: number; y: number } {
+    // Resolve X then Y
+    let nx = x + dx;
+    let ny = y;
+    nx = clientResolveAxis(nx, ny, radius, true);
+    ny = y + dy;
+    ny = clientResolveAxis(nx, ny, radius, false);
+    return { x: nx, y: ny };
+  }
+
+  function clientResolveAxis(
+    cx: number,
+    cy: number,
+    radius: number,
+    isXAxis: boolean,
+  ): number {
+    if (!mapTiles) return isXAxis ? cx : cy;
+    const minTX = Math.floor((isXAxis ? cx : cx) - radius) - 1;
+    const maxTX = Math.floor((isXAxis ? cx : cx) + radius) + 1;
+    const minTY = Math.floor((isXAxis ? cy : cy) - radius) - 1;
+    const maxTY = Math.floor((isXAxis ? cy : cy) + radius) + 1;
+
+    let val = isXAxis ? cx : cy;
+    for (let ty = minTY; ty <= maxTY; ty++) {
+      for (let tx = minTX; tx <= maxTX; tx++) {
+        if (ty < 0 || ty >= mapTiles.length || tx < 0 || tx >= (mapTiles[0]?.length ?? 0)) continue;
+        if (mapTiles[ty][tx] === "floor") continue;
+        // Non-walkable tile
+        const closestX = Math.max(tx, Math.min(cx, tx + 1));
+        const closestY = Math.max(ty, Math.min(cy, ty + 1));
+        const distX = cx - closestX;
+        const distY = cy - closestY;
+        const distSq = distX * distX + distY * distY;
+
+        if (distSq < radius * radius && distSq > 0) {
+          const dist = Math.sqrt(distSq);
+          const overlap = radius - dist;
+          if (isXAxis) {
+            val += (distX / dist) * overlap;
+            cx = val;
+          } else {
+            val += (distY / dist) * overlap;
+            cy = val;
+          }
+        } else if (distSq === 0) {
+          if (isXAxis) {
+            const toLeft = cx - tx;
+            const toRight = tx + 1 - cx;
+            val = toLeft < toRight ? tx - radius : tx + 1 + radius;
+            cx = val;
+          } else {
+            const toTop = cy - ty;
+            const toBottom = ty + 1 - cy;
+            val = toTop < toBottom ? ty - radius : ty + 1 + radius;
+            cy = val;
+          }
+        }
+      }
     }
-    return null;
-  }
-
-  function startMoveLoop(): void {
-    if (moveIntervalId) return;
-    // Fire first move immediately
-    const dir = getActiveDirection();
-    if (dir) tryMove(dir);
-
-    moveIntervalId = setInterval(() => {
-      const d = getActiveDirection();
-      if (d) tryMove(d);
-    }, MOVE_INTERVAL_MS);
-  }
-
-  function stopMoveLoop(): void {
-    if (moveIntervalId) {
-      clearInterval(moveIntervalId);
-      moveIntervalId = null;
-    }
+    return val;
   }
 
   window.addEventListener("keydown", (e) => {
@@ -243,35 +305,73 @@ async function start() {
     if (!dir) return;
 
     e.preventDefault();
-    if (!heldKeys.has(e.key)) {
-      heldKeys.add(e.key);
-      // Fresh key press — move immediately and start repeat
-      stopMoveLoop();
-      startMoveLoop();
+    if (!heldDirections.has(dir)) {
+      heldDirections.add(dir);
+      client.send({ type: "input_start", data: { direction: dir } });
     }
   });
 
   window.addEventListener("keyup", (e) => {
-    heldKeys.delete(e.key);
-    if (heldKeys.size === 0) {
-      stopMoveLoop();
+    const dir = KEY_TO_DIR[e.key];
+    if (!dir) return;
+    if (heldDirections.has(dir)) {
+      heldDirections.delete(dir);
+      client.send({ type: "input_stop", data: { direction: dir } });
     }
   });
 
-  // Stop movement if window loses focus
+  // Stop all movement on blur
   window.addEventListener("blur", () => {
-    heldKeys.clear();
-    stopMoveLoop();
+    for (const dir of heldDirections) {
+      client.send({ type: "input_stop", data: { direction: dir } });
+    }
+    heldDirections.clear();
   });
 
-  // Render loop
-  function renderLoop() {
+  // --- Render loop with client-side prediction ---
+  let lastFrameTime = performance.now();
+
+  function renderLoop(now: number) {
+    const dt = (now - lastFrameTime) / 1000;
+    lastFrameTime = now;
+
+    if (gameState && selfId) {
+      const self = gameState.players.find((p) => p.id === selfId);
+      if (self && self.state !== "conversing") {
+        // Client-side prediction: apply same physics as server
+        const { ix, iy } = getInputVector();
+        if (ix !== 0 || iy !== 0) {
+          const mag = Math.sqrt(ix * ix + iy * iy);
+          const nix = ix / mag;
+          const niy = iy / mag;
+          const ddx = nix * MOVE_SPEED * dt;
+          const ddy = niy * MOVE_SPEED * dt;
+          const result = clientMoveWithCollision(
+            self.x,
+            self.y,
+            ddx,
+            ddy,
+            PLAYER_RADIUS,
+          );
+          self.x = result.x;
+          self.y = result.y;
+
+          // Update orientation
+          if (Math.abs(ix) > Math.abs(iy)) {
+            self.orientation = ix > 0 ? "right" : "left";
+          } else {
+            self.orientation = iy > 0 ? "down" : "up";
+          }
+        }
+      }
+    }
+
     if (gameState) {
       renderer.updatePlayers(gameState.players);
     }
     requestAnimationFrame(renderLoop);
   }
-  renderLoop();
+  requestAnimationFrame(renderLoop);
 }
 
 start().catch(console.error);
