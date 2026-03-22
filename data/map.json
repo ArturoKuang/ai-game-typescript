@@ -1,0 +1,40 @@
+{
+  "width": 20,
+  "height": 20,
+  "tiles": [
+    ["wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall"],
+    ["wall","floor","floor","floor","floor","wall","floor","floor","floor","floor","floor","floor","floor","floor","wall","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","wall","floor","floor","floor","floor","floor","floor","floor","floor","wall","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","wall","floor","floor","floor","floor","floor","floor","floor","floor","wall","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","wall","floor","floor","floor","floor","floor","floor","floor","floor","wall","floor","floor","floor","floor","wall"],
+    ["wall","wall","floor","wall","wall","wall","floor","floor","floor","floor","floor","floor","floor","floor","wall","wall","floor","wall","wall","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","wall","wall","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","wall","wall","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall"]
+  ],
+  "activities": [
+    { "id": 1, "name": "cafe counter", "description": "A cozy cafe counter with steaming coffee", "x": 3, "y": 3, "capacity": 2, "emoji": "☕" },
+    { "id": 2, "name": "reading nook", "description": "A quiet corner with comfortable chairs and bookshelves", "x": 16, "y": 3, "capacity": 2, "emoji": "📚" },
+    { "id": 3, "name": "park bench west", "description": "A wooden bench under an oak tree", "x": 5, "y": 15, "capacity": 2, "emoji": "🪑" },
+    { "id": 4, "name": "park bench east", "description": "A bench overlooking the pond", "x": 14, "y": 15, "capacity": 2, "emoji": "🪑" },
+    { "id": 5, "name": "town fountain", "description": "A stone fountain in the center of town", "x": 10, "y": 10, "capacity": 4, "emoji": "⛲" }
+  ],
+  "spawnPoints": [
+    { "x": 2, "y": 8 },
+    { "x": 17, "y": 8 },
+    { "x": 10, "y": 2 },
+    { "x": 10, "y": 17 },
+    { "x": 10, "y": 10 }
+  ]
+}
