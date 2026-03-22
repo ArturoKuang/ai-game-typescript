@@ -56,12 +56,16 @@ export function renderAsciiMap(game: GameLoop): {
       grid[py][px] = initial;
       playersByPos.set(`${px},${py}`, p);
     }
-    const stateStr =
-      p.state === "idle"
-        ? "idle"
-        : p.state === "walking"
-          ? `walking→(${p.targetX},${p.targetY})`
-          : p.state;
+    let stateStr: string;
+    if (p.state === "idle") {
+      stateStr = "idle";
+    } else if (p.state === "walking" && (p.vx !== 0 || p.vy !== 0)) {
+      stateStr = `moving v=(${p.vx.toFixed(1)},${p.vy.toFixed(1)})`;
+    } else if (p.state === "walking" && p.targetX !== undefined) {
+      stateStr = `walking→(${p.targetX},${p.targetY})`;
+    } else {
+      stateStr = p.state;
+    }
     legend[initial] = `${p.name}(${px},${py}) ${stateStr}`;
   }
 

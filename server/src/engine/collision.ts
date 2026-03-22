@@ -16,16 +16,29 @@ export function moveWithCollision(
   radius: number,
   world: World,
 ): { x: number; y: number } {
-  // Resolve X axis
-  let nx = x + dx;
-  let ny = y;
-  nx = resolveAxis(nx, ny, radius, world);
+  // Subdivide into steps no larger than radius to prevent tunneling
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const maxStep = radius;
+  const steps = dist > maxStep ? Math.ceil(dist / maxStep) : 1;
+  const sdx = dx / steps;
+  const sdy = dy / steps;
 
-  // Resolve Y axis
-  ny = y + dy;
-  ny = resolveAxisY(nx, ny, radius, world);
+  let cx = x;
+  let cy = y;
+  for (let i = 0; i < steps; i++) {
+    // Resolve X axis
+    let nx = cx + sdx;
+    nx = resolveAxis(nx, cy, radius, world);
 
-  return { x: nx, y: ny };
+    // Resolve Y axis
+    let ny = cy + sdy;
+    ny = resolveAxisY(nx, ny, radius, world);
+
+    cx = nx;
+    cy = ny;
+  }
+
+  return { x: cx, y: cy };
 }
 
 /** Push circle out of walls on X axis */
