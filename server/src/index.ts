@@ -9,6 +9,7 @@ import { Repository } from "./db/repository.js";
 import { createDebugRouter } from "./debug/router.js";
 import { GameLoop } from "./engine/gameLoop.js";
 import type { MapData } from "./engine/types.js";
+import { CHARACTERS } from "./data/characters.js";
 import { GameWebSocketServer } from "./network/websocket.js";
 import { PlaceholderEmbedder } from "./npc/embedding.js";
 import { MemoryManager } from "./npc/memory.js";
@@ -35,6 +36,24 @@ try {
   console.log(`Loaded map: ${mapData.width}x${mapData.height}`);
 } catch (err) {
   console.error("Failed to load map:", err);
+}
+
+// --- Spawn NPCs ---
+for (const char of CHARACTERS) {
+  try {
+    game.spawnPlayer({
+      id: char.id,
+      name: char.name,
+      x: char.spawnPoint.x,
+      y: char.spawnPoint.y,
+      isNpc: true,
+      description: char.description,
+      personality: char.personality,
+    });
+    console.log(`Spawned NPC: ${char.name} at (${char.spawnPoint.x}, ${char.spawnPoint.y})`);
+  } catch (err) {
+    console.error(`Failed to spawn ${char.name}:`, err);
+  }
 }
 
 // --- WebSocket ---
