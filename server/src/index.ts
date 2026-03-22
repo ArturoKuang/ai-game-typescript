@@ -8,13 +8,19 @@ import { runMigrations } from "./db/migrate.js";
 import { Repository } from "./db/repository.js";
 import { createDebugRouter } from "./debug/router.js";
 import { GameLoop } from "./engine/gameLoop.js";
-import type { MapData } from "./engine/types.js";
+import type { MapData, Player } from "./engine/types.js";
 import { CHARACTERS } from "./data/characters.js";
 import { GameWebSocketServer } from "./network/websocket.js";
 import { PlaceholderEmbedder } from "./npc/embedding.js";
 import { MemoryManager } from "./npc/memory.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** Strip server-internal fields from player before broadcasting to clients */
+function stripInternalFields(player: Player): Omit<Player, "inputX" | "inputY"> {
+  const { inputX: _ix, inputY: _iy, ...rest } = player;
+  return rest;
+}
 
 const app = express();
 const server = createServer(app);
@@ -57,16 +63,80 @@ for (const char of CHARACTERS) {
 }
 
 // --- WebSocket ---
-const wsServer = new GameWebSocketServer(server, game, game.conversations);
+const wsServer = new GameWebSocketServer(server, game);
 
-// Broadcast all walking player positions after every tick
-game.onAfterTick((result) => {
-  for (const player of game.getPlayers()) {
-    if (player.state === "walking") {
-      wsServer.broadcast({ type: "player_update", data: player });
+// --- Event-driven broadcasting ---
+// All game events flow through this single handler
+game.on("*", (event) => {
+  switch (event.type) {
+    case "spawn": {
+      const player = game.getPlayer(event.playerId!);
+      if (player) {
+        wsServer.broadcast({ type: "player_joined", data: player });
+      }
+      break;
+    }
+    case "despawn": {
+      wsServer.broadcast({
+        type: "player_left",
+        data: { id: event.playerId! },
+      });
+      break;
+    }
+    case "move_direction": {
+      const playerData = event.data?.player as Player | undefined;
+      if (playerData) {
+        wsServer.broadcast({ type: "player_update", data: stripInternalFields(playerData) as Player });
+      }
+      break;
+    }
+    case "move_start": {
+      const player = game.getPlayer(event.playerId!);
+      if (player) {
+        wsServer.broadcast({ type: "player_update", data: stripInternalFields(player) as Player });
+      }
+      break;
+    }
+    case "input_move":
+    case "player_update": {
+      const playerData = event.data?.player as Player | undefined;
+      if (playerData) {
+        wsServer.broadcast({ type: "player_update", data: stripInternalFields(playerData) as Player });
+      }
+      break;
+    }
+    case "move_end": {
+      const player = game.getPlayer(event.playerId!);
+      if (player) {
+        wsServer.broadcast({ type: "player_update", data: stripInternalFields(player) as Player });
+      }
+      break;
+    }
+    case "convo_started":
+    case "convo_active":
+    case "convo_accepted":
+    case "convo_ended": {
+      const convo = event.data?.conversation;
+      if (convo) {
+        wsServer.broadcast({ type: "convo_update", data: convo });
+      }
+      break;
+    }
+    case "convo_message": {
+      const msg = event.data?.message;
+      if (msg) {
+        wsServer.broadcast({ type: "message", data: msg });
+      }
+      break;
+    }
+    case "tick_complete": {
+      wsServer.broadcast({
+        type: "tick",
+        data: { tick: event.data!.tick as number },
+      });
+      break;
     }
   }
-  wsServer.broadcast({ type: "tick", data: { tick: result.tick } });
 });
 
 // Start the realtime loop
