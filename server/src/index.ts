@@ -57,6 +57,16 @@ app.get('/health', async (_req, res) => {
 
 app.use('/api/debug', createDebugRouter(game, memoryManager, pool));
 
+// Serve map data
+app.get('/data/map.json', (_req, res) => {
+  try {
+    const data = readFileSync(mapPath, 'utf-8');
+    res.type('application/json').send(data);
+  } catch {
+    res.status(404).json({ error: 'Map not found' });
+  }
+});
+
 async function start() {
   try {
     await runMigrations();
