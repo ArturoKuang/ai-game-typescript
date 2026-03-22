@@ -1,3 +1,4 @@
+import { GameLogger } from './logger.js';
 import { findPath } from './pathfinding.js';
 import { SeededRNG } from './rng.js';
 import type { GameEvent, MapData, Orientation, Player, PlayerState, Position, TickResult } from './types.js';
@@ -22,6 +23,7 @@ export class GameLoop {
   private rng_: SeededRNG;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private eventHandlers: Map<string, EventHandler[]> = new Map();
+  private logger_: GameLogger = new GameLogger();
 
   constructor(options: GameLoopOptions = {}) {
     this.rng_ = new SeededRNG(options.seed ?? Date.now());
@@ -209,6 +211,7 @@ export class GameLoop {
   }
 
   private emit(event: GameEvent): void {
+    this.logger_.log(event);
     const handlers = this.eventHandlers.get(event.type) ?? [];
     for (const h of handlers) h(event);
     // Also emit to wildcard listeners
@@ -248,10 +251,15 @@ export class GameLoop {
     return this.players_.size;
   }
 
+  get logger(): GameLogger {
+    return this.logger_;
+  }
+
   reset(): void {
     this.stop();
     this.tick_ = 0;
     this.players_.clear();
     this.world_ = null;
+    this.logger_.clear();
   }
 }
