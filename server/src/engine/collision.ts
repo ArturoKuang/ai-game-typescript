@@ -2,11 +2,13 @@ import type { World } from "./world.js";
 
 export const PLAYER_RADIUS = 0.4;
 
+const EPSILON = 1e-6;
+
 /**
- * Move a circle (player) by (dx, dy) with wall sliding.
- * Resolves X axis first, then Y axis independently.
- * For each axis, checks circle-vs-AABB overlap against all non-walkable tiles
- * in the 3x3 neighborhood and pushes the circle out along the penetration normal.
+ * Move a player by (dx, dy) with AABB tile collision.
+ * Uses split-axis resolution with minimum-penetration-axis selection
+ * to correctly handle diagonal corners. Subdivides large movements
+ * to prevent tunneling through walls.
  */
 export function moveWithCollision(
   x: number,
@@ -26,13 +28,13 @@ export function moveWithCollision(
   let cx = x;
   let cy = y;
   for (let i = 0; i < steps; i++) {
-    // Resolve X axis
+    // Resolve X axis (using current Y, before Y movement)
     let nx = cx + sdx;
-    nx = resolveAxis(nx, cy, radius, world);
+    nx = resolveX(nx, cy, sdx, radius, world);
 
-    // Resolve Y axis
+    // Resolve Y axis (using resolved X)
     let ny = cy + sdy;
-    ny = resolveAxisY(nx, ny, radius, world);
+    ny = resolveY(nx, ny, sdy, radius, world);
 
     cx = nx;
     cy = ny;
@@ -41,39 +43,54 @@ export function moveWithCollision(
   return { x: cx, y: cy };
 }
 
-/** Push circle out of walls on X axis */
-function resolveAxis(
+/**
+ * Push player out of wall tiles along X axis.
+ * Player hitbox is an AABB: [cx-r, cx+r] x [cy-r, cy+r].
+ * Only resolves tiles where X penetration is strictly less than Y penetration
+ * (i.e., X is the shallow axis). Tiles at diagonal corners where Y is shallower
+ * are left for the Y pass.
+ */
+function resolveX(
   cx: number,
   cy: number,
+  dx: number,
   radius: number,
   world: World,
 ): number {
-  const minTX = Math.floor(cx - radius) - 1;
-  const maxTX = Math.floor(cx + radius) + 1;
-  const minTY = Math.floor(cy - radius) - 1;
-  const maxTY = Math.floor(cy + radius) + 1;
+  const minTY = Math.floor(cy - radius + EPSILON);
+  const maxTY = Math.floor(cy + radius - EPSILON);
+  const minTX = Math.floor(cx - radius + EPSILON);
+  const maxTX = Math.floor(cx + radius - EPSILON);
 
   for (let ty = minTY; ty <= maxTY; ty++) {
     for (let tx = minTX; tx <= maxTX; tx++) {
       if (world.isWalkable(tx, ty)) continue;
-      // Tile AABB: [tx, tx+1] x [ty, ty+1]
-      // Only resolve X penetration
-      const closestX = Math.max(tx, Math.min(cx, tx + 1));
-      const closestY = Math.max(ty, Math.min(cy, ty + 1));
-      const distX = cx - closestX;
-      const distY = cy - closestY;
-      const distSq = distX * distX + distY * distY;
 
-      if (distSq < radius * radius && distSq > 0) {
-        const dist = Math.sqrt(distSq);
-        const overlap = radius - dist;
-        // Push out along X component only
-        cx += (distX / dist) * overlap;
-      } else if (distSq === 0) {
-        // Center is inside the tile — push out to nearest X edge
-        const toLeft = cx - tx;
-        const toRight = tx + 1 - cx;
-        if (toLeft < toRight) {
+      // Compute overlap depth on each axis
+      const overlapX = Math.min(
+        cx + radius - tx,
+        tx + 1 - (cx - radius),
+      );
+      const overlapY = Math.min(
+        cy + radius - ty,
+        ty + 1 - (cy - radius),
+      );
+
+      if (overlapX <= 0 || overlapY <= 0) continue;
+
+      // Only resolve in X if X is strictly the shallow axis.
+      // Ties (corner-touching) go to the Y pass.
+      if (overlapX >= overlapY) continue;
+
+      // Push direction based on movement, fallback to minimum penetration
+      if (dx > 0) {
+        cx = Math.min(cx, tx - radius);
+      } else if (dx < 0) {
+        cx = Math.max(cx, tx + 1 + radius);
+      } else {
+        const penRight = cx + radius - tx;
+        const penLeft = tx + 1 - (cx - radius);
+        if (penRight <= penLeft) {
           cx = tx - radius;
         } else {
           cx = tx + 1 + radius;
@@ -84,36 +101,46 @@ function resolveAxis(
   return cx;
 }
 
-/** Push circle out of walls on Y axis */
-function resolveAxisY(
+/**
+ * Push player out of wall tiles along Y axis.
+ * Resolves all remaining overlaps (catch-all after X pass).
+ */
+function resolveY(
   cx: number,
   cy: number,
+  dy: number,
   radius: number,
   world: World,
 ): number {
-  const minTX = Math.floor(cx - radius) - 1;
-  const maxTX = Math.floor(cx + radius) + 1;
-  const minTY = Math.floor(cy - radius) - 1;
-  const maxTY = Math.floor(cy + radius) + 1;
+  const minTX = Math.floor(cx - radius + EPSILON);
+  const maxTX = Math.floor(cx + radius - EPSILON);
+  const minTY = Math.floor(cy - radius + EPSILON);
+  const maxTY = Math.floor(cy + radius - EPSILON);
 
   for (let ty = minTY; ty <= maxTY; ty++) {
     for (let tx = minTX; tx <= maxTX; tx++) {
       if (world.isWalkable(tx, ty)) continue;
-      const closestX = Math.max(tx, Math.min(cx, tx + 1));
-      const closestY = Math.max(ty, Math.min(cy, ty + 1));
-      const distX = cx - closestX;
-      const distY = cy - closestY;
-      const distSq = distX * distX + distY * distY;
 
-      if (distSq < radius * radius && distSq > 0) {
-        const dist = Math.sqrt(distSq);
-        const overlap = radius - dist;
-        // Push out along Y component only
-        cy += (distY / dist) * overlap;
-      } else if (distSq === 0) {
-        const toTop = cy - ty;
-        const toBottom = ty + 1 - cy;
-        if (toTop < toBottom) {
+      const overlapX = Math.min(
+        cx + radius - tx,
+        tx + 1 - (cx - radius),
+      );
+      const overlapY = Math.min(
+        cy + radius - ty,
+        ty + 1 - (cy - radius),
+      );
+
+      if (overlapX <= 0 || overlapY <= 0) continue;
+
+      // Push direction based on movement, fallback to minimum penetration
+      if (dy > 0) {
+        cy = Math.min(cy, ty - radius);
+      } else if (dy < 0) {
+        cy = Math.max(cy, ty + 1 + radius);
+      } else {
+        const penDown = cy + radius - ty;
+        const penUp = ty + 1 - (cy - radius);
+        if (penDown <= penUp) {
           cy = ty - radius;
         } else {
           cy = ty + 1 + radius;
