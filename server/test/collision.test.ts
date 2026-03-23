@@ -122,4 +122,67 @@ describe("collision", () => {
     const result = moveWithCollision(3.5, 2.5, 2.0, 0, PLAYER_RADIUS, w);
     expect(result.x).toBeLessThanOrEqual(4 - PLAYER_RADIUS);
   });
+
+  test("no phantom collision with diagonal wall tiles", () => {
+    const w = world();
+    // Player moving right along wall at y=1 (wall at y=0).
+    // Should not be pushed sideways by diagonal wall tiles.
+    const start = { x: 2.5, y: 1.4 };
+    const result = moveWithCollision(start.x, start.y, 0.2, 0, PLAYER_RADIUS, w);
+    // X should move freely (no wall in movement path)
+    expect(result.x).toBeCloseTo(2.7);
+    // Y should not change (no Y movement)
+    expect(result.y).toBeCloseTo(1.4);
+  });
+
+  test("stable position near wall — no drift", () => {
+    const w = world();
+    // Player at rest against wall — repeated zero-movement should not drift
+    const x = 1 + PLAYER_RADIUS; // exactly at wall edge
+    const y = 2.5;
+    let pos = { x, y };
+    for (let i = 0; i < 10; i++) {
+      pos = moveWithCollision(pos.x, pos.y, 0, 0, PLAYER_RADIUS, w);
+    }
+    expect(pos.x).toBeCloseTo(x, 4);
+    expect(pos.y).toBeCloseTo(y, 4);
+  });
+
+  test("repeated movement into wall converges — no jitter", () => {
+    const w = world();
+    // Simulate holding left key into wall for many ticks
+    let x = 1.5;
+    const y = 2.5;
+    const positions: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const result = moveWithCollision(x, y, -0.25, 0, PLAYER_RADIUS, w);
+      x = result.x;
+      positions.push(x);
+    }
+    // Should converge to wall limit and stay there
+    const lastFive = positions.slice(-5);
+    const variance = Math.max(...lastFive) - Math.min(...lastFive);
+    expect(variance).toBeLessThan(0.001);
+    expect(x).toBeGreaterThanOrEqual(1 + PLAYER_RADIUS - 0.01);
+  });
+
+  test("diagonal movement near corner does not teleport", () => {
+    const w = world();
+    // Move diagonally toward top-left corner repeatedly
+    let x = 1.5;
+    let y = 1.5;
+    for (let i = 0; i < 20; i++) {
+      const result = moveWithCollision(x, y, -0.25, -0.25, PLAYER_RADIUS, w);
+      // Position should never jump more than the movement amount
+      const jumpX = Math.abs(result.x - x);
+      const jumpY = Math.abs(result.y - y);
+      expect(jumpX).toBeLessThanOrEqual(0.26);
+      expect(jumpY).toBeLessThanOrEqual(0.26);
+      x = result.x;
+      y = result.y;
+    }
+    // Should be at the corner limit
+    expect(x).toBeGreaterThanOrEqual(1 + PLAYER_RADIUS - 0.01);
+    expect(y).toBeGreaterThanOrEqual(1 + PLAYER_RADIUS - 0.01);
+  });
 });
