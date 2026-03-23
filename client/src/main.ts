@@ -58,6 +58,24 @@ async function start() {
   // Connect WebSocket
   client.connect();
 
+  // --- WASD / Arrow key continuous movement with input_start/input_stop ---
+  const MOVE_SPEED = 5.0;
+  const PLAYER_RADIUS = 0.4;
+  const COLLISION_EPSILON = 1e-6;
+
+  const KEY_TO_DIR: Record<string, MoveDirection> = {
+    w: "up",
+    a: "left",
+    s: "down",
+    d: "right",
+    ArrowUp: "up",
+    ArrowLeft: "left",
+    ArrowDown: "down",
+    ArrowRight: "right",
+  };
+
+  const heldDirections = new Set<MoveDirection>();
+
   client.onMessage((msg) => {
     switch (msg.type) {
       case "state": {
@@ -120,15 +138,24 @@ async function start() {
             const dx = msg.data.x - local.x;
             const dy = msg.data.y - local.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist > 2) {
-              // Snap if too far off
+
+            if (dist > 4) {
+              // Teleport/spawn — snap immediately
               local.x = msg.data.x;
               local.y = msg.data.y;
-            } else if (dist > 0.01) {
-              // Gentle lerp toward server position
-              local.x += dx * 0.15;
-              local.y += dy * 0.15;
+            } else if (heldDirections.size > 0) {
+              // Actively moving: only correct if very far off
+              if (dist > 1.5) {
+                local.x += dx * 0.2;
+                local.y += dy * 0.2;
+              }
+              // Otherwise trust client prediction entirely
+            } else if (dist > 0.3) {
+              // Stopped: correct toward server position
+              local.x += dx * 0.3;
+              local.y += dy * 0.3;
             }
+
             // Update non-position fields from server
             local.state = msg.data.state;
             local.orientation = msg.data.orientation;
@@ -197,23 +224,6 @@ async function start() {
     }
   });
 
-  // --- WASD / Arrow key continuous movement with input_start/input_stop ---
-  const MOVE_SPEED = 5.0;
-  const PLAYER_RADIUS = 0.4;
-
-  const KEY_TO_DIR: Record<string, MoveDirection> = {
-    w: "up",
-    a: "left",
-    s: "down",
-    d: "right",
-    ArrowUp: "up",
-    ArrowLeft: "left",
-    ArrowDown: "down",
-    ArrowRight: "right",
-  };
-
-  const heldDirections = new Set<MoveDirection>();
-
   function isInputFocused(): boolean {
     const tag = document.activeElement?.tagName;
     return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
@@ -230,7 +240,19 @@ async function start() {
     return { ix, iy };
   }
 
-  /** Client-side collision matching server logic */
+  /** Check if a tile is blocked (matching server: out-of-bounds = blocked) */
+  function isTileBlocked(tx: number, ty: number): boolean {
+    if (!mapTiles) return false;
+    if (ty < 0 || ty >= mapTiles.length || tx < 0 || tx >= (mapTiles[0]?.length ?? 0)) {
+      return true; // Out of bounds = blocked (matches server)
+    }
+    return mapTiles[ty][tx] !== "floor";
+  }
+
+  /**
+   * Client-side AABB collision matching server logic exactly.
+   * Uses split-axis resolution with minimum-penetration-axis selection.
+   */
   function clientMoveWithCollision(
     x: number,
     y: number,
@@ -238,65 +260,89 @@ async function start() {
     dy: number,
     radius: number,
   ): { x: number; y: number } {
-    // Resolve X then Y
+    // No subdivision needed: client movement per frame is always << radius
     let nx = x + dx;
-    let ny = y;
-    nx = clientResolveAxis(nx, ny, radius, true);
-    ny = y + dy;
-    ny = clientResolveAxis(nx, ny, radius, false);
+    nx = clientResolveX(nx, y, dx, radius);
+    let ny = y + dy;
+    ny = clientResolveY(nx, ny, dy, radius);
     return { x: nx, y: ny };
   }
 
-  function clientResolveAxis(
+  function clientResolveX(
     cx: number,
     cy: number,
+    dx: number,
     radius: number,
-    isXAxis: boolean,
   ): number {
-    if (!mapTiles) return isXAxis ? cx : cy;
-    const minTX = Math.floor((isXAxis ? cx : cx) - radius) - 1;
-    const maxTX = Math.floor((isXAxis ? cx : cx) + radius) + 1;
-    const minTY = Math.floor((isXAxis ? cy : cy) - radius) - 1;
-    const maxTY = Math.floor((isXAxis ? cy : cy) + radius) + 1;
+    const minTY = Math.floor(cy - radius + COLLISION_EPSILON);
+    const maxTY = Math.floor(cy + radius - COLLISION_EPSILON);
+    const minTX = Math.floor(cx - radius + COLLISION_EPSILON);
+    const maxTX = Math.floor(cx + radius - COLLISION_EPSILON);
 
-    let val = isXAxis ? cx : cy;
     for (let ty = minTY; ty <= maxTY; ty++) {
       for (let tx = minTX; tx <= maxTX; tx++) {
-        if (ty < 0 || ty >= mapTiles.length || tx < 0 || tx >= (mapTiles[0]?.length ?? 0)) continue;
-        if (mapTiles[ty][tx] === "floor") continue;
-        // Non-walkable tile
-        const closestX = Math.max(tx, Math.min(cx, tx + 1));
-        const closestY = Math.max(ty, Math.min(cy, ty + 1));
-        const distX = cx - closestX;
-        const distY = cy - closestY;
-        const distSq = distX * distX + distY * distY;
+        if (!isTileBlocked(tx, ty)) continue;
 
-        if (distSq < radius * radius && distSq > 0) {
-          const dist = Math.sqrt(distSq);
-          const overlap = radius - dist;
-          if (isXAxis) {
-            val += (distX / dist) * overlap;
-            cx = val;
+        const overlapX = Math.min(cx + radius - tx, tx + 1 - (cx - radius));
+        const overlapY = Math.min(cy + radius - ty, ty + 1 - (cy - radius));
+
+        if (overlapX <= 0 || overlapY <= 0) continue;
+        if (overlapX >= overlapY) continue; // Y is shallower, skip for Y pass
+
+        if (dx > 0) {
+          cx = Math.min(cx, tx - radius);
+        } else if (dx < 0) {
+          cx = Math.max(cx, tx + 1 + radius);
+        } else {
+          const penRight = cx + radius - tx;
+          const penLeft = tx + 1 - (cx - radius);
+          if (penRight <= penLeft) {
+            cx = tx - radius;
           } else {
-            val += (distY / dist) * overlap;
-            cy = val;
-          }
-        } else if (distSq === 0) {
-          if (isXAxis) {
-            const toLeft = cx - tx;
-            const toRight = tx + 1 - cx;
-            val = toLeft < toRight ? tx - radius : tx + 1 + radius;
-            cx = val;
-          } else {
-            const toTop = cy - ty;
-            const toBottom = ty + 1 - cy;
-            val = toTop < toBottom ? ty - radius : ty + 1 + radius;
-            cy = val;
+            cx = tx + 1 + radius;
           }
         }
       }
     }
-    return val;
+    return cx;
+  }
+
+  function clientResolveY(
+    cx: number,
+    cy: number,
+    dy: number,
+    radius: number,
+  ): number {
+    const minTX = Math.floor(cx - radius + COLLISION_EPSILON);
+    const maxTX = Math.floor(cx + radius - COLLISION_EPSILON);
+    const minTY = Math.floor(cy - radius + COLLISION_EPSILON);
+    const maxTY = Math.floor(cy + radius - COLLISION_EPSILON);
+
+    for (let ty = minTY; ty <= maxTY; ty++) {
+      for (let tx = minTX; tx <= maxTX; tx++) {
+        if (!isTileBlocked(tx, ty)) continue;
+
+        const overlapX = Math.min(cx + radius - tx, tx + 1 - (cx - radius));
+        const overlapY = Math.min(cy + radius - ty, ty + 1 - (cy - radius));
+
+        if (overlapX <= 0 || overlapY <= 0) continue;
+
+        if (dy > 0) {
+          cy = Math.min(cy, ty - radius);
+        } else if (dy < 0) {
+          cy = Math.max(cy, ty + 1 + radius);
+        } else {
+          const penDown = cy + radius - ty;
+          const penUp = ty + 1 - (cy - radius);
+          if (penDown <= penUp) {
+            cy = ty - radius;
+          } else {
+            cy = ty + 1 + radius;
+          }
+        }
+      }
+    }
+    return cy;
   }
 
   window.addEventListener("keydown", (e) => {
