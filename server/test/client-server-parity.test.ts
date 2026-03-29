@@ -75,7 +75,7 @@ describe("client/server movement parity", () => {
       y: 2,
       orientation: "down" as const,
       radius: PLAYER_RADIUS,
-      moveSpeed: 5,
+      inputSpeed: 5,
     };
     const timeline: InputEdge[] = [
       { tick: 0, direction: "up", active: true },
@@ -121,7 +121,7 @@ describe("client/server movement parity", () => {
       y: 2,
       orientation: "down" as const,
       radius: PLAYER_RADIUS,
-      moveSpeed: 5,
+      inputSpeed: 5,
     };
 
     const predicted = predictLocalPlayerStep({

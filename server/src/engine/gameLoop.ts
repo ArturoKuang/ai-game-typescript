@@ -54,7 +54,7 @@ export class GameLoop {
   private tickRate_: number;
   private world_: World | null = null;
   private players_: Map<string, Player> = new Map();
-  private manualInputs_: Map<string, HeldInputState> = new Map();
+  private heldKeys_: Map<string, HeldInputState> = new Map();
   private validateInvariants_: boolean;
   private rng_: SeededRNG;
   private intervalId: ReturnType<typeof setInterval> | null = null;
@@ -108,18 +108,18 @@ export class GameLoop {
       x: params.x,
       y: params.y,
       orientation: "down",
-      speed: params.speed ?? 1.0,
+      pathSpeed: params.speed ?? 1.0,
       state: "idle",
       vx: 0,
       vy: 0,
       inputX: 0,
       inputY: 0,
       radius: PLAYER_RADIUS,
-      moveSpeed: 5.0,
+      inputSpeed: 5.0,
     };
 
     this.players_.set(params.id, player);
-    this.manualInputs_.set(params.id, createHeldInputState());
+    this.heldKeys_.set(params.id, createHeldInputState());
     this.emit({
       tick: this.tick_,
       type: "spawn",
@@ -131,7 +131,7 @@ export class GameLoop {
 
   removePlayer(id: string): void {
     this.players_.delete(id);
-    this.manualInputs_.delete(id);
+    this.heldKeys_.delete(id);
     this.emit({ tick: this.tick_, type: "despawn", playerId: id });
   }
 
@@ -396,7 +396,10 @@ export class GameLoop {
     this.processCommands();
     this.assertWorldInvariants();
 
-    // 2. Process input-driven movement (velocity-based, continuous)
+    // 2. Process input-driven movement (velocity-based, continuous).
+    //    This and path movement below are mutually exclusive per player:
+    //    setPlayerInput() cancels any active A* path, so a player is
+    //    never in both systems during the same tick.
     const dt = 1 / this.tickRate_;
     for (const player of this.players_.values()) {
       if (player.state === "conversing") continue;
@@ -494,8 +497,8 @@ export class GameLoop {
     }
 
     // Set velocity
-    player.vx = ix * player.moveSpeed;
-    player.vy = iy * player.moveSpeed;
+    player.vx = ix * player.inputSpeed;
+    player.vy = iy * player.inputSpeed;
 
     const dx = player.vx * dt;
     const dy = player.vy * dt;
@@ -555,7 +558,7 @@ export class GameLoop {
     let pathIndex = player.pathIndex;
 
     // Move along path by speed (tiles per tick)
-    let remaining = player.speed;
+    let remaining = player.pathSpeed;
     while (remaining > 0 && pathIndex < path.length - 1) {
       const nextIdx: number = pathIndex + 1;
       const next = path[nextIdx];
@@ -659,7 +662,7 @@ export class GameLoop {
   }
 
   private clearManualInput(player: Player): void {
-    const held = this.manualInputs_.get(player.id);
+    const held = this.heldKeys_.get(player.id);
     if (held) {
       held.up = false;
       held.down = false;
@@ -707,11 +710,11 @@ export class GameLoop {
   }
 
   private getHeldInputState(playerId: string): HeldInputState {
-    const existing = this.manualInputs_.get(playerId);
+    const existing = this.heldKeys_.get(playerId);
     if (existing) return existing;
 
     const created = createHeldInputState();
-    this.manualInputs_.set(playerId, created);
+    this.heldKeys_.set(playerId, created);
     return created;
   }
 
@@ -963,7 +966,7 @@ export class GameLoop {
     this.stop();
     this.tick_ = 0;
     this.players_.clear();
-    this.manualInputs_.clear();
+    this.heldKeys_.clear();
     this.world_ = null;
     this.logger_.clear();
     this.convoManager_.clear();

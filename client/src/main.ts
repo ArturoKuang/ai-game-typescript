@@ -317,7 +317,7 @@ async function start() {
               y: self.y,
               orientation: self.orientation,
               radius: self.radius ?? PLAYER_RADIUS,
-              moveSpeed: self.moveSpeed ?? MOVE_SPEED,
+              inputSpeed: self.inputSpeed ?? MOVE_SPEED,
             },
             otherPlayers: gameState.players
               .filter((player) => player.id !== self.id)

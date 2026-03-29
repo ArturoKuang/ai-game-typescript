@@ -132,14 +132,14 @@ export class GameWebSocketServer {
           x: spawn.x,
           y: spawn.y,
           orientation: "down",
-          speed: 1.0,
+          pathSpeed: 1.0,
           state: "idle",
           vx: 0,
           vy: 0,
           inputX: 0,
           inputY: 0,
           radius: 0.4,
-          moveSpeed: 5.0,
+          inputSpeed: 5.0,
         };
         this.send(ws, { type: "player_joined", data: previewPlayer });
         break;

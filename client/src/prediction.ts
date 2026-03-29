@@ -12,7 +12,7 @@ export interface PredictionPlayer {
   y: number;
   orientation: Orientation;
   radius: number;
-  moveSpeed: number;
+  inputSpeed: number;
 }
 
 export interface PredictionOccupant {
@@ -73,8 +73,8 @@ export function predictLocalPlayerStep(options: {
   const mag = Math.sqrt(ix * ix + iy * iy);
   const nix = ix / mag;
   const niy = iy / mag;
-  const dx = nix * player.moveSpeed * dt;
-  const dy = niy * player.moveSpeed * dt;
+  const dx = nix * player.inputSpeed * dt;
+  const dy = niy * player.inputSpeed * dt;
 
   const moved = clientMoveWithCollision(
     player.x,
@@ -98,8 +98,8 @@ export function predictLocalPlayerStep(options: {
     x: resolved.x,
     y: resolved.y,
     orientation: getOrientationForInput(ix, iy, player.orientation),
-    vx: nix * player.moveSpeed,
-    vy: niy * player.moveSpeed,
+    vx: nix * player.inputSpeed,
+    vy: niy * player.inputSpeed,
     inputX: ix,
     inputY: iy,
     moved: true,

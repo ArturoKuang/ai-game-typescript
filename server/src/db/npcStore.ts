@@ -87,7 +87,7 @@ export class PostgresNpcStore implements NpcPersistenceStore {
         player.targetX ?? null,
         player.targetY ?? null,
         player.orientation,
-        player.speed,
+        player.pathSpeed,
         player.state,
         player.currentActivityId ?? null,
         null,

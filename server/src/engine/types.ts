@@ -27,7 +27,8 @@ export interface Player {
   path?: Position[];
   pathIndex?: number;
   orientation: Orientation;
-  speed: number;
+  /** Tiles per tick when following an A* path */
+  pathSpeed: number;
   state: PlayerState;
   currentActivityId?: number;
   currentConvoId?: number;
@@ -36,7 +37,8 @@ export interface Player {
   inputX: number;
   inputY: number;
   radius: number;
-  moveSpeed: number;
+  /** Units per tick when moving via keyboard input */
+  inputSpeed: number;
 }
 
 export interface Activity {
