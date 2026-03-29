@@ -21,13 +21,18 @@ export interface Conversation {
   summary?: string;
 }
 
-const CONVERSATION_DISTANCE = 2; // tiles
-const CONVERSATION_TIMEOUT = 600; // ticks with no messages before auto-end
+/** Tiles apart before conversation activates */
+const CONVERSATION_DISTANCE = 2;
+/** Ticks with no messages before auto-end (30s at 20 ticks/sec) */
+const CONVERSATION_TIMEOUT = 600;
+/** Maximum messages before conversation auto-ends */
 const MAX_MESSAGES = 20;
-const MAX_DURATION = 1200; // ticks
+/** Maximum conversation duration in ticks (60s at 20 ticks/sec) */
+const MAX_DURATION = 1200;
 
 export class ConversationManager {
   private conversations: Map<number, Conversation> = new Map();
+  private playerToConvo: Map<string, number> = new Map();
   private nextId = 1;
   private nextMsgId = 1;
 
@@ -36,17 +41,9 @@ export class ConversationManager {
     player2Id: string,
     tick: number,
   ): Conversation {
-    // Check neither player is already in a conversation
-    for (const c of this.conversations.values()) {
-      if (c.state === "ended") continue;
-      if (
-        c.player1Id === player1Id ||
-        c.player2Id === player1Id ||
-        c.player1Id === player2Id ||
-        c.player2Id === player2Id
-      ) {
-        throw new Error("One or both players are already in a conversation");
-      }
+    // Check neither player is already in a conversation (O(1))
+    if (this.playerToConvo.has(player1Id) || this.playerToConvo.has(player2Id)) {
+      throw new Error("One or both players are already in a conversation");
     }
 
     const convo: Conversation = {
@@ -58,6 +55,8 @@ export class ConversationManager {
       startedTick: tick,
     };
     this.conversations.set(convo.id, convo);
+    this.playerToConvo.set(player1Id, convo.id);
+    this.playerToConvo.set(player2Id, convo.id);
     return convo;
   }
 
@@ -100,6 +99,8 @@ export class ConversationManager {
     if (convo.state === "ended") return convo;
     convo.state = "ended";
     convo.endedTick = tick;
+    this.playerToConvo.delete(convo.player1Id);
+    this.playerToConvo.delete(convo.player2Id);
     return convo;
   }
 
@@ -117,8 +118,9 @@ export class ConversationManager {
 
     for (const convo of this.conversations.values()) {
       if (convo.state === "invited") {
-        // Auto-accept when either side is an NPC so NPC-initiated
-        // conversations can target humans without extra client UX.
+        // Auto-accept when either participant is an NPC. NPCs have no
+        // client UX to manually accept an invitation, so we skip the
+        // "invited" state and go straight to "walking" toward each other.
         const p1 = getPlayer(convo.player1Id);
         const p2 = getPlayer(convo.player2Id);
         if (p1?.isNpc || p2?.isNpc) {
@@ -149,7 +151,8 @@ export class ConversationManager {
             data: { convoId: convo.id, conversation: { ...convo } },
           });
         } else {
-          // Move toward each other (meet at midpoint)
+          // Both players walk toward the midpoint so they converge
+          // symmetrically instead of one chasing the other.
           const midX = Math.round((p1.x + p2.x) / 2);
           const midY = Math.round((p1.y + p2.y) / 2);
           if (p1.state !== "walking") setTarget(p1.id, midX, midY);
@@ -225,17 +228,15 @@ export class ConversationManager {
     return Array.from(this.conversations.values());
   }
 
-  /** Get conversation a player is currently in (not ended) */
+  /** Get conversation a player is currently in (not ended). O(1). */
   getPlayerConversation(playerId: string): Conversation | undefined {
-    for (const c of this.conversations.values()) {
-      if (c.state === "ended") continue;
-      if (c.player1Id === playerId || c.player2Id === playerId) return c;
-    }
-    return undefined;
+    const convoId = this.playerToConvo.get(playerId);
+    return convoId !== undefined ? this.conversations.get(convoId) : undefined;
   }
 
   clear(): void {
     this.conversations.clear();
+    this.playerToConvo.clear();
     this.nextId = 1;
     this.nextMsgId = 1;
   }
