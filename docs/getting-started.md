@@ -1,48 +1,66 @@
 # Getting Started
 
+This project has two distinct workflows:
+
+- Runtime workflow: browser client + game server + PostgreSQL
+- Test workflow: in-memory Vitest suite with no database required
+
 ## Prerequisites
 
-- Docker and Docker Compose
-- Node.js 20+ (for the browser client)
+- Node.js 20+
+- Docker Desktop or another Docker runtime for the easiest full-stack setup
 
-## Quick Start
+## Fastest Full-Stack Path
 
-### 1. Start the server and database
+### 1. Start PostgreSQL and the game server
 
 ```bash
 docker compose up --build -d
 ```
 
 This starts:
-- **PostgreSQL + pgvector** on port 5432
-- **Game server** on port 3001
 
-Verify it's running:
+- PostgreSQL + pgvector on `localhost:5432`
+- The TypeScript game server on `localhost:3001`
+
+Verify it is up:
 
 ```bash
 curl localhost:3001/health
-# {"status":"ok","tick":0,"dbConnected":true}
+curl localhost:3001/api/debug/state
 ```
 
-### 2. Load a scenario
+Expected behavior:
 
-The game starts empty. Load one of the predefined scenarios:
+- The server loads `data/map.json` on boot
+- The server immediately spawns all five NPCs from `data/characters.ts`
+- The game loop runs in `realtime` mode at 20 ticks/sec
 
-```bash
-# 5 NPCs at various locations around town
-curl -X POST localhost:3001/api/debug/scenario -H 'Content-Type: application/json' \
-  -d '{"name":"crowded_town"}'
-```
-
-See the map:
+### 2. Inspect the town from the terminal
 
 ```bash
 curl localhost:3001/api/debug/map
+curl localhost:3001/api/debug/players
+curl localhost:3001/api/debug/activities
 ```
+
+If you want a different test setup, replace the default population with a scenario:
+
+```bash
+curl -X POST localhost:3001/api/debug/scenario \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"crowded_town"}'
+```
+
+Available scenario names:
+
+- `empty`
+- `two_npcs_near_cafe`
+- `crowded_town`
 
 ### 3. Start the browser client
 
-In a separate terminal:
+In a second terminal:
 
 ```bash
 cd client
@@ -50,77 +68,132 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173. You should see:
-- A 20x20 tile map with brown walls and dark floors
-- 5 teal NPC circles at their spawn points
-- Player list in the sidebar
+Open `http://localhost:5173`.
 
 ### 4. Join and move
 
-1. Enter your name in the sidebar and click **Join**
-2. You appear as a yellow circle at a spawn point
-3. Use **WASD** or **arrow keys** to move around the map
+Once the client is open:
 
-Movement is immediate — the client predicts your position locally and the server confirms. WASD keys are disabled when the chat input is focused so you can type messages normally.
+1. Enter a name and click `Join`
+2. Use `WASD` or the arrow keys for continuous movement
+3. Click a destination tile to use server-side pathfinding
 
-The server starts in **realtime mode** at 20 ticks/sec, so NPCs and pathfinding movement update automatically.
+Behavior to know:
 
-### 5. Have a conversation
+- Keyboard movement sends `input_start` / `input_stop` messages and is resolved on the server tick loop with collision.
+- Click-to-move sends a target position and follows an A* path.
+- Chat is disabled until you have joined.
 
-Start a conversation between two NPCs via the debug API:
+## Local Server Workflow Without Docker
+
+The server can run outside Docker, but it still needs PostgreSQL because startup applies the schema before listening.
+
+The default connection string in code is:
+
+```text
+postgres://aitown:aitown_dev@localhost:5432/aitown
+```
+
+If your local database uses that default, you can run the server directly:
 
 ```bash
-# Start conversation
-curl -X POST localhost:3001/api/debug/start-convo -H 'Content-Type: application/json' \
-  -d '{"player1Id":"npc_alice","player2Id":"npc_bob"}'
-
-# Tick to activate
-curl -X POST localhost:3001/api/debug/tick -H 'Content-Type: application/json' \
-  -d '{"count":2}'
-
-# Send messages
-curl -X POST localhost:3001/api/debug/say -H 'Content-Type: application/json' \
-  -d '{"playerId":"npc_alice","convoId":1,"content":"Hi Bob"}'
-
-# View conversation
-curl localhost:3001/api/debug/conversations/1
+cd server
+npm install
+npm run dev
 ```
+
+If you need different values, export them in your shell before starting the server:
+
+```bash
+export DATABASE_URL=postgres://USER:PASS@HOST:5432/aitown
+export PORT=3001
+cd server
+npm run dev
+```
+
+Note: the repo includes `.env.example`, but the server does not currently auto-load `.env`.
 
 ## Running Tests
 
-Tests run inside the Docker container (no database needed — they use in-memory game loops):
+Tests are fully in-memory and do not need PostgreSQL.
 
 ```bash
-docker compose exec game-server npx vitest run
+cd server
+npm install
+npm test
 ```
 
-Or if you have npm working locally:
+Or from the repo root:
 
 ```bash
-cd server && npm test
+npm test
 ```
 
-## Stopping
+Useful variants:
 
 ```bash
-docker compose down          # stop containers
-docker compose down -v       # stop and delete database volume
+cd server && npm run test:watch
+cd server && npm run test:perf
+cd server && npm run debug:movement -- --list
+cd server && npm run debug:movement -- --scenario path_handoff
+cd server && npm run debug:movement -- --scenario simultaneous_input_release --bundle /tmp/w-a.json
+```
+
+The movement harness is a headless repro tool for movement and collision bugs. It runs against the same in-memory game loop as the tests, prints snapshots and filtered debug events, verifies expected traces, and can save replay bundles for future debugging without PostgreSQL.
+
+## Useful First Debug Commands
+
+```bash
+curl localhost:3001/api/debug/state
+curl localhost:3001/api/debug/map
+curl 'localhost:3001/api/debug/log?type=input_state,input_move,player_collision,move_cancelled&limit=20'
+curl localhost:3001/api/debug/conversations
+```
+
+To switch the loop to manual stepping:
+
+```bash
+curl -X POST localhost:3001/api/debug/mode \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"stepped"}'
+
+curl -X POST localhost:3001/api/debug/tick \
+  -H 'Content-Type: application/json' \
+  -d '{"count":10}'
 ```
 
 ## Troubleshooting
 
-**Server not starting:** Check Docker logs:
-```bash
-docker compose logs game-server
-```
+### `curl localhost:3001/health` fails
 
-**Database connection errors:** Make sure the `db` container is healthy:
+Check the containers:
+
 ```bash
 docker compose ps
+docker compose logs game-server
+docker compose logs db
 ```
 
-**Client can't connect:** The WebSocket connects directly to `:3001`, not through Vite. Make sure the game server is running.
+### The browser loads but no live updates appear
 
-**Player won't move:** Make sure the chat input is not focused (click on the canvas first). WASD/arrow keys only work when no text input has focus.
+The browser client connects its WebSocket directly to port `3001`. Make sure the game server is reachable there.
 
-**"Conversation is not active":** The conversation needs to progress through `invited -> walking -> active`. Tick 2-3 times after starting a conversation.
+### Local server start fails with a database error
+
+The runtime server requires PostgreSQL at boot. Use Docker Compose or start a local Postgres instance with pgvector enabled.
+
+### I want a clean simulation state
+
+Prefer `POST /api/debug/scenario` over `POST /api/debug/reset`.
+
+`/reset` clears the game loop's world as well as its players, so the normal map is not reloaded automatically afterward.
+
+### I need to inspect browser-side reconciliation
+
+Open the browser console and inspect:
+
+```js
+window.__AI_TOWN_CLIENT_DEBUG__?.getEvents()
+```
+
+This shows recent client-side reconciliation corrections so you can distinguish prediction drift from server-authoritative bugs.

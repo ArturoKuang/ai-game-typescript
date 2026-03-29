@@ -57,11 +57,13 @@ docs/
 When implementing features or fixing bugs, follow this workflow:
 
 1. **Read state** -- understand the current game state and relevant code before changing anything
-2. **Implement** -- write the code changes
-3. **Write tests** -- add vitest tests using `TestGame` from `test/helpers/testGame.ts`
-4. **Run tests** -- `docker compose exec game-server npx vitest run` -- fix until green
-5. **Verify** -- if the server is running, check via debug API (`GET /api/debug/map`, `GET /api/debug/state`)
-6. **Report** -- show test results and ASCII map snapshot
+2. **Reproduce** -- save a deterministic repro first with `npm run debug:movement -- --scenario ... --bundle ...` or the debug API
+3. **Write a failing runtime contract** -- assert the gameplay rule, not just helper math
+4. **Implement** -- write the code changes
+5. **Add parity or invariant coverage when relevant** -- use client/server parity tests and `validateInvariants` for movement bugs
+6. **Run tests** -- `docker compose exec game-server npx vitest run` or `cd server && npm test` -- fix until green
+7. **Verify** -- if the server is running, check via debug API (`GET /api/debug/map`, `GET /api/debug/state`)
+8. **Report** -- show test results, the repro artifact used, and an ASCII map snapshot
 
 Before committing, always run tests and verify via the debug API.
 
@@ -102,13 +104,14 @@ npm run dev    # Vite dev server on :5173
 - **Seeded RNG** -- use the `rng.ts` PRNG for anything that should be reproducible. Never use `Math.random()` in game logic.
 - **Tests are pure unit tests** -- no database or network required. Tests use in-memory game loops created via `test/helpers/testGame.ts`.
 - **Engine is I/O-free** -- `engine/` has no database, network, or filesystem dependencies.
+- **Avoid tests that are too granular** -- tests that only assert helper math, speed magnitude, or isolated collision helpers can pass while runtime behavior is still broken. Prefer runtime contracts, parity tests, and invariants.
 
 ## Architecture Notes
 
 - **GameLoop** is the central coordinator. It owns players, the world, conversations, and the event logger.
 - **Two modes**: `stepped` (call `tick()` or POST `/api/debug/tick`) and `realtime` (auto-ticks at configurable interval). The server defaults to **realtime mode at 20 ticks/sec**.
 - **Two movement systems**:
-  - **WASD / arrow keys** (human players): Sends `move_direction` messages. Server moves the player one tile immediately (no pathfinding) and broadcasts the update. Client uses client-side prediction for instant feedback.
+  - **WASD / arrow keys** (human players): Sends `input_start` / `input_stop` edges. The server tracks held keys, resolves continuous movement on the tick loop, and the client uses pure prediction helpers plus reconciliation logs for instant feedback.
   - **Click-to-move / API move** (NPCs and debug): Uses A* pathfinding. Player walks along the computed path at `speed` tiles per tick.
 - **Conversations** follow a state machine: `invited -> walking -> active -> ended`. The ConversationManager auto-navigates participants toward each other.
 - **WebSocket protocol** is defined in `network/protocol.ts` with discriminated unions (`ClientMessage`, `ServerMessage`). The server broadcasts `player_update` messages in real time — no client-side polling needed.
@@ -123,6 +126,16 @@ See `docs/architecture.md` for diagrams and detailed data flow.
 - Test files live in `server/test/` and match `*.test.ts`.
 - Use `TestGame` from `test/helpers/testGame.ts` to get a pre-configured `GameLoop` in stepped mode with seeded RNG.
 - Assert on tick results (`TickResult.events`) and player state after ticking.
+- For movement and collision work, prefer:
+  - runtime contract tests
+  - client/server parity tests that import the pure client prediction helpers
+  - debug invariant tests with `validateInvariants: true`
+
+Bad test smell:
+
+- only checking diagonal speed magnitude
+- only checking a low-level helper in isolation
+- reimplementing the client prediction math inside a test instead of importing it
 
 **TestGame methods:**
 - `spawn(id, x, y, isNpc?)` -- create a player at position
@@ -163,6 +176,21 @@ The debug API is mounted at `/api/debug/` and is the primary interface for obser
 - `POST /remember-convo` -- generate memories for both conversation participants
 
 See `docs/debug-api.md` for full request/response examples.
+
+Useful movement debugging commands:
+
+```bash
+cd server
+npm run debug:movement -- --scenario simultaneous_input_release
+npm run debug:movement -- --scenario simultaneous_input_release --bundle /tmp/w-a.json
+curl 'localhost:3001/api/debug/log?playerId=human_1&type=input_state,input_move,player_collision,move_cancelled&limit=50'
+```
+
+For browser reconciliation debugging, inspect:
+
+```js
+window.__AI_TOWN_CLIENT_DEBUG__?.getEvents()
+```
 
 ## Environment
 

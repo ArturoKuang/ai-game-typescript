@@ -29,11 +29,13 @@ data/map.json         # 20x20 tile-based town map
 When implementing features or fixing bugs, follow this workflow:
 
 1. **Read state** — understand the current game state and relevant code before changing anything
-2. **Implement** — write the code changes
-3. **Write tests** — add vitest tests using `createTestGame()` or `createMiniGame()` from `test/helpers/testGame.ts`
-4. **Run tests** — `cd server && npm test` — fix until green
-5. **Verify** — if the server is running, check via debug API (`GET /api/debug/map`, `GET /api/debug/state`)
-6. **Report** — show test results and ASCII map snapshot
+2. **Reproduce** — prefer `npm run debug:movement -- --scenario ...` or the debug API before editing
+3. **Write a failing runtime contract** — assert the gameplay behavior, not just helper math
+4. **Implement** — write the code changes
+5. **Add parity or invariant coverage when relevant** — use client/server parity tests and `validateInvariants` for movement bugs
+6. **Run tests** — `cd server && npm test` — fix until green
+7. **Verify** — if the server is running, check via debug API (`GET /api/debug/map`, `GET /api/debug/state`)
+8. **Report** — show test results, the harness or debug log used, and an ASCII map snapshot
 
 Before committing, always run tests and verify via the debug API.
 
@@ -57,7 +59,7 @@ Before committing, always run tests and verify via the debug API.
 - **No `Math.random()` in game logic** — use the seeded PRNG from `engine/rng.ts` for reproducibility.
 - **Tick-based time** — game state advances via `GameLoop.tick()`. Do not use `setTimeout`/`setInterval` in game logic (only in the realtime loop wrapper).
 - **Plain objects** — game state uses TypeScript interfaces, not classes. Do not introduce classes for game entities.
-- **Tests are self-contained** — use `createTestGame()` or `createMiniGame()` from `test/helpers/testGame.ts`. Tests must not require a database or network.
+- **Tests are self-contained** — use `TestGame` from `test/helpers/testGame.ts` or construct a stepped `GameLoop` directly. Tests must not require a database or network.
 
 ## Key Interfaces
 
@@ -89,21 +91,30 @@ interface TickResult { tick: number; events: GameEvent[] }
 cd server
 npm test              # Run once
 npm run test:watch    # Watch mode
+npm run debug:movement -- --list
 ```
 
 Test files: `server/test/*.test.ts`
 
+For movement and collision work, write tests at three levels:
+
+- Runtime contract tests: held-key ordering, integer-centered positions, path cancellation, collision ownership.
+- Client/server parity tests: run the same input script through `GameLoop` and the pure client prediction helpers.
+- Debug invariant tests: use `validateInvariants` to fail loudly on overlap, blocked-tile penetration, invalid paths, or stale state.
+
+Avoid tests that are too granular. A test that only checks speed magnitude or a helper function in isolation can pass while the game is still broken.
+
 Test fixtures provide pre-configured game loops with mini (5x5) or default (20x20) maps. Example:
 
 ```typescript
-import { createMiniGame } from './helpers/testGame.js';
+import { TestGame } from './helpers/testGame.js';
 
 test('player moves', () => {
-  const game = createMiniGame();
-  const player = game.addPlayer({ id: 'p1', name: 'Test', x: 0, y: 0 });
-  game.movePlayer('p1', 3, 3);
-  const result = game.tick();
-  expect(player.state).toBe('walking');
+  const tg = new TestGame();
+  tg.spawn('p1', 1, 1);
+  tg.move('p1', 3, 1);
+  tg.tick();
+  expect(tg.getPlayer('p1').state).toBe('walking');
 });
 ```
 
@@ -123,6 +134,22 @@ Available at `http://localhost:3001/api/debug/` when the server is running:
 | POST   | /move          | Set movement target        |
 | POST   | /reset         | Clear all state            |
 | POST   | /scenario      | Load a test preset         |
+
+Useful movement log filters:
+
+```bash
+curl 'localhost:3001/api/debug/log?playerId=human_1&type=input_state,input_move,player_collision,move_cancelled&limit=50'
+```
+
+Movement harness usage:
+
+```bash
+cd server
+npm run debug:movement -- --scenario simultaneous_input_release
+npm run debug:movement -- --scenario simultaneous_input_release --bundle /tmp/w-a.json
+```
+
+The `--bundle` output should be treated as the canonical repro artifact for future agents.
 
 ## Environment Setup (Optional)
 
