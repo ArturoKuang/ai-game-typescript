@@ -99,7 +99,10 @@ CREATE INDEX IF NOT EXISTS idx_memories_embedding
 CREATE INDEX IF NOT EXISTS idx_memories_player_tick
     ON memories (player_id, tick DESC);
 
--- LLM replies and reflections for NPC debugging/auditing
+-- LLM replies and reflections for NPC debugging/auditing.
+-- Write-only audit trail: rows are inserted by npcStore.addGeneration()
+-- but never queried at runtime. Useful for offline analysis of NPC
+-- behavior, prompt quality, and latency.
 CREATE TABLE IF NOT EXISTS llm_generations (
     id              SERIAL PRIMARY KEY,
     convo_id        INT REFERENCES conversations(id),

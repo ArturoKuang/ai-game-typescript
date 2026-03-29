@@ -470,7 +470,7 @@ export function runMovementHarnessScenario(
           x: action.player.x,
           y: action.player.y,
           isNpc: action.player.isNpc,
-          speed: action.player.speed,
+          speed: action.player.pathSpeed,
         });
         snapshots.push(captureSnapshot(game, action.label, loggedCount));
         loggedCount = game.logger.size;
