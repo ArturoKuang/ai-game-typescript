@@ -1,6 +1,13 @@
 import type { GameEvent, Player, Position } from "./types.js";
 
 export type ConvoState = "invited" | "walking" | "active" | "ended";
+export type ConversationEndReason =
+  | "declined"
+  | "manual"
+  | "max_duration"
+  | "max_messages"
+  | "timeout"
+  | "missing_player";
 
 export interface Message {
   id: number;
@@ -18,6 +25,7 @@ export interface Conversation {
   messages: Message[];
   startedTick: number;
   endedTick?: number;
+  endedReason?: ConversationEndReason;
   summary?: string;
 }
 
@@ -41,6 +49,10 @@ export class ConversationManager {
     player2Id: string,
     tick: number,
   ): Conversation {
+    if (player1Id === player2Id) {
+      throw new Error("Cannot start a conversation with yourself");
+    }
+
     // Check neither player is already in a conversation (O(1))
     if (this.playerToConvo.has(player1Id) || this.playerToConvo.has(player2Id)) {
       throw new Error("One or both players are already in a conversation");
@@ -60,13 +72,29 @@ export class ConversationManager {
     return convo;
   }
 
-  acceptInvite(convoId: number): Conversation {
+  acceptInvite(convoId: number, playerId?: string): Conversation {
     const convo = this.getConversation(convoId);
     if (!convo) throw new Error(`Conversation ${convoId} not found`);
     if (convo.state !== "invited")
       throw new Error("Conversation is not in invited state");
+    if (playerId && playerId !== convo.player2Id) {
+      throw new Error("Only the invitee can accept this conversation");
+    }
     convo.state = "walking";
     return convo;
+  }
+
+  declineInvite(convoId: number, playerId: string, tick: number): Conversation {
+    const convo = this.getConversation(convoId);
+    if (!convo) throw new Error(`Conversation ${convoId} not found`);
+    if (convo.state !== "invited") {
+      throw new Error("Conversation is not in invited state");
+    }
+    if (playerId !== convo.player2Id) {
+      throw new Error("Only the invitee can decline this conversation");
+    }
+
+    return this.endConversation(convoId, tick, "declined");
   }
 
   addMessage(
@@ -93,12 +121,17 @@ export class ConversationManager {
     return msg;
   }
 
-  endConversation(convoId: number, tick: number): Conversation {
+  endConversation(
+    convoId: number,
+    tick: number,
+    reason: ConversationEndReason = "manual",
+  ): Conversation {
     const convo = this.getConversation(convoId);
     if (!convo) throw new Error(`Conversation ${convoId} not found`);
     if (convo.state === "ended") return convo;
     convo.state = "ended";
     convo.endedTick = tick;
+    convo.endedReason = reason;
     this.playerToConvo.delete(convo.player1Id);
     this.playerToConvo.delete(convo.player2Id);
     return convo;
@@ -112,7 +145,7 @@ export class ConversationManager {
   processTick(
     tick: number,
     getPlayer: (id: string) => Player | undefined,
-    setTarget: (playerId: string, x: number, y: number) => void,
+    setTarget: (playerId: string, x: number, y: number) => boolean,
   ): GameEvent[] {
     const events: GameEvent[] = [];
 
@@ -124,11 +157,15 @@ export class ConversationManager {
         const p1 = getPlayer(convo.player1Id);
         const p2 = getPlayer(convo.player2Id);
         if (p1?.isNpc || p2?.isNpc) {
-          convo.state = "walking";
+          this.acceptInvite(convo.id);
           events.push({
             tick,
             type: "convo_accepted",
-            data: { convoId: convo.id, conversation: { ...convo } },
+            data: {
+              convoId: convo.id,
+              conversation: snapshotConversation(convo),
+              participantIds: this.getParticipantIds(convo),
+            },
           });
         }
       }
@@ -137,7 +174,17 @@ export class ConversationManager {
         const p1 = getPlayer(convo.player1Id);
         const p2 = getPlayer(convo.player2Id);
         if (!p1 || !p2) {
-          this.endConversation(convo.id, tick);
+          const ended = this.endConversation(convo.id, tick, "missing_player");
+          events.push({
+            tick,
+            type: "convo_ended",
+            data: {
+              convoId: ended.id,
+              reason: ended.endedReason,
+              conversation: snapshotConversation(ended),
+              participantIds: this.getParticipantIds(ended),
+            },
+          });
           continue;
         }
 
@@ -148,29 +195,34 @@ export class ConversationManager {
           events.push({
             tick,
             type: "convo_active",
-            data: { convoId: convo.id, conversation: { ...convo } },
+            data: {
+              convoId: convo.id,
+              conversation: snapshotConversation(convo),
+              participantIds: this.getParticipantIds(convo),
+            },
           });
         } else {
-          // Both players walk toward the midpoint so they converge
-          // symmetrically instead of one chasing the other.
-          const midX = Math.round((p1.x + p2.x) / 2);
-          const midY = Math.round((p1.y + p2.y) / 2);
-          if (p1.state !== "walking") setTarget(p1.id, midX, midY);
-          if (p2.state !== "walking") setTarget(p2.id, midX, midY);
+          // Both players walk toward a small set of rendezvous candidates near
+          // the midpoint. This avoids getting stuck when the rounded midpoint
+          // lands on a blocked tile.
+          const candidates = buildRendezvousCandidates(p1, p2);
+          ensureConversationTarget(p1, candidates, setTarget);
+          ensureConversationTarget(p2, candidates, setTarget);
         }
       }
 
       if (convo.state === "active") {
         // Check max duration
         if (tick - convo.startedTick >= MAX_DURATION) {
-          this.endConversation(convo.id, tick);
+          this.endConversation(convo.id, tick, "max_duration");
           events.push({
             tick,
             type: "convo_ended",
             data: {
               convoId: convo.id,
               reason: "max_duration",
-              conversation: { ...convo },
+              conversation: snapshotConversation(convo),
+              participantIds: this.getParticipantIds(convo),
             },
           });
           continue;
@@ -178,14 +230,15 @@ export class ConversationManager {
 
         // Check max messages
         if (convo.messages.length >= MAX_MESSAGES) {
-          this.endConversation(convo.id, tick);
+          this.endConversation(convo.id, tick, "max_messages");
           events.push({
             tick,
             type: "convo_ended",
             data: {
               convoId: convo.id,
               reason: "max_messages",
-              conversation: { ...convo },
+              conversation: snapshotConversation(convo),
+              participantIds: this.getParticipantIds(convo),
             },
           });
           continue;
@@ -197,14 +250,15 @@ export class ConversationManager {
             ? convo.messages[convo.messages.length - 1].tick
             : convo.startedTick;
         if (tick - lastMsgTick >= CONVERSATION_TIMEOUT) {
-          this.endConversation(convo.id, tick);
+          this.endConversation(convo.id, tick, "timeout");
           events.push({
             tick,
             type: "convo_ended",
             data: {
               convoId: convo.id,
               reason: "timeout",
-              conversation: { ...convo },
+              conversation: snapshotConversation(convo),
+              participantIds: this.getParticipantIds(convo),
             },
           });
         }
@@ -234,6 +288,18 @@ export class ConversationManager {
     return convoId !== undefined ? this.conversations.get(convoId) : undefined;
   }
 
+  isParticipant(conversation: Conversation, playerId: string): boolean {
+    return (
+      playerId === conversation.player1Id || playerId === conversation.player2Id
+    );
+  }
+
+  getParticipantIds(
+    conversation: Pick<Conversation, "player1Id" | "player2Id">,
+  ): [string, string] {
+    return [conversation.player1Id, conversation.player2Id];
+  }
+
   clear(): void {
     this.conversations.clear();
     this.playerToConvo.clear();
@@ -247,4 +313,61 @@ function distance(
   b: { x: number; y: number },
 ): number {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function buildRendezvousCandidates(
+  left: Position,
+  right: Position,
+): Position[] {
+  const midX = Math.round((left.x + right.x) / 2);
+  const midY = Math.round((left.y + right.y) / 2);
+  const rawCandidates: Position[] = [
+    { x: midX, y: midY },
+    { x: midX + 1, y: midY },
+    { x: midX - 1, y: midY },
+    { x: midX, y: midY + 1 },
+    { x: midX, y: midY - 1 },
+    { x: Math.round(left.x), y: Math.round(left.y) },
+    { x: Math.round(right.x), y: Math.round(right.y) },
+  ];
+
+  const seen = new Set<string>();
+  return rawCandidates.filter((candidate) => {
+    const key = `${candidate.x},${candidate.y}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function ensureConversationTarget(
+  player: Player,
+  candidates: Position[],
+  setTarget: (playerId: string, x: number, y: number) => boolean,
+): void {
+  const alreadyHeadingToCandidate =
+    player.state === "walking" &&
+    player.targetX !== undefined &&
+    player.targetY !== undefined &&
+    candidates.some(
+      (candidate) =>
+        candidate.x === player.targetX && candidate.y === player.targetY,
+    );
+
+  if (alreadyHeadingToCandidate) {
+    return;
+  }
+
+  for (const candidate of candidates) {
+    if (setTarget(player.id, candidate.x, candidate.y)) {
+      return;
+    }
+  }
+}
+
+export function snapshotConversation(conversation: Conversation): Conversation {
+  return {
+    ...conversation,
+    messages: conversation.messages.map((message) => ({ ...message })),
+  };
 }

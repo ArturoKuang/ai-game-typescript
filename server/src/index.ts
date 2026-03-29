@@ -10,8 +10,7 @@ import { InMemoryNpcStore, PostgresNpcStore } from "./db/npcStore.js";
 import { InMemoryRepository, Repository } from "./db/repository.js";
 import { createDebugRouter } from "./debug/router.js";
 import { GameLoop } from "./engine/gameLoop.js";
-import type { GameEvent, GameEventType, MapData, Player } from "./engine/types.js";
-import type { ServerMessage } from "./network/protocol.js";
+import type { MapData } from "./engine/types.js";
 import { CHARACTERS } from "./data/characters.js";
 import { GameWebSocketServer } from "./network/websocket.js";
 import { ClaudeCodeProvider } from "./npc/claudeCodeProvider.js";
@@ -20,15 +19,8 @@ import { MemoryManager } from "./npc/memory.js";
 import { NpcOrchestrator } from "./npc/orchestrator.js";
 import { ResilientNpcProvider } from "./npc/resilientProvider.js";
 import { ScriptedNpcProvider } from "./npc/scriptedProvider.js";
-import type { Conversation, Message } from "./engine/conversation.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-/** Strip server-internal fields from player before broadcasting to clients */
-function stripInternalFields(player: Player): Omit<Player, "inputX" | "inputY"> {
-  const { inputX: _ix, inputY: _iy, ...rest } = player;
-  return rest;
-}
 
 const app = express();
 const server = createServer(app);
@@ -80,65 +72,7 @@ for (const char of CHARACTERS) {
 const wsServer = new GameWebSocketServer(server, game);
 
 // --- Event-driven broadcasting ---
-//
-// Maps game events to WebSocket messages. Each handler returns a
-// ServerMessage or undefined (skip broadcast). Player events that
-// carry a snapshot use event.data.player; events without a snapshot
-// fall back to a live lookup via game.getPlayer().
-type BroadcastBuilder = (event: GameEvent) => ServerMessage | undefined;
-
-const playerFromEvent = (event: GameEvent): Player | undefined =>
-  event.data?.player as Player | undefined;
-
-const playerFromGame = (event: GameEvent): Player | undefined =>
-  event.playerId ? game.getPlayer(event.playerId) : undefined;
-
-const broadcastPlayerUpdate = (player: Player | undefined): ServerMessage | undefined =>
-  player ? { type: "player_update", data: stripInternalFields(player) as Player } : undefined;
-
-const BROADCAST_MAP: Partial<Record<GameEventType, BroadcastBuilder>> = {
-  spawn: (e) => {
-    const player = playerFromGame(e);
-    return player ? { type: "player_joined", data: player } : undefined;
-  },
-  despawn: (e) => ({ type: "player_left", data: { id: e.playerId! } }),
-  move_direction: (e) => broadcastPlayerUpdate(playerFromEvent(e)),
-  move_start: (e) => broadcastPlayerUpdate(playerFromGame(e)),
-  input_move: (e) => broadcastPlayerUpdate(playerFromEvent(e)),
-  player_update: (e) => broadcastPlayerUpdate(playerFromEvent(e)),
-  move_end: (e) => broadcastPlayerUpdate(playerFromGame(e)),
-  convo_started: (e) => {
-    const convo = e.data?.conversation as Conversation | undefined;
-    return convo ? { type: "convo_update", data: convo } : undefined;
-  },
-  convo_active: (e) => {
-    const convo = e.data?.conversation as Conversation | undefined;
-    return convo ? { type: "convo_update", data: convo } : undefined;
-  },
-  convo_accepted: (e) => {
-    const convo = e.data?.conversation as Conversation | undefined;
-    return convo ? { type: "convo_update", data: convo } : undefined;
-  },
-  convo_ended: (e) => {
-    const convo = e.data?.conversation as Conversation | undefined;
-    return convo ? { type: "convo_update", data: convo } : undefined;
-  },
-  convo_message: (e) => {
-    const msg = e.data?.message as Message | undefined;
-    return msg ? { type: "message", data: msg } : undefined;
-  },
-  tick_complete: (e) => ({
-    type: "tick",
-    data: { tick: e.data!.tick as number },
-  }),
-};
-
-game.on("*", (event) => {
-  const builder = BROADCAST_MAP[event.type];
-  if (!builder) return;
-  const msg = builder(event);
-  if (msg) wsServer.broadcast(msg);
-});
+game.on("*", (event) => wsServer.broadcastGameEvent(event));
 
 // Start the realtime loop
 game.start();

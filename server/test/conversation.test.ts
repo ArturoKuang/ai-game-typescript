@@ -33,8 +33,25 @@ describe("ConversationManager", () => {
   it("accepts invite transitions to walking", () => {
     cm = new ConversationManager();
     const convo = cm.startConversation("alice", "bob", 0);
-    cm.acceptInvite(convo.id);
+    cm.acceptInvite(convo.id, "bob");
     expect(convo.state).toBe("walking");
+  });
+
+  it("rejects invite acceptance from anyone except the invitee", () => {
+    cm = new ConversationManager();
+    const convo = cm.startConversation("alice", "bob", 0);
+    expect(() => cm.acceptInvite(convo.id, "alice")).toThrow("Only the invitee");
+  });
+
+  it("declines invite and ends the conversation cleanly", () => {
+    cm = new ConversationManager();
+    const convo = cm.startConversation("alice", "bob", 0);
+    cm.declineInvite(convo.id, "bob", 4);
+    expect(convo.state).toBe("ended");
+    expect(convo.endedTick).toBe(4);
+    expect(convo.endedReason).toBe("declined");
+    expect(cm.getPlayerConversation("alice")).toBeUndefined();
+    expect(cm.getPlayerConversation("bob")).toBeUndefined();
   });
 
   it("adds messages to active conversation", () => {
@@ -90,6 +107,16 @@ describe("ConversationManager", () => {
     expect(cm.getPlayerConversation("alice")).toBeDefined();
     expect(cm.getPlayerConversation("bob")).toBeDefined();
     expect(cm.getPlayerConversation("carol")).toBeUndefined();
+  });
+
+  it("same pair can re-converse after a decline", () => {
+    cm = new ConversationManager();
+    const first = cm.startConversation("alice", "bob", 0);
+    cm.declineInvite(first.id, "bob", 1);
+
+    const second = cm.startConversation("alice", "bob", 2);
+    expect(second.id).not.toBe(first.id);
+    expect(second.state).toBe("invited");
   });
 });
 
@@ -197,5 +224,118 @@ describe("Conversation Integration with GameLoop", () => {
     );
     expect(msg.content).toBe("Hello Bob!");
     expect(convo.messages).toHaveLength(1);
+  });
+
+  it("human-human invite can be accepted and becomes active", () => {
+    tg = new TestGame({ map: "default" });
+    tg.spawn("alice", 5, 8, false);
+    tg.spawn("bob", 6, 8, false);
+
+    tg.game.enqueue({
+      type: "start_convo",
+      playerId: "alice",
+      data: { targetId: "bob" },
+    });
+    tg.tick();
+
+    let convo = tg.game.conversations.getPlayerConversation("alice");
+    expect(convo?.state).toBe("invited");
+
+    tg.game.enqueue({
+      type: "accept_convo",
+      playerId: "bob",
+      data: { convoId: convo!.id },
+    });
+    tg.tick();
+
+    convo = tg.game.conversations.getPlayerConversation("alice");
+    expect(convo?.state).toBe("active");
+    expect(tg.getPlayer("alice").state).toBe("conversing");
+    expect(tg.getPlayer("bob").state).toBe("conversing");
+  });
+
+  it("human-human invite can be declined and the pair can re-converse", () => {
+    tg = new TestGame({ map: "default" });
+    tg.spawn("alice", 5, 8, false);
+    tg.spawn("bob", 6, 8, false);
+
+    tg.game.enqueue({
+      type: "start_convo",
+      playerId: "alice",
+      data: { targetId: "bob" },
+    });
+    tg.tick();
+
+    const first = tg.game.conversations.getPlayerConversation("alice");
+    expect(first?.state).toBe("invited");
+
+    tg.game.enqueue({
+      type: "decline_convo",
+      playerId: "bob",
+      data: { convoId: first!.id },
+    });
+    tg.tick();
+
+    expect(tg.game.conversations.getPlayerConversation("alice")).toBeUndefined();
+
+    tg.game.enqueue({
+      type: "start_convo",
+      playerId: "alice",
+      data: { targetId: "bob" },
+    });
+    tg.tick();
+
+    const second = tg.game.conversations.getPlayerConversation("alice");
+    expect(second).toBeDefined();
+    expect(second?.id).not.toBe(first?.id);
+    expect(second?.state).toBe("invited");
+  });
+
+  it("inviter cannot say before activation", () => {
+    tg = new TestGame({ map: "default" });
+    tg.spawn("alice", 5, 8, false);
+    tg.spawn("bob", 8, 8, false);
+
+    tg.game.enqueue({
+      type: "start_convo",
+      playerId: "alice",
+      data: { targetId: "bob" },
+    });
+    tg.tick();
+
+    const convo = tg.game.conversations.getPlayerConversation("alice");
+    expect(convo?.state).toBe("invited");
+
+    tg.game.enqueue({
+      type: "say",
+      playerId: "alice",
+      data: { convoId: convo!.id, content: "Too early" },
+    });
+    tg.tick();
+
+    expect(convo?.messages).toHaveLength(0);
+  });
+
+  it("invite target cannot start a second conversation while one is pending", () => {
+    tg = new TestGame({ map: "default" });
+    tg.spawn("alice", 5, 8, false);
+    tg.spawn("bob", 6, 8, false);
+    tg.spawn("carol", 7, 8, false);
+
+    tg.game.enqueue({
+      type: "start_convo",
+      playerId: "alice",
+      data: { targetId: "bob" },
+    });
+    tg.tick();
+
+    tg.game.enqueue({
+      type: "start_convo",
+      playerId: "bob",
+      data: { targetId: "carol" },
+    });
+    tg.tick();
+
+    expect(tg.game.conversations.getPlayerConversation("carol")).toBeUndefined();
   });
 });

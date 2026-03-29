@@ -95,6 +95,122 @@ describe("Event contracts", () => {
     expect(acceptIdx).toBeLessThan(activeIdx);
   });
 
+  it("human-human invite acceptance emits participant-aware events", () => {
+    tg = new TestGame({ map: "default" });
+    const events = collectEvents(tg);
+
+    tg.spawn("alice", 5, 8, false);
+    tg.spawn("bob", 6, 8, false);
+
+    tg.game.enqueue({
+      type: "start_convo",
+      playerId: "alice",
+      data: { targetId: "bob" },
+    });
+    tg.tick();
+
+    const convo = tg.game.conversations.getPlayerConversation("alice");
+    expect(convo).toBeDefined();
+
+    tg.game.enqueue({
+      type: "accept_convo",
+      playerId: "bob",
+      data: { convoId: convo!.id },
+    });
+    tg.tick();
+
+    const startedEvt = events.find((event) => event.type === "convo_started");
+    const acceptedEvt = events.find((event) => event.type === "convo_accepted");
+    const activeEvt = events.find((event) => event.type === "convo_active");
+
+    expect(startedEvt?.data?.conversation).toBeDefined();
+    expect(startedEvt?.data?.participantIds).toEqual(["alice", "bob"]);
+    expect(acceptedEvt?.data?.participantIds).toEqual(["alice", "bob"]);
+    expect(activeEvt?.data?.participantIds).toEqual(["alice", "bob"]);
+  });
+
+  it("human-human invite decline emits decline and ended events", () => {
+    tg = new TestGame({ map: "default" });
+    const events = collectEvents(tg);
+
+    tg.spawn("alice", 5, 8, false);
+    tg.spawn("bob", 6, 8, false);
+
+    tg.game.enqueue({
+      type: "start_convo",
+      playerId: "alice",
+      data: { targetId: "bob" },
+    });
+    tg.tick();
+
+    const convo = tg.game.conversations.getPlayerConversation("alice");
+    expect(convo).toBeDefined();
+
+    tg.game.enqueue({
+      type: "decline_convo",
+      playerId: "bob",
+      data: { convoId: convo!.id },
+    });
+    tg.tick();
+
+    const declinedEvt = events.find((event) => event.type === "convo_declined");
+    const endedEvt = events.find((event) => event.type === "convo_ended");
+
+    expect(declinedEvt?.data?.participantIds).toEqual(["alice", "bob"]);
+    expect((declinedEvt?.data?.conversation as { endedReason?: string }).endedReason).toBe(
+      "declined",
+    );
+    expect((endedEvt?.data?.conversation as { endedReason?: string }).endedReason).toBe(
+      "declined",
+    );
+  });
+
+  it("conversation event snapshots do not inherit later messages", () => {
+    tg = new TestGame({ map: "default" });
+    const events = collectEvents(tg);
+
+    tg.spawn("alice", 5, 8, false);
+    tg.spawn("bob", 6, 8, false);
+
+    tg.game.enqueue({
+      type: "start_convo",
+      playerId: "alice",
+      data: { targetId: "bob" },
+    });
+    tg.tick();
+
+    const convo = tg.game.conversations.getPlayerConversation("alice");
+    expect(convo).toBeDefined();
+
+    tg.game.enqueue({
+      type: "accept_convo",
+      playerId: "bob",
+      data: { convoId: convo!.id },
+    });
+    tg.tick();
+
+    tg.game.enqueue({
+      type: "say",
+      playerId: "alice",
+      data: { convoId: convo!.id, content: "snapshot check" },
+    });
+    tg.tick();
+
+    const startedConversation = events.find(
+      (event) => event.type === "convo_started",
+    )?.data?.conversation as { messages?: unknown[] } | undefined;
+    const acceptedConversation = events.find(
+      (event) => event.type === "convo_accepted",
+    )?.data?.conversation as { messages?: unknown[] } | undefined;
+    const messageEvent = events.find((event) => event.type === "convo_message");
+
+    expect(startedConversation?.messages ?? []).toHaveLength(0);
+    expect(acceptedConversation?.messages ?? []).toHaveLength(0);
+    expect(messageEvent?.data).toMatchObject({
+      message: { content: "snapshot check" },
+    });
+  });
+
   it("player_update contains position and orientation", () => {
     tg = new TestGame();
     const events = collectEvents(tg);

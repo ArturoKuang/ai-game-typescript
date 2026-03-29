@@ -33,5 +33,7 @@ export type ClientMessage =
   | { type: "input_stop"; data: { direction: MoveDirection } }
   | { type: "say"; data: { content: string } }
   | { type: "start_convo"; data: { targetId: string } }
+  | { type: "accept_convo"; data: { convoId: number } }
+  | { type: "decline_convo"; data: { convoId: number } }
   | { type: "end_convo" }
   | { type: "ping" };

@@ -65,6 +65,7 @@ export type GameEventType =
   | "player_collision"
   | "convo_accepted"
   | "convo_active"
+  | "convo_declined"
   | "convo_ended"
   | "convo_started"
   | "convo_message"
@@ -117,6 +118,16 @@ export type Command =
       type: "start_convo";
       playerId: string;
       data: { targetId: string };
+    }
+  | {
+      type: "accept_convo";
+      playerId: string;
+      data: { convoId: number };
+    }
+  | {
+      type: "decline_convo";
+      playerId: string;
+      data: { convoId: number };
     }
   | {
       type: "end_convo";

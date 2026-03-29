@@ -137,6 +137,7 @@ describe("NpcOrchestrator", () => {
       initiationCooldownTicks: 0,
       initiationScanIntervalTicks: 1,
       initiationRadius: 3,
+      joinGraceTicks: 0,
       enableReflections: false,
     });
 
@@ -150,6 +151,27 @@ describe("NpcOrchestrator", () => {
     const conversation = tg.game.conversations.getPlayerConversation("human_1");
     expect(conversation).toBeDefined();
     expect(conversation?.player1Id).toBe("npc_alice");
+  });
+
+  it("does not auto-initiate against a newly joined human during the grace period", async () => {
+    tg = new TestGame({ map: "default" });
+    const repo = new InMemoryRepository();
+    const store = new InMemoryNpcStore();
+    const memoryManager = new MemoryManager(repo, new PlaceholderEmbedder(64));
+    new NpcOrchestrator(tg.game, memoryManager, new TestProvider(), store, {
+      initiationCooldownTicks: 0,
+      initiationScanIntervalTicks: 1,
+      initiationRadius: 3,
+      enableReflections: false,
+    });
+
+    tg.spawn("human_1", 5, 8, false);
+    tg.spawn("npc_alice", 6, 8, true);
+
+    tg.tick(3);
+    await flushAsyncWork();
+
+    expect(tg.game.conversations.getPlayerConversation("human_1")).toBeUndefined();
   });
 
   it("stores ended conversations and generates reflections for NPCs", async () => {

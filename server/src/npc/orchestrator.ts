@@ -16,6 +16,7 @@ export interface NpcOrchestratorOptions {
   initiationCooldownTicks?: number;
   initiationScanIntervalTicks?: number;
   initiationRadius?: number;
+  joinGraceTicks?: number;
   enableInitiation?: boolean;
   enableReflections?: boolean;
 }
@@ -26,6 +27,8 @@ const DEFAULT_INITIATION_COOLDOWN = 120;
 const DEFAULT_INITIATION_INTERVAL = 20;
 /** Manhattan distance within which an NPC will initiate conversation */
 const DEFAULT_INITIATION_RADIUS = 6;
+/** Grace period after a human joins before NPCs can auto-initiate */
+const DEFAULT_JOIN_GRACE_TICKS = 100;
 /** Number of recent messages used as the memory retrieval query */
 const MEMORY_CONTEXT_MESSAGES = 4;
 /** Maximum related memory IDs attached to a reflection */
@@ -38,9 +41,11 @@ export class NpcOrchestrator {
   private readonly lastInitiatedAt = new Map<string, number>();
   private readonly lastReflectionIds = new Map<string, number>();
   private readonly reflectionInFlight = new Set<string>();
+  private readonly humanJoinTicks = new Map<string, number>();
   private readonly initiationCooldownTicks: number;
   private readonly initiationScanIntervalTicks: number;
   private readonly initiationRadius: number;
+  private readonly joinGraceTicks: number;
   private readonly enableInitiation: boolean;
   private readonly enableReflections: boolean;
 
@@ -56,9 +61,21 @@ export class NpcOrchestrator {
     this.initiationScanIntervalTicks =
       options.initiationScanIntervalTicks ?? DEFAULT_INITIATION_INTERVAL;
     this.initiationRadius = options.initiationRadius ?? DEFAULT_INITIATION_RADIUS;
+    this.joinGraceTicks = options.joinGraceTicks ?? DEFAULT_JOIN_GRACE_TICKS;
     this.enableInitiation = options.enableInitiation ?? true;
     this.enableReflections = options.enableReflections ?? true;
 
+    this.game.on("spawn", (event) => {
+      const player = event.playerId ? this.game.getPlayer(event.playerId) : undefined;
+      if (player && !player.isNpc) {
+        this.humanJoinTicks.set(player.id, event.tick);
+      }
+    });
+    this.game.on("despawn", (event) => {
+      if (event.playerId) {
+        this.humanJoinTicks.delete(event.playerId);
+      }
+    });
     this.game.on("convo_started", (event) => this.handleEvent(event));
     this.game.on("convo_accepted", (event) => this.handleEvent(event));
     this.game.on("convo_active", (event) => this.handleEvent(event));
@@ -409,6 +426,13 @@ export class NpcOrchestrator {
         if (reserved.has(player.id)) return false;
         if (player.state !== "idle") return false;
         if (this.game.conversations.getPlayerConversation(player.id)) return false;
+        if (
+          !player.isNpc &&
+          this.game.currentTick - (this.humanJoinTicks.get(player.id) ?? -Infinity) <
+            this.joinGraceTicks
+        ) {
+          return false;
+        }
         return manhattanDistance(npc, player) <= this.initiationRadius;
       })
       .sort((left, right) => {

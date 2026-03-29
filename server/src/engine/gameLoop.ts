@@ -3,7 +3,11 @@ import {
   findBlockedTileOverlap,
   moveWithCollision,
 } from "./collision.js";
-import { ConversationManager } from "./conversation.js";
+import {
+  ConversationManager,
+  snapshotConversation,
+  type Conversation,
+} from "./conversation.js";
 import { GameLogger } from "./logger.js";
 import { findPath } from "./pathfinding.js";
 import { SeededRNG } from "./rng.js";
@@ -325,6 +329,10 @@ export class GameLoop {
           break;
         }
         case "start_convo": {
+          const target = this.players_.get(cmd.data.targetId);
+          if (!target || cmd.playerId === cmd.data.targetId) {
+            break;
+          }
           try {
             const convo = this.convoManager_.startConversation(
               cmd.playerId,
@@ -335,20 +343,65 @@ export class GameLoop {
               tick: this.tick_,
               type: "convo_started",
               playerId: cmd.playerId,
-              data: {
-                convoId: convo.id,
+              data: this.buildConversationEventData(convo, {
                 targetId: cmd.data.targetId,
-                conversation: { ...convo },
-              },
+              }),
             });
           } catch {
             // Already in conversation — skip
           }
           break;
         }
-        case "end_convo": {
+        case "accept_convo": {
           try {
-            const convo = this.convoManager_.endConversation(
+            const convo = this.convoManager_.acceptInvite(
+              cmd.data.convoId,
+              cmd.playerId,
+            );
+            this.emit({
+              tick: this.tick_,
+              type: "convo_accepted",
+              playerId: cmd.playerId,
+              data: this.buildConversationEventData(convo),
+            });
+          } catch {
+            // Invalid invite action — skip
+          }
+          break;
+        }
+        case "decline_convo": {
+          try {
+            const convo = this.convoManager_.declineInvite(
+              cmd.data.convoId,
+              cmd.playerId,
+              this.tick_,
+            );
+            this.emit({
+              tick: this.tick_,
+              type: "convo_declined",
+              playerId: cmd.playerId,
+              data: this.buildConversationEventData(convo),
+            });
+            this.emit({
+              tick: this.tick_,
+              type: "convo_ended",
+              playerId: cmd.playerId,
+              data: this.buildConversationEventData(convo, {
+                reason: convo.endedReason,
+              }),
+            });
+          } catch {
+            // Invalid invite action — skip
+          }
+          break;
+        }
+        case "end_convo": {
+          const convo = this.convoManager_.getConversation(cmd.data.convoId);
+          if (!convo || !this.convoManager_.isParticipant(convo, cmd.playerId)) {
+            break;
+          }
+          try {
+            const ended = this.convoManager_.endConversation(
               cmd.data.convoId,
               this.tick_,
             );
@@ -356,7 +409,9 @@ export class GameLoop {
               tick: this.tick_,
               type: "convo_ended",
               playerId: cmd.playerId,
-              data: { convoId: cmd.data.convoId, conversation: { ...convo } },
+              data: this.buildConversationEventData(ended, {
+                reason: ended.endedReason,
+              }),
             });
           } catch {
             // Conversation not found or already ended
@@ -375,7 +430,13 @@ export class GameLoop {
               tick: this.tick_,
               type: "convo_message",
               playerId: cmd.playerId,
-              data: { message: { ...msg }, convoId: cmd.data.convoId },
+              data: {
+                message: { ...msg },
+                convoId: cmd.data.convoId,
+                participantIds: this.convoManager_.getParticipantIds(
+                  this.convoManager_.getConversation(cmd.data.convoId)!,
+                ),
+              },
             });
           } catch {
             // Not in active conversation — skip
@@ -452,13 +513,15 @@ export class GameLoop {
     const convoEvents = this.convoManager_.processTick(
       this.tick_,
       (id) => this.players_.get(id),
-      (playerId, x, y) => this.setPlayerTarget(playerId, x, y),
+      (playerId, x, y) => this.setPlayerTarget(playerId, x, y) !== null,
     );
     for (const e of convoEvents) this.emit(e);
     events.push(...convoEvents);
 
     // 6. Sync player convo state
-    this.syncPlayerConvoState();
+    const convoStateEvents = this.syncPlayerConvoState();
+    for (const event of convoStateEvents) this.emit(event);
+    events.push(...convoStateEvents);
 
     this.assertWorldInvariants();
 
@@ -875,9 +938,12 @@ export class GameLoop {
   }
 
   /** Keep player.state and player.currentConvoId in sync with ConversationManager */
-  private syncPlayerConvoState(): void {
+  private syncPlayerConvoState(): GameEvent[] {
+    const events: GameEvent[] = [];
     for (const player of this.players_.values()) {
       const convo = this.convoManager_.getPlayerConversation(player.id);
+      const prevState = player.state;
+      const prevConvoId = player.currentConvoId;
       if (convo && convo.state === "active") {
         player.state = "conversing";
         player.currentConvoId = convo.id;
@@ -886,7 +952,40 @@ export class GameLoop {
         player.state = "idle";
         player.currentConvoId = undefined;
       }
+
+      if (player.state !== prevState || player.currentConvoId !== prevConvoId) {
+        events.push({
+          tick: this.tick_,
+          type: "player_update",
+          playerId: player.id,
+          data: { player: { ...player } },
+        });
+      }
     }
+
+    return events;
+  }
+
+  private buildConversationEventData(
+    conversation:
+      | Conversation
+      | {
+          id: number;
+          player1Id: string;
+          player2Id: string;
+          endedReason?: string;
+        },
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      convoId: conversation.id,
+      conversation:
+        "messages" in conversation
+          ? snapshotConversation(conversation)
+          : { ...conversation },
+      participantIds: this.convoManager_.getParticipantIds(conversation),
+      ...extra,
+    };
   }
 
   // --- Realtime mode ---
