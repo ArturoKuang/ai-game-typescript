@@ -39,6 +39,7 @@ Current suites:
 | File | Focus |
 | --- | --- |
 | `engine.test.ts` | general game loop behavior |
+| `gameloop-smoke.test.ts` | end-to-end smoke coverage over common lifecycle paths |
 | `pathfinding.test.ts` | A* pathfinding |
 | `collision.test.ts` | wall and player collision |
 | `input-movement.test.ts` | continuous input movement |
@@ -46,14 +47,20 @@ Current suites:
 | `client-server-parity.test.ts` | prediction vs authority alignment |
 | `debug-invariants.test.ts` | invariant validation failures |
 | `command-queue.test.ts` | queued command behavior |
+| `event-contracts.test.ts` | emitted event shape and ordering contracts |
+| `logger-contracts.test.ts` | logger retention and filter semantics |
 | `conversation.test.ts` | conversation lifecycle and messaging |
-| `websocket.test.ts` | protocol/server socket behavior |
+| `conversation-index.test.ts` | player-to-conversation index correctness |
+| `websocket.test.ts` | protocol type and socket behavior coverage |
 | `debug-api.test.ts` | debug router behavior |
 | `movement-harness.test.ts` | headless harness verification |
 | `memory.test.ts` | memory storage and retrieval |
 | `reflection.test.ts` | reflection generation thresholds |
 | `npc-orchestrator.test.ts` | NPC reply/initiation/reflection orchestration |
-| `performance.test.ts` | pathfinding and tick throughput benchmarks |
+| `provider-failure.test.ts` | provider fallback, failure handling, and non-blocking behavior |
+| `readability-contracts.test.ts` | pre-refactor contracts for scenarios, events, and player fields |
+| `performance.test.ts` | throughput benchmarks |
+| `perf-regression.test.ts` | regression gates for hot paths |
 
 ## Commands
 
@@ -120,9 +127,9 @@ Common checks:
 
 ## Current Baseline
 
-At the time of this documentation update, the suite passes in the current worktree with:
+This doc refresh was verified against a green `cd server && npm test` run in the current worktree with:
 
-- `16` test files
-- `143` tests
+- `23` test files
+- `181` tests
 
-Run the suite again after any gameplay or protocol change because many subsystems depend on shared player and conversation state.
+Treat those numbers as a snapshot, not an API. Re-run the suite after any gameplay, protocol, or persistence change because many subsystems depend on shared player and conversation state.

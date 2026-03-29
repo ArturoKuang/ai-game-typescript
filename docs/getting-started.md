@@ -10,6 +10,14 @@ This project has two distinct workflows:
 - Node.js 20+
 - Docker Desktop or another Docker runtime for the easiest full-stack setup
 
+One-time dependency install:
+
+```bash
+npm install
+cd server && npm install
+cd ../client && npm install
+```
+
 Use the [documentation index](README.md) if you need subsystem-specific references after setup.
 
 ## Fastest Full-Stack Path
@@ -86,6 +94,13 @@ Behavior to know:
 - Keyboard movement sends `input_start` / `input_stop` messages and is resolved on the server tick loop with collision.
 - Click-to-move sends a target position and follows an A* path.
 - Chat is disabled until you have joined.
+
+## Repo Shortcuts
+
+If you want the combined dev flows from the repo root:
+
+- `npm run dev`: Docker PostgreSQL + Docker game server + local Vite client
+- `npm run dev:host-server`: Docker PostgreSQL + host game server + local Vite client
 
 ## Local Server Workflow Without Docker
 

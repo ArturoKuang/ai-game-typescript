@@ -111,14 +111,21 @@ This is the file-level map of the repository’s main systems, subsystems, and c
 | `server/test/client-server-parity.test.ts` | Client/server prediction parity tests. |
 | `server/test/debug-invariants.test.ts` | Invariant enforcement tests. |
 | `server/test/command-queue.test.ts` | Command queue tests. |
+| `server/test/event-contracts.test.ts` | Event shape and ordering contract tests. |
+| `server/test/logger-contracts.test.ts` | Logger retention and filter contract tests. |
 | `server/test/conversation.test.ts` | Conversation lifecycle tests. |
+| `server/test/conversation-index.test.ts` | Conversation player-index correctness tests. |
 | `server/test/websocket.test.ts` | WebSocket behavior tests. |
 | `server/test/debug-api.test.ts` | Debug API tests. |
 | `server/test/movement-harness.test.ts` | Movement harness tests. |
 | `server/test/memory.test.ts` | Memory manager tests. |
 | `server/test/reflection.test.ts` | Reflection tests. |
 | `server/test/npc-orchestrator.test.ts` | NPC orchestrator tests. |
-| `server/test/performance.test.ts` | Performance/regression benchmarks. |
+| `server/test/provider-failure.test.ts` | Provider failure and fallback tests. |
+| `server/test/gameloop-smoke.test.ts` | Full-loop smoke tests. |
+| `server/test/readability-contracts.test.ts` | Pre-refactor contract tests. |
+| `server/test/performance.test.ts` | Throughput and scalability benchmarks. |
+| `server/test/perf-regression.test.ts` | Hot-path regression benchmarks. |
 
 ## Docs
 

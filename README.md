@@ -1,37 +1,68 @@
 # AI Town
 
-AI Town is a multiplayer social-simulation prototype with a deterministic TypeScript game loop, a browser client, a debug HTTP API, and a PostgreSQL-backed NPC memory layer.
+AI Town is a multiplayer social-simulation sandbox built around an authoritative TypeScript game loop, a PixiJS browser client, a WebSocket transport layer, and a debug-first local workflow.
 
-The current codebase already supports:
+The current codebase includes:
 
-- A 20x20 tile town map with walls, activities, and spawn points
-- Five NPCs loaded at server startup
-- Real-time ticking at 20 ticks/sec in the main server
-- Continuous keyboard movement with server-side collision
-- A* click-to-move and API-driven movement
-- Conversations with a small state machine
-- Memory persistence and vector search backed by PostgreSQL + pgvector
-- A Vitest suite that runs fully in memory without Docker or a database
+- a deterministic `GameLoop` running at 20 ticks/sec in realtime mode
+- a `20 x 20` town loaded from [`data/map.json`](data/map.json)
+- five default NPCs spawned on boot from [`server/src/data/characters.ts`](server/src/data/characters.ts)
+- continuous keyboard movement, A* click-to-move, and player collision
+- conversations that move through `invited -> walking -> active -> ended`
+- NPC memory and generation persistence backed by PostgreSQL when available, with in-memory fallback when it is not
+- a Claude CLI NPC provider with a deterministic scripted fallback
+- a Vitest suite and headless movement harness that run fully in memory
+
+## One-Time Setup
+
+Install dependencies in the repo root plus the two app packages:
+
+```bash
+npm install
+cd server && npm install
+cd ../client && npm install
+```
 
 ## Quick Start
 
-### Run the test suite
+### Run the tests
 
 ```bash
 cd server
-npm install
 npm test
 ```
 
-### Run the full stack
+Or from the repo root:
 
-Start PostgreSQL and the game server:
+```bash
+npm test
+```
+
+### Run the host-only stack without PostgreSQL
+
+This is enough for local gameplay, browser checks, WebSocket probes, and debug API inspection:
+
+```bash
+cd server
+unset DATABASE_URL
+npm run dev
+```
+
+In a second terminal:
+
+```bash
+cd client
+npm run dev -- --host 0.0.0.0
+```
+
+### Run the Docker-backed stack with PostgreSQL
 
 ```bash
 docker compose up --build -d
+cd client && npm run dev
 ```
 
-Check the server:
+Verify the runtime:
 
 ```bash
 curl localhost:3001/health
@@ -39,61 +70,35 @@ curl localhost:3001/api/debug/state
 curl localhost:3001/api/debug/map
 ```
 
-The server loads the default map and spawns all five NPCs on boot.
+Useful repo-level shortcuts:
 
-Start the browser client in a second terminal:
+- `npm run dev`: Docker DB + Docker game server + local Vite client
+- `npm run dev:host-server`: Docker DB + host game server + local Vite client
 
-```bash
-cd client
-npm install
-npm run dev
-```
+## Runtime Notes
 
-Open `http://localhost:5173`.
+- The server can start without PostgreSQL. If `DATABASE_URL` is unset or the DB is unreachable, it falls back to in-memory NPC persistence and `/health` reports `status: "degraded"`.
+- The browser fetches `/api/*` and `/data/*` through the Vite proxy, but opens its WebSocket directly to port `3001`.
+- The server does not auto-load `.env`; environment variables must come from Docker Compose or the shell.
 
-## How The Project Is Organized
+## Project Layout
 
 ```text
 client/              PixiJS browser client
-data/                Shared town map and NPC definitions
-docs/                Setup, API, and architecture notes
-server/src/engine/   Core simulation: game loop, world, pathfinding, collision
+data/                Shared map and NPC definitions
+docs/                Architecture, API, testing, and workflow docs
+server/src/engine/   Authoritative simulation core
 server/src/network/  WebSocket protocol and server
-server/src/debug/    Debug HTTP API, scenarios, ASCII map renderer
-server/src/npc/      Memory manager and placeholder embeddings
-server/src/db/       PostgreSQL client, schema, repository, migrations
-server/test/         Vitest suite and in-memory helpers
-```
-
-## Development Notes
-
-- Runtime server startup requires PostgreSQL because it runs migrations on boot.
-- Tests do not require PostgreSQL or Docker.
-- The browser client fetches `/api` and `/data` through Vite's proxy, but connects to WebSocket port `3001` directly.
-- The server does not currently auto-load `.env`; Docker Compose is the simplest runtime path.
-
-## Common Commands
-
-```bash
-# repo-level test shortcut
-npm test
-
-# server-only dev loop
-cd server && npm run dev
-
-# client-only dev server
-cd client && npm run dev
-
-# performance tests
-cd server && npm run test:perf
+server/src/debug/    Debug API, ASCII map, scenarios, movement harness
+server/src/npc/      NPC memory, provider stack, and orchestration
+server/src/db/       PostgreSQL + in-memory persistence implementations
+server/test/         Vitest suite and stepped runtime helpers
 ```
 
 ## Documentation
 
+- [Documentation index](docs/README.md)
 - [Getting started](docs/getting-started.md)
+- [Architecture](docs/architecture.md)
 - [Debug API reference](docs/debug-api.md)
-- [Architecture overview](docs/architecture.md)
-
-## Current Status
-
-The simulation, debug tooling, browser client, and memory storage are implemented. NPC reasoning is still placeholder-driven rather than LLM-driven.
+- [Testing guide](docs/testing.md)
