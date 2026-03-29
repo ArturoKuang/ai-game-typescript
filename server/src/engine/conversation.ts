@@ -22,9 +22,9 @@ export interface Conversation {
 }
 
 const CONVERSATION_DISTANCE = 2; // tiles
-const CONVERSATION_TIMEOUT = 60; // ticks with no messages before auto-end
+const CONVERSATION_TIMEOUT = 600; // ticks with no messages before auto-end
 const MAX_MESSAGES = 20;
-const MAX_DURATION = 300; // ticks
+const MAX_DURATION = 1200; // ticks
 
 export class ConversationManager {
   private conversations: Map<number, Conversation> = new Map();
@@ -117,14 +117,16 @@ export class ConversationManager {
 
     for (const convo of this.conversations.values()) {
       if (convo.state === "invited") {
-        // Auto-accept for NPCs
+        // Auto-accept when either side is an NPC so NPC-initiated
+        // conversations can target humans without extra client UX.
+        const p1 = getPlayer(convo.player1Id);
         const p2 = getPlayer(convo.player2Id);
-        if (p2?.isNpc) {
+        if (p1?.isNpc || p2?.isNpc) {
           convo.state = "walking";
           events.push({
             tick,
             type: "convo_accepted",
-            data: { convoId: convo.id },
+            data: { convoId: convo.id, conversation: { ...convo } },
           });
         }
       }
@@ -144,7 +146,7 @@ export class ConversationManager {
           events.push({
             tick,
             type: "convo_active",
-            data: { convoId: convo.id },
+            data: { convoId: convo.id, conversation: { ...convo } },
           });
         } else {
           // Move toward each other (meet at midpoint)
@@ -162,7 +164,11 @@ export class ConversationManager {
           events.push({
             tick,
             type: "convo_ended",
-            data: { convoId: convo.id, reason: "max_duration" },
+            data: {
+              convoId: convo.id,
+              reason: "max_duration",
+              conversation: { ...convo },
+            },
           });
           continue;
         }
@@ -173,7 +179,11 @@ export class ConversationManager {
           events.push({
             tick,
             type: "convo_ended",
-            data: { convoId: convo.id, reason: "max_messages" },
+            data: {
+              convoId: convo.id,
+              reason: "max_messages",
+              conversation: { ...convo },
+            },
           });
           continue;
         }
@@ -188,7 +198,11 @@ export class ConversationManager {
           events.push({
             tick,
             type: "convo_ended",
-            data: { convoId: convo.id, reason: "timeout" },
+            data: {
+              convoId: convo.id,
+              reason: "timeout",
+              conversation: { ...convo },
+            },
           });
         }
       }

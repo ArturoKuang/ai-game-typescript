@@ -1,6 +1,5 @@
-import type { Memory, Repository, ScoredMemory } from "../db/repository.js";
+import type { Memory, MemoryStore, ScoredMemory } from "../db/repository.js";
 import type { Embedder } from "./embedding.js";
-import { cosineSimilarity } from "./embedding.js";
 
 const RECENCY_DECAY = 0.99; // per tick
 const REFLECTION_THRESHOLD = 50; // cumulative importance to trigger reflection
@@ -8,7 +7,7 @@ const MEMORY_ACCESS_THROTTLE = 30; // ticks between access updates
 
 export class MemoryManager {
   constructor(
-    private repo: Repository,
+    private repo: MemoryStore,
     private embedder: Embedder,
   ) {}
 
@@ -194,5 +193,38 @@ export class MemoryManager {
     });
 
     return reflection;
+  }
+
+  async getRecentMemoriesForReflection(params: {
+    playerId: string;
+    lastReflectionId?: number;
+    limit?: number;
+  }): Promise<Memory[]> {
+    return this.repo.getRecentMemories(
+      params.playerId,
+      params.limit ?? 100,
+      params.lastReflectionId,
+    );
+  }
+
+  async addReflection(params: {
+    playerId: string;
+    content: string;
+    tick: number;
+    relatedIds?: number[];
+    importance?: number;
+  }): Promise<Memory> {
+    return this.addMemory({
+      playerId: params.playerId,
+      type: "reflection",
+      content: params.content,
+      importance: params.importance ?? 8,
+      tick: params.tick,
+      relatedIds: params.relatedIds,
+    });
+  }
+
+  getReflectionThreshold(): number {
+    return REFLECTION_THRESHOLD;
   }
 }

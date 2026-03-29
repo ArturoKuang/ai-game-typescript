@@ -32,7 +32,36 @@ export interface ScoredMemory extends Memory {
   relevanceScore: number;
 }
 
-export class Repository {
+export interface MemoryStore {
+  addMemory(params: {
+    playerId: string;
+    type: string;
+    content: string;
+    importance: number;
+    embedding: number[] | null;
+    relatedIds?: number[];
+    tick: number;
+  }): Promise<Memory>;
+  getMemories(
+    playerId: string,
+    options?: { limit?: number; type?: string },
+  ): Promise<Memory[]>;
+  searchMemoriesByVector(
+    playerId: string,
+    embedding: number[],
+    k: number,
+  ): Promise<{ memory: Memory; similarity: number }[]>;
+  updateMemoryAccess(id: number, tick: number): Promise<void>;
+  getMemoryCount(playerId: string, sinceId?: number): Promise<number>;
+  getRecentMemories(
+    playerId: string,
+    limit: number,
+    sinceId?: number,
+  ): Promise<Memory[]>;
+  deleteOldMemories(maxAgeTicks: number, currentTick: number): Promise<number>;
+}
+
+export class Repository implements MemoryStore {
   constructor(private pool: Pool) {}
 
   // --- Memories ---
@@ -235,4 +264,130 @@ export class Repository {
       lastAccessedTick: row.last_accessed_tick ?? undefined,
     };
   }
+}
+
+export class InMemoryRepository implements MemoryStore {
+  private memories: Memory[] = [];
+  private nextId = 1;
+
+  async addMemory(params: {
+    playerId: string;
+    type: string;
+    content: string;
+    importance: number;
+    embedding: number[] | null;
+    relatedIds?: number[];
+    tick: number;
+  }): Promise<Memory> {
+    const memory: Memory = {
+      id: this.nextId++,
+      playerId: params.playerId,
+      type: params.type as Memory["type"],
+      content: params.content,
+      importance: params.importance,
+      embedding: params.embedding ?? undefined,
+      relatedIds: params.relatedIds ?? [],
+      tick: params.tick,
+    };
+    this.memories.push(memory);
+    return { ...memory };
+  }
+
+  async getMemories(
+    playerId: string,
+    options?: { limit?: number; type?: string },
+  ): Promise<Memory[]> {
+    let memories = this.memories.filter((memory) => memory.playerId === playerId);
+    if (options?.type) {
+      memories = memories.filter((memory) => memory.type === options.type);
+    }
+    memories = memories
+      .slice()
+      .sort((left: Memory, right: Memory) => right.tick - left.tick);
+    return memories.slice(0, options?.limit).map((memory) => ({ ...memory }));
+  }
+
+  async searchMemoriesByVector(
+    playerId: string,
+    embedding: number[],
+    k: number,
+  ): Promise<{ memory: Memory; similarity: number }[]> {
+    const matches = this.memories
+      .filter(
+        (memory) =>
+          memory.playerId === playerId &&
+          memory.embedding &&
+          memory.embedding.length === embedding.length,
+      )
+      .map((memory) => ({
+        memory,
+        similarity: cosineSimilarity(memory.embedding!, embedding),
+      }))
+      .sort(
+        (
+          left: { memory: Memory; similarity: number },
+          right: { memory: Memory; similarity: number },
+        ) => right.similarity - left.similarity,
+      )
+      .slice(0, k);
+
+    return matches.map(({ memory, similarity }: { memory: Memory; similarity: number }) => ({
+      memory: { ...memory, embedding: memory.embedding ? [...memory.embedding] : undefined },
+      similarity,
+    }));
+  }
+
+  async updateMemoryAccess(id: number, tick: number): Promise<void> {
+    const memory = this.memories.find((item) => item.id === id);
+    if (memory) {
+      memory.lastAccessedTick = tick;
+    }
+  }
+
+  async getMemoryCount(playerId: string, sinceId?: number): Promise<number> {
+    return this.memories.filter(
+      (memory) =>
+        memory.playerId === playerId &&
+        (sinceId === undefined || memory.id > sinceId),
+    ).length;
+  }
+
+  async getRecentMemories(
+    playerId: string,
+    limit: number,
+    sinceId?: number,
+  ): Promise<Memory[]> {
+    return this.memories
+      .filter(
+        (memory) =>
+          memory.playerId === playerId &&
+          (sinceId === undefined || memory.id > sinceId),
+      )
+      .sort((left: Memory, right: Memory) => right.tick - left.tick)
+      .slice(0, limit)
+      .map((memory) => ({ ...memory }));
+  }
+
+  async deleteOldMemories(
+    maxAgeTicks: number,
+    currentTick: number,
+  ): Promise<number> {
+    const cutoff = currentTick - maxAgeTicks;
+    const before = this.memories.length;
+    this.memories = this.memories.filter((memory) => memory.tick >= cutoff);
+    return before - this.memories.length;
+  }
+}
+
+function cosineSimilarity(left: number[], right: number[]): number {
+  let dot = 0;
+  let leftNorm = 0;
+  let rightNorm = 0;
+  for (let index = 0; index < left.length; index++) {
+    dot += left[index] * right[index];
+    leftNorm += left[index] * left[index];
+    rightNorm += right[index] * right[index];
+  }
+  const denominator = Math.sqrt(leftNorm) * Math.sqrt(rightNorm);
+  return denominator === 0 ? 0 : dot / denominator;
 }

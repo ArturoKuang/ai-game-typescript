@@ -99,6 +99,25 @@ CREATE INDEX IF NOT EXISTS idx_memories_embedding
 CREATE INDEX IF NOT EXISTS idx_memories_player_tick
     ON memories (player_id, tick DESC);
 
+-- LLM replies and reflections for NPC debugging/auditing
+CREATE TABLE IF NOT EXISTS llm_generations (
+    id              SERIAL PRIMARY KEY,
+    convo_id        INT REFERENCES conversations(id),
+    player_id       TEXT REFERENCES players(id),
+    kind            TEXT NOT NULL,
+    provider        TEXT NOT NULL,
+    session_id      TEXT,
+    prompt          TEXT NOT NULL,
+    response        TEXT,
+    latency_ms      INT,
+    error           TEXT,
+    tick            INT NOT NULL,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_generations_convo
+    ON llm_generations (convo_id, created_at DESC);
+
 -- Game log for debugging
 CREATE TABLE IF NOT EXISTS game_log (
     id          SERIAL PRIMARY KEY,

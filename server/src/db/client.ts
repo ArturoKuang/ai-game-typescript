@@ -2,18 +2,29 @@ import pg from "pg";
 
 const { Pool } = pg;
 
-export const pool = new Pool({
-  connectionString:
-    process.env.DATABASE_URL ||
-    "postgres://aitown:aitown_dev@localhost:5432/aitown",
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-});
+let sharedPool: pg.Pool | undefined;
 
-export async function checkConnection(): Promise<boolean> {
+function createPool(): pg.Pool {
+  return new Pool({
+    connectionString:
+      process.env.DATABASE_URL ||
+      "postgres://aitown:aitown_dev@localhost:5432/aitown",
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+  });
+}
+
+export function getPool(): pg.Pool {
+  if (!sharedPool) {
+    sharedPool = createPool();
+  }
+  return sharedPool;
+}
+
+export async function checkConnection(pool?: pg.Pool): Promise<boolean> {
   try {
-    const result = await pool.query("SELECT 1");
+    const result = await (pool ?? getPool()).query("SELECT 1");
     return result.rowCount === 1;
   } catch {
     return false;

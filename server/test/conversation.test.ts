@@ -113,6 +113,18 @@ describe("Conversation Integration with GameLoop", () => {
     expect(["walking", "active"]).toContain(convo.state);
   });
 
+  it("NPC-initiated human conversation auto-accepts on tick", () => {
+    tg = new TestGame({ map: "default" });
+    tg.spawn("npc_alice", 5, 8, true);
+    tg.spawn("human_1", 6, 8, false);
+
+    const convo = tg.game.conversations.startConversation("npc_alice", "human_1", 0);
+    expect(convo.state).toBe("invited");
+
+    tg.tick();
+    expect(["walking", "active"]).toContain(convo.state);
+  });
+
   it("conversation activates when players are close", () => {
     tg = new TestGame({ map: "default" });
     tg.spawn("alice", 5, 8, true);

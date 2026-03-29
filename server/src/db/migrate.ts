@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { pool } from "./client.js";
+import type { Pool } from "pg";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export async function runMigrations(): Promise<void> {
+export async function runMigrations(pool: Pool): Promise<void> {
   const schemaPath = join(__dirname, "schema.sql");
   const schema = readFileSync(schemaPath, "utf-8");
 
