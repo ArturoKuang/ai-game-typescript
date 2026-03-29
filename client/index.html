@@ -48,7 +48,7 @@
       font-family: inherit;
       font-size: 13px;
     }
-    #join-section button, #chat-section button {
+    #join-section button, #chat-section button, .player-talk-btn, #accept-convo-btn, #decline-convo-btn, #end-convo-btn {
       background: #e94560;
       color: white;
       border: none;
@@ -57,7 +57,11 @@
       font-family: inherit;
       font-size: 13px;
     }
-    #join-section button:hover, #chat-section button:hover { background: #c23152; }
+    #join-section button:hover, #chat-section button:hover, .player-talk-btn:hover, #accept-convo-btn:hover, #decline-convo-btn:hover, #end-convo-btn:hover { background: #c23152; }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
     #player-list {
       list-style: none;
       font-size: 13px;
@@ -66,9 +70,51 @@
       padding: 4px 0;
       border-bottom: 1px solid #0f3460;
     }
+    .player-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .player-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .player-talk-btn {
+      padding: 4px 10px;
+      flex-shrink: 0;
+    }
     .player-npc { color: #48c9b0; }
     .player-human { color: #5dade2; }
     .player-self { color: #f7dc6f; font-weight: bold; }
+    #conversation-panel {
+      background: #0f3460;
+      border: 1px solid #533483;
+      border-radius: 4px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    #conversation-title {
+      color: #f7dc6f;
+      font-size: 13px;
+      font-weight: bold;
+    }
+    #conversation-status, #chat-helper {
+      color: #9fb0d1;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .conversation-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .hidden {
+      display: none;
+    }
     #chat-messages {
       flex: 1;
       overflow-y: auto;
@@ -112,8 +158,21 @@
     </div>
     <h2>Players</h2>
     <ul id="player-list"></ul>
-    <h2>Chat</h2>
+    <h2>Conversation</h2>
+    <div id="conversation-panel">
+      <div id="conversation-title">No active conversation</div>
+      <div id="conversation-status">Start a conversation from the player list to chat.</div>
+      <div id="invite-actions" class="conversation-actions hidden">
+        <button id="accept-convo-btn">Accept</button>
+        <button id="decline-convo-btn">Decline</button>
+      </div>
+      <div id="active-actions" class="conversation-actions hidden">
+        <button id="end-convo-btn">End conversation</button>
+      </div>
+    </div>
+    <h2>Transcript</h2>
     <div id="chat-messages"></div>
+    <div id="chat-helper">Start a conversation to chat.</div>
     <div id="chat-section">
       <input id="chat-input" type="text" placeholder="Say something..." disabled />
       <button id="chat-btn" disabled>Send</button>

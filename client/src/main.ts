@@ -7,7 +7,13 @@ import {
   predictLocalPlayerStep,
 } from "./prediction.js";
 import { GameRenderer } from "./renderer.js";
-import type { FullGameState, MoveDirection, TileType } from "./types.js";
+import type {
+  Conversation,
+  FullGameState,
+  MoveDirection,
+  Player,
+  TileType,
+} from "./types.js";
 import { UI } from "./ui.js";
 
 // State
@@ -15,6 +21,24 @@ let gameState: FullGameState | null = null;
 let selfId: string | null = null;
 let mapLoaded = false;
 let mapTiles: TileType[][] | null = null;
+
+function conversationIncludesPlayer(
+  conversation: Conversation,
+  playerId: string,
+): boolean {
+  return (
+    conversation.player1Id === playerId || conversation.player2Id === playerId
+  );
+}
+
+function getConversationPartnerId(
+  conversation: Conversation,
+  playerId: string,
+): string {
+  return conversation.player1Id === playerId
+    ? conversation.player2Id
+    : conversation.player1Id;
+}
 
 // Init
 const canvas = document.getElementById("game-canvas") as HTMLCanvasElement;
@@ -79,14 +103,168 @@ async function start() {
 
   const heldDirections = new Set<MoveDirection>();
 
+  function getSelfConversation(): Conversation | undefined {
+    if (!gameState || !selfId) return undefined;
+    const currentSelfId = selfId;
+    return gameState.conversations.find(
+      (conversation) =>
+        conversationIncludesPlayer(conversation, currentSelfId) &&
+        conversation.state !== "ended",
+    );
+  }
+
+  function getPlayerName(playerId: string): string {
+    return gameState?.players.find((player) => player.id === playerId)?.name ?? playerId;
+  }
+
+  function getPlayer(playerId: string): Player | undefined {
+    return gameState?.players.find((player) => player.id === playerId);
+  }
+
+  function describeConversationUpdate(
+    previous: Conversation | undefined,
+    next: Conversation,
+  ): string[] {
+    if (!selfId || !conversationIncludesPlayer(next, selfId)) return [];
+
+    const partnerName = getPlayerName(getConversationPartnerId(next, selfId));
+    const messages: string[] = [];
+    const changedState =
+      !previous ||
+      previous.state !== next.state ||
+      previous.endedReason !== next.endedReason;
+
+    if (!changedState) return messages;
+
+    if (!previous && next.state === "invited") {
+      messages.push(
+        next.player2Id === selfId
+          ? `${partnerName} invited you to chat`
+          : `Invitation sent to ${partnerName}`,
+      );
+      return messages;
+    }
+
+    if (next.state === "walking") {
+      messages.push(`Walking to meet ${partnerName}`);
+    } else if (next.state === "active") {
+      messages.push(`Conversation with ${partnerName} is active`);
+    } else if (next.state === "ended") {
+      if (next.endedReason === "declined") {
+        messages.push(
+          next.player2Id === selfId
+            ? `You declined ${partnerName}`
+            : `${partnerName} declined`,
+        );
+      } else {
+        messages.push(`Conversation with ${partnerName} ended`);
+      }
+    }
+
+    return messages;
+  }
+
+  function upsertConversation(conversation: Conversation): Conversation | undefined {
+    if (!gameState) return undefined;
+    const index = gameState.conversations.findIndex((item) => item.id === conversation.id);
+    const previous = index >= 0 ? gameState.conversations[index] : undefined;
+    if (index >= 0) {
+      gameState.conversations[index] = conversation;
+    } else {
+      gameState.conversations.push(conversation);
+    }
+    return previous;
+  }
+
+  function refreshConversationUi(): void {
+    if (!gameState) return;
+
+    const currentConversation = getSelfConversation();
+    const talkablePlayerIds = new Set<string>();
+    const selfBusy = Boolean(currentConversation);
+    const occupiedPlayerIds = new Set<string>();
+
+    for (const conversation of gameState.conversations) {
+      if (conversation.state === "ended") continue;
+      occupiedPlayerIds.add(conversation.player1Id);
+      occupiedPlayerIds.add(conversation.player2Id);
+    }
+
+    for (const player of gameState.players) {
+      if (!selfId || player.id === selfId) continue;
+      if (selfBusy) continue;
+      if (occupiedPlayerIds.has(player.id)) continue;
+      if (player.state === "conversing") continue;
+      talkablePlayerIds.add(player.id);
+    }
+
+    ui.updatePlayerList(gameState.players, talkablePlayerIds);
+
+    if (!selfId || !currentConversation) {
+      ui.renderConversationPanel({
+        title: "No active conversation",
+        status: "Start a conversation from the player list to chat.",
+        chatEnabled: false,
+        chatPlaceholder: "Start a conversation to chat",
+        showInviteActions: false,
+        showEndAction: false,
+      });
+      return;
+    }
+
+    const partnerId = getConversationPartnerId(currentConversation, selfId);
+    const partnerName = getPlayerName(partnerId);
+    const partner = getPlayer(partnerId);
+
+    if (currentConversation.state === "invited") {
+      const incomingInvite = currentConversation.player2Id === selfId;
+      ui.renderConversationPanel({
+        title: incomingInvite
+          ? `Invite from ${partnerName}`
+          : `Waiting on ${partnerName}`,
+        status: incomingInvite
+          ? `${partnerName} invited you to chat.`
+          : `Waiting for ${partnerName} to respond.`,
+        chatEnabled: false,
+        chatPlaceholder: "Accept a conversation to chat",
+        showInviteActions: incomingInvite,
+        showEndAction: false,
+      });
+      return;
+    }
+
+    if (currentConversation.state === "walking") {
+      ui.renderConversationPanel({
+        title: `Meeting ${partnerName}`,
+        status: `Walking to meet ${partnerName}.`,
+        chatEnabled: false,
+        chatPlaceholder: `Walking to meet ${partnerName}`,
+        showInviteActions: false,
+        showEndAction: false,
+      });
+      return;
+    }
+
+    ui.renderConversationPanel({
+      title: `Talking with ${partnerName}`,
+      status: partner?.isWaitingForResponse
+        ? `${partnerName} is thinking...`
+        : `Conversation with ${partnerName} is active.`,
+      chatEnabled: true,
+      chatPlaceholder: `Message ${partnerName}`,
+      showInviteActions: false,
+      showEndAction: true,
+    });
+  }
+
   client.onMessage((msg) => {
     switch (msg.type) {
       case "state": {
         gameState = msg.data;
-        ui.updatePlayerList(gameState.players);
         ui.setStatus(
           `Connected | Tick: ${gameState.tick} | Players: ${gameState.players.length}`,
         );
+        refreshConversationUi();
         break;
       }
 
@@ -107,16 +285,15 @@ async function start() {
         } else {
           gameState.players.push(msg.data);
         }
-        ui.updatePlayerList(gameState.players);
 
         // If this is our join confirmation (first non-NPC join we see)
         if (!selfId && !msg.data.isNpc) {
           selfId = msg.data.id;
           renderer.setSelfId(selfId);
           ui.setSelfId(selfId);
-          ui.enableChat();
           ui.addChatMessage("", `You joined as ${msg.data.name}`, true);
         }
+        refreshConversationUi();
         break;
       }
 
@@ -126,8 +303,8 @@ async function start() {
         gameState.players = gameState.players.filter(
           (p) => p.id !== msg.data.id,
         );
-        ui.updatePlayerList(gameState.players);
         if (name) ui.addChatMessage("", `${name} left`, true);
+        refreshConversationUi();
         break;
       }
 
@@ -204,17 +381,22 @@ async function start() {
             gameState.players[idx] = msg.data;
           }
         }
-        ui.updatePlayerList(gameState.players);
+        refreshConversationUi();
         break;
       }
 
       case "convo_update": {
         if (!gameState) break;
-        const ci = gameState.conversations.findIndex(
-          (c) => c.id === msg.data.id,
-        );
-        if (ci >= 0) gameState.conversations[ci] = msg.data;
-        else gameState.conversations.push(msg.data);
+        const previous = upsertConversation(msg.data);
+        for (const systemMessage of describeConversationUpdate(previous, msg.data)) {
+          ui.addChatMessage("", systemMessage, true);
+        }
+        if (msg.data.state === "ended") {
+          gameState.conversations = gameState.conversations.filter(
+            (conversation) => conversation.id !== msg.data.id,
+          );
+        }
+        refreshConversationUi();
         break;
       }
 
@@ -252,6 +434,47 @@ async function start() {
   // Chat
   ui.onChatSubmit((text) => {
     client.send({ type: "say", data: { content: text } });
+  });
+
+  ui.onTalk((playerId) => {
+    client.send({ type: "start_convo", data: { targetId: playerId } });
+  });
+
+  ui.onAcceptConversation(() => {
+    const conversation = getSelfConversation();
+    if (
+      conversation &&
+      selfId &&
+      conversation.state === "invited" &&
+      conversation.player2Id === selfId
+    ) {
+      client.send({
+        type: "accept_convo",
+        data: { convoId: conversation.id },
+      });
+    }
+  });
+
+  ui.onDeclineConversation(() => {
+    const conversation = getSelfConversation();
+    if (
+      conversation &&
+      selfId &&
+      conversation.state === "invited" &&
+      conversation.player2Id === selfId
+    ) {
+      client.send({
+        type: "decline_convo",
+        data: { convoId: conversation.id },
+      });
+    }
+  });
+
+  ui.onEndConversation(() => {
+    const conversation = getSelfConversation();
+    if (conversation?.state === "active") {
+      client.send({ type: "end_convo" });
+    }
   });
 
   // Click to move (pathfinding)
