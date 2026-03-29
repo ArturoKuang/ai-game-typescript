@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import {
   formatMovementHarnessResult,
   listMovementHarnessScenarios,
+  type MovementHarnessScenarioName,
   runMovementHarnessScenario,
 } from "./movementHarness.js";
 
@@ -24,8 +25,8 @@ if (values.list) {
   process.exit(0);
 }
 
-const scenarioName = values.scenario ?? positionals[0];
-if (!scenarioName) {
+const requestedScenario = values.scenario ?? positionals[0];
+if (!requestedScenario) {
   printUsage();
   process.exit(1);
 }
@@ -34,13 +35,14 @@ const knownScenarios = new Set(
   listMovementHarnessScenarios().map((scenario) => scenario.name),
 );
 
-if (!knownScenarios.has(scenarioName)) {
-  console.error(`Unknown scenario: ${scenarioName}`);
+if (!knownScenarios.has(requestedScenario as MovementHarnessScenarioName)) {
+  console.error(`Unknown scenario: ${requestedScenario}`);
   console.error("");
   printUsage();
   process.exit(1);
 }
 
+const scenarioName = requestedScenario as MovementHarnessScenarioName;
 const result = runMovementHarnessScenario(scenarioName);
 if (values.bundle) {
   const bundlePath = resolve(values.bundle);

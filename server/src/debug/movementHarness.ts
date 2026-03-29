@@ -31,6 +31,7 @@ const DEFAULT_EVENT_TYPES = new Set<string>([
   "player_collision",
   "convo_accepted",
   "convo_active",
+  "convo_declined",
   "convo_ended",
   "convo_started",
   "input_move",
@@ -447,7 +448,7 @@ export function listMovementHarnessScenarios(): Array<{
 export function runMovementHarnessScenario(
   scenarioName: MovementHarnessScenarioName,
 ): MovementHarnessResult {
-  const scenario = MOVEMENT_HARNESS_SCENARIOS[scenarioName];
+  const scenario: MovementHarnessScenario = MOVEMENT_HARNESS_SCENARIOS[scenarioName];
   const game = new GameLoop({
     seed: 42,
     mode: "stepped",
@@ -470,7 +471,7 @@ export function runMovementHarnessScenario(
           x: action.player.x,
           y: action.player.y,
           isNpc: action.player.isNpc,
-          speed: action.player.pathSpeed,
+          speed: action.player.speed,
         });
         snapshots.push(captureSnapshot(game, action.label, loggedCount));
         loggedCount = game.logger.size;
