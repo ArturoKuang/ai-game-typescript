@@ -13,6 +13,8 @@ Runtime notes:
 - The server starts with the default world loaded.
 - Five NPCs are spawned immediately at boot.
 - The main server runs in `realtime` mode at 20 ticks/sec unless changed through `/mode`.
+- The server can run with PostgreSQL or with in-memory fallback storage.
+- Conversation endpoints are not all equivalent: `/start-convo`, `/say`, and `/end-convo` call `ConversationManager` directly instead of going through the normal queued command path.
 
 ## Read Endpoints
 
@@ -260,6 +262,12 @@ curl -X POST localhost:3001/api/debug/start-convo \
 
 New conversations begin in `invited`, then advance through `walking` to `active`.
 
+Implementation caveat:
+
+- This route starts the conversation directly on `ConversationManager`.
+- It does not emit the normal `convo_started` game event.
+- Use WebSocket or queued `start_convo` commands when you need full NPC-orchestrator side effects.
+
 ### `POST /say`
 
 Adds a message to an active conversation.
@@ -272,6 +280,11 @@ curl -X POST localhost:3001/api/debug/say \
 
 The conversation must already be in `active`.
 
+Implementation caveat:
+
+- This route appends the message directly to the conversation.
+- It does not emit the normal `convo_message` event, so WebSocket subscribers and the NPC orchestrator do not observe it the same way they would through the queued gameplay path.
+
 ### `POST /end-convo`
 
 Ends a conversation immediately.
@@ -281,6 +294,11 @@ curl -X POST localhost:3001/api/debug/end-convo \
   -H 'Content-Type: application/json' \
   -d '{"convoId":1}'
 ```
+
+Implementation caveat:
+
+- This route ends the conversation directly in `ConversationManager`.
+- It does not emit the normal `convo_ended` event, so post-conversation memory creation is not automatically triggered.
 
 ### `POST /mode`
 
@@ -341,6 +359,7 @@ Important:
 - This clears players, conversations, logs, commands, and the loaded world
 - The default map is not reloaded automatically after this endpoint
 - For normal debugging, prefer `POST /scenario`
+- After `reset`, routes that require `game.world` such as `/map` or `/activities` are no longer safe until a world is loaded again
 
 ## Common Sequences
 

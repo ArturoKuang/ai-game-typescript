@@ -2,13 +2,15 @@
 
 This project has two distinct workflows:
 
-- Runtime workflow: browser client + game server + PostgreSQL
+- Runtime workflow: browser client + game server, with PostgreSQL optional
 - Test workflow: in-memory Vitest suite with no database required
 
 ## Prerequisites
 
 - Node.js 20+
 - Docker Desktop or another Docker runtime for the easiest full-stack setup
+
+Use the [documentation index](README.md) if you need subsystem-specific references after setup.
 
 ## Fastest Full-Stack Path
 
@@ -33,8 +35,9 @@ curl localhost:3001/api/debug/state
 Expected behavior:
 
 - The server loads `data/map.json` on boot
-- The server immediately spawns all five NPCs from `data/characters.ts`
+- The server immediately spawns all five NPCs from `server/src/data/characters.ts`
 - The game loop runs in `realtime` mode at 20 ticks/sec
+- The server reports `status: "ok"` at `/health` because PostgreSQL is available
 
 ### 2. Inspect the town from the terminal
 
@@ -86,7 +89,9 @@ Behavior to know:
 
 ## Local Server Workflow Without Docker
 
-The server can run outside Docker, but it still needs PostgreSQL because startup applies the schema before listening.
+The server can run directly on the host in two ways:
+
+### Option 1: Host server with PostgreSQL
 
 The default connection string in code is:
 
@@ -107,11 +112,29 @@ If you need different values, export them in your shell before starting the serv
 ```bash
 export DATABASE_URL=postgres://USER:PASS@HOST:5432/aitown
 export PORT=3001
+export NPC_MODEL=your-model-name   # optional, passed to the Claude CLI provider
 cd server
 npm run dev
 ```
 
-Note: the repo includes `.env.example`, but the server does not currently auto-load `.env`.
+### Option 2: Host server with no PostgreSQL
+
+If `DATABASE_URL` is unset, or if the database is unreachable, the server still starts and falls back to in-memory persistence for NPC conversations, memories, and generations:
+
+```bash
+cd server
+unset DATABASE_URL
+npm install
+npm run dev
+```
+
+Expected behavior in this mode:
+
+- `/health` returns `status: "degraded"`
+- NPC memory and generation history is process-local only
+- Tests and most debug workflows still work normally
+
+Note: the repo includes a `dotenv` dependency, but the server does not currently auto-load `.env`.
 
 ## Running Tests
 
@@ -180,7 +203,9 @@ The browser client connects its WebSocket directly to port `3001`. Make sure the
 
 ### Local server start fails with a database error
 
-The runtime server requires PostgreSQL at boot. Use Docker Compose or start a local Postgres instance with pgvector enabled.
+If you want database-backed persistence, start PostgreSQL first and verify `DATABASE_URL`.
+
+If you only need the runtime server for local simulation or documentation examples, unset `DATABASE_URL` and run with the in-memory fallback instead.
 
 ### I want a clean simulation state
 
