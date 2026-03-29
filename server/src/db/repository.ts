@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { cosineSimilarity } from "../npc/embedding.js";
 
 export interface MemoryRow {
   id: number;
@@ -379,15 +380,3 @@ export class InMemoryRepository implements MemoryStore {
   }
 }
 
-function cosineSimilarity(left: number[], right: number[]): number {
-  let dot = 0;
-  let leftNorm = 0;
-  let rightNorm = 0;
-  for (let index = 0; index < left.length; index++) {
-    dot += left[index] * right[index];
-    leftNorm += left[index] * left[index];
-    rightNorm += right[index] * right[index];
-  }
-  const denominator = Math.sqrt(leftNorm) * Math.sqrt(rightNorm);
-  return denominator === 0 ? 0 : dot / denominator;
-}
