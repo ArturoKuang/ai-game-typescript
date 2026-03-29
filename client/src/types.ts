@@ -20,12 +20,12 @@ export interface Player {
   targetX?: number;
   targetY?: number;
   orientation: Orientation;
-  speed: number;
+  pathSpeed: number;
   state: PlayerState;
   currentConvoId?: number;
   vx: number;
   vy: number;
-  moveSpeed: number;
+  inputSpeed: number;
   radius: number;
 }
 

@@ -28,7 +28,7 @@ describe("input-driven movement", () => {
     const game = createGame();
     game.spawnPlayer({ id: "p1", name: "p1", x: 2, y: 2 });
     game.setPlayerInput("p1", "right", true);
-    game.tick(); // dt = 1/20 = 0.05, moveSpeed=5, dx=5*0.05=0.25
+    game.tick(); // dt = 1/20 = 0.05, inputSpeed=5, dx=5*0.05=0.25
 
     const p = game.getPlayer("p1")!;
     expect(p.vx).toBeCloseTo(5.0);
@@ -173,7 +173,7 @@ describe("input-driven movement", () => {
     const p = game.getPlayer("p1")!;
 
     const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-    expect(speed).toBeCloseTo(5.0); // Same as moveSpeed
+    expect(speed).toBeCloseTo(5.0); // Same as inputSpeed
     expect(p.vx).toBeCloseTo(5 / Math.sqrt(2));
     expect(p.vy).toBeCloseTo(5 / Math.sqrt(2));
     expect(p.x).toBeCloseTo(2 + 0.25 / Math.sqrt(2));

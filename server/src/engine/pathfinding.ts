@@ -14,8 +14,60 @@ function manhattan(a: Position, b: Position): number {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
-function posKey(x: number, y: number): string {
-  return `${x},${y}`;
+/** Encode (x, y) as a single integer key to avoid string allocation. */
+function posKey(x: number, y: number, height: number): number {
+  return x * height + y;
+}
+
+/** Binary min-heap ordered by f-score. */
+class MinHeap {
+  private data: Node[] = [];
+
+  get size(): number {
+    return this.data.length;
+  }
+
+  push(node: Node): void {
+    this.data.push(node);
+    this.bubbleUp(this.data.length - 1);
+  }
+
+  pop(): Node | undefined {
+    const { data } = this;
+    if (data.length === 0) return undefined;
+    const top = data[0];
+    const last = data.pop()!;
+    if (data.length > 0) {
+      data[0] = last;
+      this.siftDown(0);
+    }
+    return top;
+  }
+
+  private bubbleUp(i: number): void {
+    const { data } = this;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (data[i].f >= data[parent].f) break;
+      [data[i], data[parent]] = [data[parent], data[i]];
+      i = parent;
+    }
+  }
+
+  private siftDown(i: number): void {
+    const { data } = this;
+    const n = data.length;
+    while (true) {
+      let smallest = i;
+      const left = 2 * i + 1;
+      const right = 2 * i + 2;
+      if (left < n && data[left].f < data[smallest].f) smallest = left;
+      if (right < n && data[right].f < data[smallest].f) smallest = right;
+      if (smallest === i) break;
+      [data[i], data[smallest]] = [data[smallest], data[i]];
+      i = smallest;
+    }
+  }
 }
 
 /**
@@ -33,8 +85,12 @@ export function findPath(
   // Already there
   if (start.x === goal.x && start.y === goal.y) return [start];
 
-  const open: Node[] = [];
-  const closed = new Set<string>();
+  const height = world.height;
+  // The open heap orders candidates by f-score for O(log n) extraction.
+  // bestG tracks the lowest g-score seen per position so we can skip
+  // nodes that were re-added to the heap with a worse path.
+  const open = new MinHeap();
+  const closed = new Set<number>();
 
   const startNode: Node = {
     x: start.x,
@@ -47,28 +103,23 @@ export function findPath(
   open.push(startNode);
 
   // Track best g-score per position for faster lookups
-  const bestG = new Map<string, number>();
-  bestG.set(posKey(start.x, start.y), 0);
+  const bestG = new Map<number, number>();
+  bestG.set(posKey(start.x, start.y, height), 0);
 
-  while (open.length > 0) {
-    // Find node with lowest f
-    let bestIdx = 0;
-    for (let i = 1; i < open.length; i++) {
-      if (open[i].f < open[bestIdx].f) bestIdx = i;
-    }
-    const current = open[bestIdx];
-    open.splice(bestIdx, 1);
+  while (open.size > 0) {
+    const current = open.pop()!;
 
     // Reached goal
     if (current.x === goal.x && current.y === goal.y) {
       return reconstructPath(current);
     }
 
-    const key = posKey(current.x, current.y);
+    const key = posKey(current.x, current.y, height);
+    if (closed.has(key)) continue;
     closed.add(key);
 
     for (const neighbor of world.getNeighbors({ x: current.x, y: current.y })) {
-      const nKey = posKey(neighbor.x, neighbor.y);
+      const nKey = posKey(neighbor.x, neighbor.y, height);
       if (closed.has(nKey)) continue;
 
       const g = current.g + 1;
@@ -78,24 +129,14 @@ export function findPath(
 
       bestG.set(nKey, g);
       const h = manhattan(neighbor, goal);
-      const node: Node = {
+      open.push({
         x: neighbor.x,
         y: neighbor.y,
         g,
         h,
         f: g + h,
         parent: current,
-      };
-
-      // Remove worse duplicate from open list
-      if (existing !== undefined) {
-        const idx = open.findIndex(
-          (n) => n.x === neighbor.x && n.y === neighbor.y,
-        );
-        if (idx !== -1) open.splice(idx, 1);
-      }
-
-      open.push(node);
+      });
     }
   }
 

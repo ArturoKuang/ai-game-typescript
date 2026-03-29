@@ -71,7 +71,7 @@ export class UI {
     if (isSystem) {
       div.innerHTML = `<span class="system">${content}</span>`;
     } else {
-      div.innerHTML = `<span class="sender">${senderName}:</span> ${this.escapeHtml(content)}`;
+      div.innerHTML = `<span class="sender">${this.escapeHtml(senderName)}:</span> ${this.escapeHtml(content)}`;
     }
     this.chatMessagesEl.appendChild(div);
     this.chatMessagesEl.scrollTop = this.chatMessagesEl.scrollHeight;
