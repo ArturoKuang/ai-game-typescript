@@ -100,6 +100,20 @@ npm run debug:movement -- --list
 
 Test files: `server/test/*.test.ts`
 
+For live playthroughs or multiplayer verification, a host-only runtime is enough when you do not need Docker-specific wiring:
+
+```bash
+# Terminal 1
+cd server
+npm run dev
+
+# Terminal 2
+cd client
+npm run dev -- --host 0.0.0.0
+```
+
+This path uses in-memory NPC persistence when `DATABASE_URL` is unset, which is sufficient for browser playthroughs, WebSocket probes, and debug API inspection.
+
 For movement and collision work, write tests at three levels:
 
 - Runtime contract tests: held-key ordering, integer-centered positions, path cancellation, collision ownership.
@@ -107,6 +121,16 @@ For movement and collision work, write tests at three levels:
 - Debug invariant tests: use `validateInvariants` to fail loudly on overlap, blocked-tile penetration, invalid paths, or stale state.
 
 Avoid tests that are too granular. A test that only checks speed magnitude or a helper function in isolation can pass while the game is still broken.
+
+For conversation, chat, and multiplayer behavior, prefer these live surfaces over unit-only checks:
+
+- **Browser flow** — use the real client for join, click-to-move, chat availability, and visible conversation UX.
+- **Raw WebSocket clients** — use real `join`, `move`, `start_convo`, `say`, and `end_convo` messages when validating state transitions, multiplayer coordination, or message broadcast scope.
+- **Debug API inspection** — use `/players`, `/conversations`, `/log`, and `/map` to confirm what happened after the live interaction.
+
+Do not rely on the debug conversation mutation routes alone for E2E verification. `POST /start-convo`, `POST /say`, and `POST /end-convo` mutate `ConversationManager` directly and can bypass the queued command flow, WebSocket broadcast path, and NPC orchestrator side effects that live gameplay depends on.
+
+If you need browser automation and the repo does not already depend on Playwright, install it in a temporary directory such as `/tmp` rather than modifying this repo's `package.json` just to run an ad hoc playthrough.
 
 Test fixtures provide pre-configured game loops with mini (5x5) or default (20x20) maps. Example:
 
@@ -158,12 +182,23 @@ The `--bundle` output should be treated as the canonical repro artifact for futu
 End-to-end verification examples:
 
 ```bash
+# Host-only live runtime for browser or WebSocket playthroughs
+cd server && npm run dev
+cd client && npm run dev -- --host 0.0.0.0
+
 # Live debug API verification
 curl localhost:3001/api/debug/state
+curl localhost:3001/api/debug/players
 curl localhost:3001/api/debug/conversations
+curl 'localhost:3001/api/debug/log?type=convo_started,convo_accepted,convo_active,convo_message,convo_ended&limit=50'
+curl 'localhost:3001/api/debug/map?format=ascii'
 
 # Live websocket verification should be used for chat and NPC behavior changes
 # when the feature depends on queued commands or event-driven orchestration.
+
+# For multiplayer or privacy-style checks, keep an unrelated observer socket
+# connected while two active participants interact, and confirm exactly which
+# events the observer receives.
 
 # If startup, Docker wiring, files, or env config changed, verify the Docker path too.
 docker compose up --build -d
