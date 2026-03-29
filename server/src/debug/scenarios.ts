@@ -1,8 +1,28 @@
 import type { GameLoop } from "../engine/gameLoop.js";
+import { CHARACTERS } from "../data/characters.js";
 
 interface Scenario {
   description: string;
   setup: (game: GameLoop) => void;
+}
+
+function spawnCharacter(
+  game: GameLoop,
+  charId: string,
+  x?: number,
+  y?: number,
+): void {
+  const char = CHARACTERS.find((c) => c.id === charId);
+  if (!char) throw new Error(`Unknown character: ${charId}`);
+  game.spawnPlayer({
+    id: char.id,
+    name: char.name,
+    x: x ?? char.spawnPoint.x,
+    y: y ?? char.spawnPoint.y,
+    isNpc: true,
+    description: char.description,
+    personality: char.personality,
+  });
 }
 
 export const SCENARIOS: Record<string, Scenario> = {
@@ -16,75 +36,17 @@ export const SCENARIOS: Record<string, Scenario> = {
   two_npcs_near_cafe: {
     description: "Alice and Bob spawned near the cafe",
     setup: (game) => {
-      game.spawnPlayer({
-        id: "npc_alice",
-        name: "Alice Chen",
-        x: 2,
-        y: 2,
-        isNpc: true,
-        description: "A curious software engineer who loves coffee and sci-fi.",
-        personality: "Curious, outgoing, analytical.",
-      });
-      game.spawnPlayer({
-        id: "npc_bob",
-        name: "Bob Martinez",
-        x: 4,
-        y: 2,
-        isNpc: true,
-        description: "A retired teacher who loves history and sharing stories.",
-        personality: "Warm, patient, nostalgic.",
-      });
+      spawnCharacter(game, "npc_alice", 2, 2);
+      spawnCharacter(game, "npc_bob", 4, 2);
     },
   },
 
   crowded_town: {
     description: "All 5 NPCs spawned at various locations",
     setup: (game) => {
-      game.spawnPlayer({
-        id: "npc_alice",
-        name: "Alice Chen",
-        x: 3,
-        y: 3,
-        isNpc: true,
-        description: "A curious software engineer who loves coffee and sci-fi.",
-        personality: "Curious, outgoing, analytical.",
-      });
-      game.spawnPlayer({
-        id: "npc_bob",
-        name: "Bob Martinez",
-        x: 16,
-        y: 3,
-        isNpc: true,
-        description: "A retired teacher who loves history and sharing stories.",
-        personality: "Warm, patient, nostalgic.",
-      });
-      game.spawnPlayer({
-        id: "npc_carol",
-        name: "Carol Washington",
-        x: 10,
-        y: 10,
-        isNpc: true,
-        description: "An artist who draws inspiration from nature and people.",
-        personality: "Creative, spontaneous, emotional.",
-      });
-      game.spawnPlayer({
-        id: "npc_dave",
-        name: "Dave Kim",
-        x: 5,
-        y: 15,
-        isNpc: true,
-        description: "A college student passionate about sustainability.",
-        personality: "Passionate, idealistic, energetic.",
-      });
-      game.spawnPlayer({
-        id: "npc_eve",
-        name: "Eve Okafor",
-        x: 14,
-        y: 15,
-        isNpc: true,
-        description: "A bakery owner who knows everyone in town.",
-        personality: "Sociable, nurturing, gossipy, wise.",
-      });
+      for (const char of CHARACTERS) {
+        spawnCharacter(game, char.id);
+      }
     },
   },
 };
