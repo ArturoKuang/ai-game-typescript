@@ -128,6 +128,7 @@ export class GameWebSocketServer {
           name: msg.data.name,
           description: msg.data.description ?? "",
           isNpc: false,
+          isWaitingForResponse: false,
           x: spawn.x,
           y: spawn.y,
           orientation: "down",

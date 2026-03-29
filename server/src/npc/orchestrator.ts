@@ -137,9 +137,11 @@ export class NpcOrchestrator {
 
     runtime.inFlight = true;
     runtime.lastRequestedMessageCount = currentMessageCount;
+    this.game.setPlayerWaitingForResponse(npc.id, true);
     void this.generateReply(conversation, npc, runtime).catch((error) => {
       console.error("Failed to generate NPC reply:", error);
       runtime.inFlight = false;
+      this.game.setPlayerWaitingForResponse(npc.id, false);
     });
   }
 
@@ -155,6 +157,7 @@ export class NpcOrchestrator {
     const partner = this.game.getPlayer(partnerId);
     if (!partner) {
       runtime.inFlight = false;
+      this.game.setPlayerWaitingForResponse(npc.id, false);
       return;
     }
 
@@ -193,6 +196,7 @@ export class NpcOrchestrator {
       );
       if (!currentConversation || currentConversation.state !== "active") {
         runtime.inFlight = false;
+        this.game.setPlayerWaitingForResponse(npc.id, false);
         return;
       }
 
@@ -218,6 +222,7 @@ export class NpcOrchestrator {
       throw error;
     } finally {
       runtime.inFlight = false;
+      this.game.setPlayerWaitingForResponse(npc.id, false);
     }
   }
 
@@ -423,6 +428,8 @@ export class NpcOrchestrator {
   private clearConversationRuntimes(conversationId: number): void {
     for (const key of this.runtimes.keys()) {
       if (key.startsWith(`${conversationId}:`)) {
+        const npcId = key.slice(key.indexOf(":") + 1);
+        this.game.setPlayerWaitingForResponse(npcId, false);
         this.runtimes.delete(key);
       }
     }

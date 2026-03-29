@@ -198,10 +198,8 @@ async function start() {
             }
 
             // Update non-position fields from server
-            local.state = msg.data.state;
-            local.orientation = msg.data.orientation;
-            local.vx = msg.data.vx;
-            local.vy = msg.data.vy;
+            const { x: _serverX, y: _serverY, ...rest } = msg.data;
+            Object.assign(local, rest);
           } else {
             gameState.players[idx] = msg.data;
           }

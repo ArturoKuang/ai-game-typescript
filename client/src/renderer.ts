@@ -18,6 +18,7 @@ interface PlayerSprite {
   container: Container;
   circle: Graphics;
   nameLabel: Text;
+  waitingIndicator: Container | null;
   chatBubble: Container | null;
   chatTimeout: ReturnType<typeof setTimeout> | null;
 }
@@ -143,6 +144,8 @@ export class GameRenderer {
         sprite.circle.circle(0, 0, TILE_SIZE * 0.42);
         sprite.circle.stroke({ width: 1.5, color: CONVO_LINE_COLOR });
       }
+
+      this.updateWaitingIndicator(sprite, player.isWaitingForResponse === true);
     }
 
     // Draw conversation lines
@@ -263,8 +266,54 @@ export class GameRenderer {
       container,
       circle,
       nameLabel,
+      waitingIndicator: null,
       chatBubble: null,
       chatTimeout: null,
     };
+  }
+
+  private updateWaitingIndicator(
+    sprite: PlayerSprite,
+    isWaitingForResponse: boolean,
+  ): void {
+    if (!isWaitingForResponse) {
+      if (sprite.waitingIndicator) {
+        sprite.container.removeChild(sprite.waitingIndicator);
+        sprite.waitingIndicator = null;
+      }
+      return;
+    }
+
+    if (sprite.waitingIndicator) {
+      return;
+    }
+
+    const bubble = new Container();
+    const text = new Text({
+      text: "...",
+      style: new TextStyle({
+        fontSize: 12,
+        fill: 0xffffff,
+      }),
+    });
+    text.anchor.set(0.5, 0.5);
+
+    const bg = new Graphics();
+    const paddingX = 8;
+    const paddingY = 4;
+    bg.roundRect(
+      -text.width / 2 - paddingX,
+      -text.height / 2 - paddingY,
+      text.width + paddingX * 2,
+      text.height + paddingY * 2,
+      8,
+    );
+    bg.fill({ color: 0x0f3460, alpha: 0.9 });
+
+    bubble.addChild(bg);
+    bubble.addChild(text);
+    bubble.y = -TILE_SIZE * 1.05;
+    sprite.container.addChild(bubble);
+    sprite.waitingIndicator = bubble;
   }
 }

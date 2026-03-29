@@ -51,7 +51,9 @@ export class UI {
           ? "player-npc"
           : "player-human";
       const stateIcon =
-        p.state === "conversing"
+        p.isWaitingForResponse
+          ? " ..."
+          : p.state === "conversing"
           ? " 💬"
           : p.state === "walking"
             ? " 🚶"

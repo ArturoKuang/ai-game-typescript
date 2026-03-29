@@ -36,6 +36,40 @@ class TestProvider implements NpcModelProvider {
   }
 }
 
+class DeferredReplyProvider implements NpcModelProvider {
+  readonly name = "deferred";
+  private resolveReply:
+    | ((value: NpcModelResponse | PromiseLike<NpcModelResponse>) => void)
+    | null = null;
+  readonly pendingReply = new Promise<NpcModelResponse>((resolve) => {
+    this.resolveReply = resolve;
+  });
+
+  async generateReply(): Promise<NpcModelResponse> {
+    return this.pendingReply;
+  }
+
+  async generateReflection(
+    request: NpcReflectionRequest,
+  ): Promise<NpcModelResponse> {
+    return {
+      content: `${request.npc.id} learned something new.`,
+      prompt: `reflection:${request.npc.id}`,
+      sessionId: `${request.npc.id}-reflection`,
+      latencyMs: 0,
+    };
+  }
+
+  completeReply(content: string): void {
+    this.resolveReply?.({
+      content,
+      prompt: "reply:deferred",
+      sessionId: "deferred-session",
+      latencyMs: 0,
+    });
+  }
+}
+
 async function flushAsyncWork(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -182,5 +216,41 @@ describe("NpcOrchestrator", () => {
     expect(reflections[0].content).toContain("npc_alice learned");
     expect(store.conversations.get(conversation!.id)?.state).toBe("ended");
     expect(store.generations.some((record) => record.kind === "reflection")).toBe(true);
+  });
+
+  it("marks NPCs as waiting while an LLM reply is in flight", async () => {
+    tg = new TestGame({ map: "default" });
+    const repo = new InMemoryRepository();
+    const store = new InMemoryNpcStore();
+    const memoryManager = new MemoryManager(repo, new PlaceholderEmbedder(64));
+    const provider = new DeferredReplyProvider();
+    new NpcOrchestrator(tg.game, memoryManager, provider, store, {
+      enableInitiation: false,
+      enableReflections: false,
+    });
+
+    tg.spawn("human_1", 5, 8, false);
+    tg.spawn("npc_alice", 6, 8, true);
+
+    tg.game.enqueue({
+      type: "start_convo",
+      playerId: "human_1",
+      data: { targetId: "npc_alice" },
+    });
+
+    tg.tick();
+    await flushAsyncWork();
+
+    expect(tg.game.getPlayer("npc_alice")?.isWaitingForResponse).toBe(true);
+
+    provider.completeReply("Still here.");
+    await flushAsyncWork();
+    tg.tick();
+    await flushAsyncWork();
+
+    expect(tg.game.getPlayer("npc_alice")?.isWaitingForResponse).toBe(false);
+    expect(
+      tg.game.conversations.getPlayerConversation("human_1")?.messages[0]?.content,
+    ).toBe("Still here.");
   });
 });

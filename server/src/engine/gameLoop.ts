@@ -104,6 +104,7 @@ export class GameLoop {
       description: params.description ?? "",
       personality: params.personality,
       isNpc: params.isNpc ?? false,
+      isWaitingForResponse: false,
       x: params.x,
       y: params.y,
       orientation: "down",
@@ -140,6 +141,22 @@ export class GameLoop {
 
   getPlayers(): Player[] {
     return Array.from(this.players_.values());
+  }
+
+  setPlayerWaitingForResponse(playerId: string, waiting: boolean): boolean {
+    const player = this.players_.get(playerId);
+    if (!player || player.isWaitingForResponse === waiting) {
+      return false;
+    }
+
+    player.isWaitingForResponse = waiting;
+    this.emit({
+      tick: this.tick_,
+      type: "player_update",
+      playerId,
+      data: { player: { ...player } },
+    });
+    return true;
   }
 
   // --- Movement ---

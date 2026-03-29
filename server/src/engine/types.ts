@@ -19,6 +19,7 @@ export interface Player {
   description: string;
   personality?: string;
   isNpc: boolean;
+  isWaitingForResponse?: boolean;
   x: number;
   y: number;
   targetX?: number;
