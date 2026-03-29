@@ -20,9 +20,18 @@ export interface NpcOrchestratorOptions {
   enableReflections?: boolean;
 }
 
+/** Ticks before an NPC can initiate another conversation (6s at 20 ticks/sec) */
 const DEFAULT_INITIATION_COOLDOWN = 120;
+/** Ticks between NPC initiation scans (1s at 20 ticks/sec) */
 const DEFAULT_INITIATION_INTERVAL = 20;
+/** Manhattan distance within which an NPC will initiate conversation */
 const DEFAULT_INITIATION_RADIUS = 6;
+/** Number of recent messages used as the memory retrieval query */
+const MEMORY_CONTEXT_MESSAGES = 4;
+/** Maximum related memory IDs attached to a reflection */
+const MAX_RELATED_MEMORIES = 4;
+/** Number of memories retrieved for conversation context */
+const RETRIEVAL_LIMIT = 5;
 
 export class NpcOrchestrator {
   private readonly runtimes = new Map<string, ModelRuntime>();
@@ -162,7 +171,7 @@ export class NpcOrchestrator {
     }
 
     const memoryQuery = conversation.messages
-      .slice(-4)
+      .slice(-MEMORY_CONTEXT_MESSAGES)
       .map((message) => message.content)
       .join(" ");
     const memories = await this.retrieveMemories(npc.id, memoryQuery);
@@ -250,13 +259,13 @@ export class NpcOrchestrator {
     query: string,
   ): Promise<Memory[]> {
     if (!query.trim()) {
-      return this.memoryManager.getMemories(playerId, { limit: 5 });
+      return this.memoryManager.getMemories(playerId, { limit: RETRIEVAL_LIMIT });
     }
     const scored = await this.memoryManager.retrieveMemories({
       playerId,
       query,
       currentTick: this.game.currentTick,
-      k: 5,
+      k: RETRIEVAL_LIMIT,
     });
     return scored.map((memory) => memory);
   }
@@ -346,7 +355,7 @@ export class NpcOrchestrator {
         playerId: npcId,
         content: response.content,
         tick: this.game.currentTick,
-        relatedIds: [lastConversationMemoryId, ...recentMemories.slice(0, 4).map((memory) => memory.id)],
+        relatedIds: [lastConversationMemoryId, ...recentMemories.slice(0, MAX_RELATED_MEMORIES).map((memory) => memory.id)],
       });
       this.lastReflectionIds.set(npcId, reflection.id);
     } finally {
@@ -360,6 +369,7 @@ export class NpcOrchestrator {
     }
 
     const reserved = new Set<string>();
+    // Sort by ID for deterministic initiation order under seeded RNG.
     const npcs = this.game
       .getPlayers()
       .filter((player) => player.isNpc)

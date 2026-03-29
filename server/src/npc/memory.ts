@@ -1,9 +1,16 @@
 import type { Memory, MemoryStore, ScoredMemory } from "../db/repository.js";
 import type { Embedder } from "./embedding.js";
 
-const RECENCY_DECAY = 0.99; // per tick
-const REFLECTION_THRESHOLD = 50; // cumulative importance to trigger reflection
-const MEMORY_ACCESS_THROTTLE = 30; // ticks between access updates
+/** Exponential decay factor per tick for memory recency scoring */
+const RECENCY_DECAY = 0.99;
+/** Cumulative importance sum that triggers a reflection generation */
+const REFLECTION_THRESHOLD = 50;
+/** Minimum ticks between updating a memory's last-accessed timestamp */
+const MEMORY_ACCESS_THROTTLE = 30;
+/** Number of recent messages used as the memory retrieval query */
+const MEMORY_CONTEXT_MESSAGES = 4;
+/** Maximum related memory IDs attached to a reflection */
+const MAX_RELATED_MEMORIES = 4;
 
 export class MemoryManager {
   constructor(
