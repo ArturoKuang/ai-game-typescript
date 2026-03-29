@@ -29,8 +29,6 @@ This folder is the project reference set for the current AI Town codebase. It is
 
 - [Movement overhaul plan](movement-overhaul-plan.md): historical design doc for the current continuous-movement model.
 - [Chemistry system design](chemistry-system-design.md): forward-looking design notes for a future chemistry/physics layer.
-- [OpenClaw overview](openclaw-overview.md): external architecture notes captured in this repo.
-- [OpenClaw agentic loop](openclaw-agentic-loop.md): deeper notes on that external agent loop.
 
 ## Documentation Conventions
 

@@ -139,5 +139,3 @@ This is the file-level map of the repository’s main systems, subsystems, and c
 | `docs/debugging-workflow.md` | Bug reproduction and verification workflow. |
 | `docs/movement-overhaul-plan.md` | Historical movement design note. |
 | `docs/chemistry-system-design.md` | Future design note for chemistry/physics. |
-| `docs/openclaw-overview.md` | External architecture notes stored in this repo. |
-| `docs/openclaw-agentic-loop.md` | External agent-loop notes stored in this repo. |
