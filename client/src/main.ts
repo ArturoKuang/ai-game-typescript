@@ -1,4 +1,11 @@
+import { logClientDebugEvent } from "./debugLog.js";
 import { GameClient } from "./network.js";
+import {
+  MOVE_SPEED,
+  PLAYER_RADIUS,
+  getHeldDirectionVector,
+  predictLocalPlayerStep,
+} from "./prediction.js";
 import { GameRenderer } from "./renderer.js";
 import type { FullGameState, MoveDirection, TileType } from "./types.js";
 import { UI } from "./ui.js";
@@ -59,10 +66,6 @@ async function start() {
   client.connect();
 
   // --- WASD / Arrow key continuous movement with input_start/input_stop ---
-  const MOVE_SPEED = 5.0;
-  const PLAYER_RADIUS = 0.4;
-  const COLLISION_EPSILON = 1e-6;
-
   const KEY_TO_DIR: Record<string, MoveDirection> = {
     w: "up",
     a: "left",
@@ -141,17 +144,55 @@ async function start() {
 
             if (dist > 4) {
               // Teleport/spawn — snap immediately
+              logClientDebugEvent("reconciliation_correction", {
+                mode: "snap",
+                playerId: msg.data.id,
+                dist,
+                serverX: msg.data.x,
+                serverY: msg.data.y,
+                localX: local.x,
+                localY: local.y,
+              });
               local.x = msg.data.x;
               local.y = msg.data.y;
             } else if (heldDirections.size > 0) {
-              // Actively moving: only correct if very far off
-              if (dist > 1.5) {
-                local.x += dx * 0.2;
-                local.y += dy * 0.2;
+              // Actively moving: tolerate tiny drift but correct collision-sized divergence.
+              if (dist > 1.0) {
+                logClientDebugEvent("reconciliation_correction", {
+                  mode: "snap",
+                  playerId: msg.data.id,
+                  dist,
+                  serverX: msg.data.x,
+                  serverY: msg.data.y,
+                  localX: local.x,
+                  localY: local.y,
+                });
+                local.x = msg.data.x;
+                local.y = msg.data.y;
+              } else if (dist > 0.35) {
+                logClientDebugEvent("reconciliation_correction", {
+                  mode: "lerp",
+                  playerId: msg.data.id,
+                  dist,
+                  serverX: msg.data.x,
+                  serverY: msg.data.y,
+                  localX: local.x,
+                  localY: local.y,
+                });
+                local.x += dx * 0.5;
+                local.y += dy * 0.5;
               }
-              // Otherwise trust client prediction entirely
             } else if (dist > 0.3) {
               // Stopped: correct toward server position
+              logClientDebugEvent("reconciliation_correction", {
+                mode: "settle",
+                playerId: msg.data.id,
+                dist,
+                serverX: msg.data.x,
+                serverY: msg.data.y,
+                localX: local.x,
+                localY: local.y,
+              });
               local.x += dx * 0.3;
               local.y += dy * 0.3;
             }
@@ -229,122 +270,6 @@ async function start() {
     return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
   }
 
-  /** Compute input vector from held directions */
-  function getInputVector(): { ix: number; iy: number } {
-    let ix = 0;
-    let iy = 0;
-    if (heldDirections.has("left")) ix -= 1;
-    if (heldDirections.has("right")) ix += 1;
-    if (heldDirections.has("up")) iy -= 1;
-    if (heldDirections.has("down")) iy += 1;
-    return { ix, iy };
-  }
-
-  /** Check if a tile is blocked (matching server: out-of-bounds = blocked) */
-  function isTileBlocked(tx: number, ty: number): boolean {
-    if (!mapTiles) return false;
-    if (ty < 0 || ty >= mapTiles.length || tx < 0 || tx >= (mapTiles[0]?.length ?? 0)) {
-      return true; // Out of bounds = blocked (matches server)
-    }
-    return mapTiles[ty][tx] !== "floor";
-  }
-
-  /**
-   * Client-side AABB collision matching server logic exactly.
-   * Uses split-axis resolution with minimum-penetration-axis selection.
-   */
-  function clientMoveWithCollision(
-    x: number,
-    y: number,
-    dx: number,
-    dy: number,
-    radius: number,
-  ): { x: number; y: number } {
-    // No subdivision needed: client movement per frame is always << radius
-    let nx = x + dx;
-    nx = clientResolveX(nx, y, dx, radius);
-    let ny = y + dy;
-    ny = clientResolveY(nx, ny, dy, radius);
-    return { x: nx, y: ny };
-  }
-
-  function clientResolveX(
-    cx: number,
-    cy: number,
-    dx: number,
-    radius: number,
-  ): number {
-    const minTY = Math.floor(cy - radius + COLLISION_EPSILON);
-    const maxTY = Math.floor(cy + radius - COLLISION_EPSILON);
-    const minTX = Math.floor(cx - radius + COLLISION_EPSILON);
-    const maxTX = Math.floor(cx + radius - COLLISION_EPSILON);
-
-    for (let ty = minTY; ty <= maxTY; ty++) {
-      for (let tx = minTX; tx <= maxTX; tx++) {
-        if (!isTileBlocked(tx, ty)) continue;
-
-        const overlapX = Math.min(cx + radius - tx, tx + 1 - (cx - radius));
-        const overlapY = Math.min(cy + radius - ty, ty + 1 - (cy - radius));
-
-        if (overlapX <= 0 || overlapY <= 0) continue;
-        if (overlapX >= overlapY) continue; // Y is shallower, skip for Y pass
-
-        if (dx > 0) {
-          cx = Math.min(cx, tx - radius);
-        } else if (dx < 0) {
-          cx = Math.max(cx, tx + 1 + radius);
-        } else {
-          const penRight = cx + radius - tx;
-          const penLeft = tx + 1 - (cx - radius);
-          if (penRight <= penLeft) {
-            cx = tx - radius;
-          } else {
-            cx = tx + 1 + radius;
-          }
-        }
-      }
-    }
-    return cx;
-  }
-
-  function clientResolveY(
-    cx: number,
-    cy: number,
-    dy: number,
-    radius: number,
-  ): number {
-    const minTX = Math.floor(cx - radius + COLLISION_EPSILON);
-    const maxTX = Math.floor(cx + radius - COLLISION_EPSILON);
-    const minTY = Math.floor(cy - radius + COLLISION_EPSILON);
-    const maxTY = Math.floor(cy + radius - COLLISION_EPSILON);
-
-    for (let ty = minTY; ty <= maxTY; ty++) {
-      for (let tx = minTX; tx <= maxTX; tx++) {
-        if (!isTileBlocked(tx, ty)) continue;
-
-        const overlapX = Math.min(cx + radius - tx, tx + 1 - (cx - radius));
-        const overlapY = Math.min(cy + radius - ty, ty + 1 - (cy - radius));
-
-        if (overlapX <= 0 || overlapY <= 0) continue;
-
-        if (dy > 0) {
-          cy = Math.min(cy, ty - radius);
-        } else if (dy < 0) {
-          cy = Math.max(cy, ty + 1 + radius);
-        } else {
-          const penDown = cy + radius - ty;
-          const penUp = ty + 1 - (cy - radius);
-          if (penDown <= penUp) {
-            cy = ty - radius;
-          } else {
-            cy = ty + 1 + radius;
-          }
-        }
-      }
-    }
-    return cy;
-  }
-
   window.addEventListener("keydown", (e) => {
     if (isInputFocused()) return;
     const dir = KEY_TO_DIR[e.key];
@@ -385,29 +310,32 @@ async function start() {
       const self = gameState.players.find((p) => p.id === selfId);
       if (self && self.state !== "conversing") {
         // Client-side prediction: apply same physics as server
-        const { ix, iy } = getInputVector();
+        const { ix, iy } = getHeldDirectionVector(heldDirections);
         if (ix !== 0 || iy !== 0) {
-          const mag = Math.sqrt(ix * ix + iy * iy);
-          const nix = ix / mag;
-          const niy = iy / mag;
-          const ddx = nix * MOVE_SPEED * dt;
-          const ddy = niy * MOVE_SPEED * dt;
-          const result = clientMoveWithCollision(
-            self.x,
-            self.y,
-            ddx,
-            ddy,
-            PLAYER_RADIUS,
-          );
-          self.x = result.x;
-          self.y = result.y;
-
-          // Update orientation
-          if (Math.abs(ix) > Math.abs(iy)) {
-            self.orientation = ix > 0 ? "right" : "left";
-          } else {
-            self.orientation = iy > 0 ? "down" : "up";
-          }
+          const predicted = predictLocalPlayerStep({
+            player: {
+              id: self.id,
+              x: self.x,
+              y: self.y,
+              orientation: self.orientation,
+              radius: self.radius ?? PLAYER_RADIUS,
+              moveSpeed: self.moveSpeed ?? MOVE_SPEED,
+            },
+            otherPlayers: gameState.players
+              .filter((player) => player.id !== self.id)
+              .map((player) => ({
+                id: player.id,
+                x: player.x,
+                y: player.y,
+                radius: player.radius ?? PLAYER_RADIUS,
+              })),
+            heldDirections,
+            mapTiles,
+            dt,
+          });
+          self.x = predicted.x;
+          self.y = predicted.y;
+          self.orientation = predicted.orientation;
         }
       }
     }

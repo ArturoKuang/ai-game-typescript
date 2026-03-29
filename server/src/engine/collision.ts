@@ -1,3 +1,4 @@
+import type { Position } from "./types.js";
 import type { World } from "./world.js";
 
 export const PLAYER_RADIUS = 0.4;
@@ -6,11 +7,44 @@ const EPSILON = 1e-6;
 
 /**
  * Move a player by (dx, dy) with AABB tile collision.
- * Uses split-axis resolution with minimum-penetration-axis selection
- * to correctly handle diagonal corners. Subdivides large movements
- * to prevent tunneling through walls.
+ *
+ * Runtime player coordinates are centered on integer tile coordinates:
+ * tile (2, 3) has its center at (2, 3) and its bounds span
+ * [1.5, 2.5] x [2.5, 3.5].
+ *
+ * The internal collision helper operates on unit tiles with bounds
+ * [tx, tx + 1] x [ty, ty + 1], so we translate coordinates by +0.5
+ * before resolving and then translate back.
  */
 export function moveWithCollision(
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  radius: number,
+  world: World,
+): { x: number; y: number } {
+  const shifted = moveWithCollisionOnUnitGrid(
+    x + 0.5,
+    y + 0.5,
+    dx,
+    dy,
+    radius,
+    world,
+  );
+  return { x: shifted.x - 0.5, y: shifted.y - 0.5 };
+}
+
+export function findBlockedTileOverlap(
+  x: number,
+  y: number,
+  radius: number,
+  world: World,
+): Position | null {
+  return findBlockedTileOverlapOnUnitGrid(x + 0.5, y + 0.5, radius, world);
+}
+
+function moveWithCollisionOnUnitGrid(
   x: number,
   y: number,
   dx: number,
@@ -41,6 +75,39 @@ export function moveWithCollision(
   }
 
   return { x: cx, y: cy };
+}
+
+function findBlockedTileOverlapOnUnitGrid(
+  cx: number,
+  cy: number,
+  radius: number,
+  world: World,
+): Position | null {
+  const minTY = Math.floor(cy - radius + EPSILON);
+  const maxTY = Math.floor(cy + radius - EPSILON);
+  const minTX = Math.floor(cx - radius + EPSILON);
+  const maxTX = Math.floor(cx + radius - EPSILON);
+
+  for (let ty = minTY; ty <= maxTY; ty++) {
+    for (let tx = minTX; tx <= maxTX; tx++) {
+      if (world.isWalkable(tx, ty)) continue;
+
+      const overlapX = Math.min(
+        cx + radius - tx,
+        tx + 1 - (cx - radius),
+      );
+      const overlapY = Math.min(
+        cy + radius - ty,
+        ty + 1 - (cy - radius),
+      );
+
+      if (overlapX > 0 && overlapY > 0) {
+        return { x: tx, y: ty };
+      }
+    }
+  }
+
+  return null;
 }
 
 /**

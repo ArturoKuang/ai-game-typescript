@@ -65,6 +65,27 @@ describe("GameLoop", () => {
     expect(tg.getPlayer("alice").state).toBe("idle");
   });
 
+  it("blocks path movement when another player occupies the next waypoint", () => {
+    tg = new TestGame();
+    tg.spawn("alice", 1, 1);
+    tg.spawn("bob", 2, 1);
+
+    tg.move("alice", 3, 1);
+    tg.tick();
+
+    expect(tg.getPlayer("alice").x).toBe(1);
+    expect(tg.getPlayer("alice").y).toBe(1);
+    expect(tg.getPlayer("alice").state).toBe("walking");
+
+    const collisionEvent = tg
+      .game
+      .logger
+      .getEvents({ playerId: "alice" })
+      .find((event) => event.type === "player_collision");
+    expect(collisionEvent?.data?.mode).toBe("path");
+    expect(collisionEvent?.data?.blockerId).toBe("bob");
+  });
+
   it("player reaches destination and becomes idle", () => {
     tg = new TestGame();
     tg.spawn("alice", 1, 1);
@@ -111,6 +132,15 @@ describe("GameLoop", () => {
     tg.spawn("alice", 1, 1);
     const path = tg.move("alice", 0, 0); // wall
     expect(path).toBeNull();
+  });
+
+  it("discrete movement uses the current rounded tile for fractional positions", () => {
+    tg = new TestGame();
+    tg.game.spawnPlayer({ id: "alice", name: "alice", x: 2.25, y: 2 });
+
+    expect(tg.game.movePlayerDirection("alice", "left")).toBe(true);
+    expect(tg.getPlayer("alice").x).toBe(1);
+    expect(tg.getPlayer("alice").y).toBe(2);
   });
 
   it("stepped mode does not auto-advance", () => {

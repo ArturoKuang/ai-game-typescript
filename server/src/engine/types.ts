@@ -53,10 +53,13 @@ export interface Activity {
 export type GameEventType =
   | "spawn"
   | "despawn"
+  | "input_state"
   | "move_start"
+  | "move_cancelled"
   | "move_end"
   | "move_direction"
   | "player_update"
+  | "player_collision"
   | "convo_accepted"
   | "convo_active"
   | "convo_ended"
