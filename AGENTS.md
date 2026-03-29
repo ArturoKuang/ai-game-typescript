@@ -34,8 +34,9 @@ When implementing features or fixing bugs, follow this workflow:
 4. **Implement** — write the code changes
 5. **Add parity or invariant coverage when relevant** — use client/server parity tests and `validateInvariants` for movement bugs
 6. **Run tests** — `cd server && npm test` — fix until green
-7. **Verify** — if the server is running, check via debug API (`GET /api/debug/map`, `GET /api/debug/state`)
-8. **Report** — show test results, the harness or debug log used, and an ASCII map snapshot
+7. **Verify live end-to-end** — always run at least one E2E check of the finished feature against a running server using the real surface area involved (WebSocket, debug API, movement harness, or browser flow)
+8. **Inspect live state** — confirm the result via debug API (`GET /api/debug/map`, `GET /api/debug/state`, logs, or conversation endpoints)
+9. **Report** — show test results, the harness or debug log used, and an ASCII map snapshot. If E2E verification was blocked, say exactly why instead of claiming completion.
 
 Before committing, always run tests and verify via the debug API.
 
@@ -49,8 +50,11 @@ Before committing, always run tests and verify via the debug API.
 ### After You Finish
 
 1. Run `npm test` from `server/` and ensure all tests pass.
-2. If you added new game logic, add a test in `server/test/`.
-3. If you added a new module, use ES module syntax with `.js` import extensions.
+2. Run at least one end-to-end verification of the completed feature against a live server path before declaring the work done.
+3. If the feature touches runtime gameplay, WebSocket flows, NPC behavior, or persistence, prefer a real server exercise over a unit-only check.
+4. If the feature touches Docker, startup/bootstrap code, filesystem paths, environment wiring, or the normal `npm run dev` path, the E2E verification must include the Docker path (`docker compose ...` or `npm run dev`), not just host-mode startup.
+5. If you added new game logic, add a test in `server/test/`.
+6. If you added a new module, use ES module syntax with `.js` import extensions.
 
 ## Code Rules
 
@@ -150,6 +154,23 @@ npm run debug:movement -- --scenario simultaneous_input_release --bundle /tmp/w-
 ```
 
 The `--bundle` output should be treated as the canonical repro artifact for future agents.
+
+End-to-end verification examples:
+
+```bash
+# Live debug API verification
+curl localhost:3001/api/debug/state
+curl localhost:3001/api/debug/conversations
+
+# Live websocket verification should be used for chat and NPC behavior changes
+# when the feature depends on queued commands or event-driven orchestration.
+
+# If startup, Docker wiring, files, or env config changed, verify the Docker path too.
+docker compose up --build -d
+docker compose logs game-server --tail=100
+curl localhost:3001/api/debug/state
+docker compose down
+```
 
 ## Environment Setup (Optional)
 

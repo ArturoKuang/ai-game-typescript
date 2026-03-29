@@ -5,7 +5,8 @@
     "check:fix": "biome check --write .",
     "test": "cd server && npm test",
     "test:perf": "cd server && npm run test:perf",
-    "dev": "concurrently -n server,client -c blue,green \"docker compose up --build\" \"cd client && npm run dev\""
+    "dev": "concurrently -n server,client -c blue,green \"docker compose up --build\" \"cd client && npm run dev\"",
+    "dev:host-server": "docker compose up -d db && concurrently -n server,client -c blue,green \"cd server && DATABASE_URL=postgres://aitown:aitown_dev@localhost:5432/aitown npm run dev\" \"cd client && npm run dev\""
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9",

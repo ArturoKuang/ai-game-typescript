@@ -62,10 +62,11 @@ When implementing features or fixing bugs, follow this workflow:
 4. **Implement** -- write the code changes
 5. **Add parity or invariant coverage when relevant** -- use client/server parity tests and `validateInvariants` for movement bugs
 6. **Run tests** -- `docker compose exec game-server npx vitest run` or `cd server && npm test` -- fix until green
-7. **Verify** -- if the server is running, check via debug API (`GET /api/debug/map`, `GET /api/debug/state`)
-8. **Report** -- show test results, the repro artifact used, and an ASCII map snapshot
+7. **Verify live end-to-end** -- always run at least one E2E check of the finished feature against a running server using the real interface involved (WebSocket, debug API, movement harness, or browser flow)
+8. **Inspect live state** -- check the result via debug API (`GET /api/debug/map`, `GET /api/debug/state`, logs, or conversation endpoints)
+9. **Report** -- show test results, the repro artifact used, and an ASCII map snapshot. If E2E verification was blocked, state the blocker explicitly instead of claiming completion.
 
-Before committing, always run tests and verify via the debug API.
+Before committing, always run tests and perform at least one live end-to-end verification of the completed feature.
 
 ## Tech Stack
 
@@ -137,6 +138,13 @@ Bad test smell:
 - only checking a low-level helper in isolation
 - reimplementing the client prediction math inside a test instead of importing it
 
+Completion rule:
+
+- Feature work is not complete until it has both automated test coverage and at least one live end-to-end verification through the real runtime path it affects.
+- For gameplay, NPC, WebSocket, persistence, or UI behavior, prefer a running server check over unit-only validation.
+- If the change touches Docker, startup/bootstrap code, filesystem paths, environment wiring, or the normal `npm run dev` flow, the live verification must include the Docker path (`docker compose ...` or `npm run dev`), not just host-mode startup.
+- If an end-to-end check cannot be run, stop and report the exact blocker.
+
 **TestGame methods:**
 - `spawn(id, x, y, isNpc?)` -- create a player at position
 - `tick(count?)` -- advance N ticks (default 1), returns `TickResult[]`
@@ -190,6 +198,19 @@ For browser reconciliation debugging, inspect:
 
 ```js
 window.__AI_TOWN_CLIENT_DEBUG__?.getEvents()
+```
+
+Typical end-to-end verification commands:
+
+```bash
+curl localhost:3001/api/debug/state
+curl localhost:3001/api/debug/conversations
+
+# Required when startup, Docker wiring, files, or env config changed
+docker compose up --build -d
+docker compose logs game-server --tail=100
+curl localhost:3001/api/debug/state
+docker compose down
 ```
 
 ## Environment
