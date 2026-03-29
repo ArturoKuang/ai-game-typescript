@@ -104,6 +104,19 @@ describe("GameLogger", () => {
     expect(events).toHaveLength(2);
   });
 
+  it("filters by event type", () => {
+    const logger = new GameLogger();
+    logger.log({ tick: 1, type: "input_state", playerId: "alice" });
+    logger.log({ tick: 2, type: "input_move", playerId: "alice" });
+    logger.log({ tick: 3, type: "player_collision", playerId: "alice" });
+
+    const events = logger.getEvents({ types: ["input_move", "player_collision"] });
+    expect(events.map((event) => event.type)).toEqual([
+      "input_move",
+      "player_collision",
+    ]);
+  });
+
   it("limits results", () => {
     const logger = new GameLogger();
     for (let i = 0; i < 100; i++) {

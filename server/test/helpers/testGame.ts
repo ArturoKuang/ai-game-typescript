@@ -35,9 +35,17 @@ const MINI_MAP: MapData = {
 export class TestGame {
   game: GameLoop;
 
-  constructor(options?: { seed?: number; map?: MapData | "default" }) {
+  constructor(options?: {
+    seed?: number;
+    map?: MapData | "default";
+    validateInvariants?: boolean;
+  }) {
     const seed = options?.seed ?? 42;
-    this.game = new GameLoop({ seed, mode: "stepped" });
+    this.game = new GameLoop({
+      seed,
+      mode: "stepped",
+      validateInvariants: options?.validateInvariants,
+    });
 
     if (options?.map === "default") {
       const mapData: MapData = JSON.parse(

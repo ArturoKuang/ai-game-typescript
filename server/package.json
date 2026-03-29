@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "debug:movement": "tsx src/debug/runMovementHarness.ts",
     "test": "vitest run",
     "test:perf": "vitest run test/performance.test.ts",
     "test:watch": "vitest"

@@ -83,7 +83,13 @@ export function createDebugRouter(
       ? Number.parseInt(req.query.limit as string, 10)
       : 50;
     const playerId = req.query.playerId as string | undefined;
-    res.json(game.logger.getEvents({ since, limit, playerId }));
+    const types = typeof req.query.type === "string"
+      ? req.query.type
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : undefined;
+    res.json(game.logger.getEvents({ since, limit, playerId, types }));
   });
 
   router.get("/scenarios", (_req, res) => {

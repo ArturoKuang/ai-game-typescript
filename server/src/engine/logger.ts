@@ -26,6 +26,7 @@ export class GameLogger {
     since?: number;
     limit?: number;
     playerId?: string;
+    types?: string[];
   }): GameEvent[] {
     let events = this.buffer;
 
@@ -35,6 +36,11 @@ export class GameLogger {
 
     if (options?.playerId) {
       events = events.filter((e) => e.playerId === options.playerId);
+    }
+
+    if (options?.types && options.types.length > 0) {
+      const wanted = new Set(options.types);
+      events = events.filter((e) => wanted.has(e.type));
     }
 
     if (options?.limit) {
