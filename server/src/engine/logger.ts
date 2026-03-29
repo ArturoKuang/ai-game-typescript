@@ -3,58 +3,68 @@ import type { GameEvent } from "./types.js";
 const DEFAULT_MAX_SIZE = 1000;
 
 /**
- * In-memory ring buffer for game events.
+ * In-memory circular buffer for game events.
  * Keeps the last N events for debug API queries.
+ * All operations are O(1) for writes, O(n) for filtered reads.
  */
 export class GameLogger {
-  private buffer: GameEvent[] = [];
-  private maxSize: number;
+  private buffer: (GameEvent | undefined)[];
+  private head = 0;
+  private count = 0;
+  private capacity: number;
 
   constructor(maxSize: number = DEFAULT_MAX_SIZE) {
-    this.maxSize = maxSize;
+    this.capacity = maxSize;
+    this.buffer = new Array(maxSize);
   }
 
   log(event: GameEvent): void {
-    this.buffer.push(event);
-    if (this.buffer.length > this.maxSize) {
-      this.buffer.shift();
+    const idx = (this.head + this.count) % this.capacity;
+    this.buffer[idx] = event;
+    if (this.count < this.capacity) {
+      this.count++;
+    } else {
+      this.head = (this.head + 1) % this.capacity;
     }
   }
 
-  /** Get events since a given tick, with optional limit */
+  /** Get events with optional filters (single-pass). */
   getEvents(options?: {
     since?: number;
     limit?: number;
     playerId?: string;
     types?: string[];
   }): GameEvent[] {
-    let events = this.buffer;
+    const since = options?.since;
+    const playerId = options?.playerId;
+    const wanted =
+      options?.types && options.types.length > 0
+        ? new Set(options.types)
+        : undefined;
+    const limit = options?.limit;
 
-    if (options?.since !== undefined) {
-      events = events.filter((e) => e.tick >= options.since!);
+    const result: GameEvent[] = [];
+    for (let i = 0; i < this.count; i++) {
+      const event = this.buffer[(this.head + i) % this.capacity]!;
+      if (since !== undefined && event.tick < since) continue;
+      if (playerId && event.playerId !== playerId) continue;
+      if (wanted && !wanted.has(event.type)) continue;
+      result.push(event);
     }
 
-    if (options?.playerId) {
-      events = events.filter((e) => e.playerId === options.playerId);
+    if (limit && result.length > limit) {
+      return result.slice(-limit);
     }
-
-    if (options?.types && options.types.length > 0) {
-      const wanted = new Set(options.types);
-      events = events.filter((e) => wanted.has(e.type));
-    }
-
-    if (options?.limit) {
-      events = events.slice(-options.limit);
-    }
-
-    return events;
+    return result;
   }
 
   clear(): void {
-    this.buffer = [];
+    this.buffer = new Array(this.capacity);
+    this.head = 0;
+    this.count = 0;
   }
 
   get size(): number {
-    return this.buffer.length;
+    return this.count;
   }
 }
