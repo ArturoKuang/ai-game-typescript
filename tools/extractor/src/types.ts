@@ -1,0 +1,381 @@
+/**
+ * Architecture graph schema — the single data contract between the
+ * extractor (producer) and the visualizer (consumer).
+ */
+
+/** Top-level graph output written to graph.json */
+export interface ArchitectureGraph {
+  meta: {
+    extractedAt: string;
+    rootDir: string;
+    fileCount: number;
+    classCount: number;
+    eventTypeCount: number;
+    commandTypeCount: number;
+  };
+  components: Component[];
+  files: FileNode[];
+  classes: ClassInfo[];
+  moduleFacts: ModuleFact[];
+  imports: ImportEdge[];
+  events: EventInfo[];
+  commands: CommandInfo[];
+  boundaries: BoundaryEdge[];
+  internals: ComponentInternal[];
+  messageFlows: MessageFlow[];
+  messageFlowGroups: MessageFlowGroup[];
+  stateMachines: StateMachine[];
+  componentDiagram?: ComponentDiagram;
+}
+
+/** Component = directory-level grouping */
+export interface Component {
+  id: string;
+  label: string;
+  dirPattern: string;
+  fileIds: string[];
+  color: string;
+  totalLoc: number;
+}
+
+/** A source file */
+export interface FileNode {
+  id: string; // relative path
+  componentId: string;
+  classes: string[];
+  exports: string[];
+  loc: number;
+}
+
+/** A class or interface */
+export interface ClassInfo {
+  id: string;
+  fileId: string;
+  componentId: string;
+  name: string;
+  kind: "class" | "interface";
+  fields: FieldInfo[];
+  methods: MethodInfo[];
+  implementsNames: string[];
+  extendsName?: string;
+}
+
+export interface FieldInfo {
+  name: string;
+  type: string;
+  visibility: "public" | "private" | "protected";
+}
+
+export interface MethodInfo {
+  name: string;
+  returnType: string;
+  parameters: { name: string; type: string }[];
+  visibility: "public" | "private" | "protected";
+  isAsync: boolean;
+  loc: number;
+}
+
+/** Raw per-file facts used by higher-level diagram synthesis */
+export interface ModuleFact {
+  fileId: string;
+  topLevelVariables: string[];
+  functionVariables: { functionName: string; variableNames: string[] }[];
+  exportedFunctions: string[];
+  domElementIds: string[];
+  windowGlobals: string[];
+  routerPaths: {
+    get: string[];
+    post: string[];
+  };
+  switchCases: {
+    className?: string;
+    methodName: string;
+    labels: string[];
+  }[];
+  sqlTables: string[];
+  sqlFlags: string[];
+}
+
+/** File-to-file import edge */
+export interface ImportEdge {
+  source: string;
+  target: string;
+  symbols: string[];
+}
+
+/** An event type with its emitters and subscribers */
+export interface EventInfo {
+  eventType: string;
+  emitters: { fileId: string; classId?: string; line: number }[];
+  subscribers: { fileId: string; classId?: string; line: number }[];
+}
+
+/** A command type with its producers */
+export interface CommandInfo {
+  commandType: string;
+  producers: { fileId: string; classId?: string; line: number }[];
+  consumer: string; // always gameLoop.ts
+}
+
+/** Aggregated cross-component coupling edge */
+export interface BoundaryEdge {
+  source: string; // component ID
+  target: string; // component ID
+  eventCount: number;
+  callCount: number;
+  mutationCount: number;
+  couplingType: "event" | "call" | "mutation" | "mixed";
+  details: BoundaryDetail[];
+}
+
+export interface BoundaryDetail {
+  kind: "event" | "call" | "mutation";
+  description: string;
+  sourceFile: string;
+  targetFile: string;
+  line?: number;
+}
+
+/** Internal architecture of a component — ownership, state, usage patterns */
+export interface ComponentInternal {
+  componentId: string;
+  /** The central class that owns/coordinates the others */
+  primaryClass: string;
+  /** State fields owned directly by the primary class (not other classes) */
+  primaryState: { name: string; type: string }[];
+  /** Classes instantiated as fields of the primary class */
+  ownedClasses: {
+    name: string;
+    fieldName: string;
+    stateFields: { name: string; type: string }[];
+  }[];
+  /** Functions/classes imported and used but not stored as fields */
+  usedUtilities: { name: string; source: string; purpose: string }[];
+}
+
+// ---------------------------------------------------------------------------
+// Message Flows — traces of ClientMessage → Engine → ServerMessage
+// ---------------------------------------------------------------------------
+
+/** A traced message flow from client through server and back */
+export interface MessageFlow {
+  /** The ClientMessage.type that initiates this flow */
+  clientMessageType: string;
+  /** Human-readable summary of what this flow does */
+  description: string;
+  /** Steps in the processing chain */
+  steps: MessageFlowStep[];
+}
+
+/** A single step in a message flow processing chain */
+export interface MessageFlowStep {
+  /** Which component/swim lane this step belongs to */
+  lane: "Client" | "Network" | "Engine" | "NPC" | "Persistence";
+  /** Human-readable description of what happens */
+  action: string;
+  /** The method or function called */
+  method: string;
+  /** File where this occurs */
+  fileId: string;
+  /** Line number */
+  line?: number;
+  /** What gets produced (event type, message type, command type) */
+  produces?: string;
+  /** Kind of production */
+  producesKind?: "command" | "event" | "serverMessage" | "directCall";
+  /** Validation/error paths that may short-circuit this step */
+  errorPaths?: { condition: string; produces: string }[];
+  /** State machine transition triggered by this step */
+  stateTransition?: { machineId: string; from: string; to: string };
+  /** Shape of the data produced/consumed at this step */
+  dataShape?: string;
+}
+
+/** A grouping of related message flows */
+export interface MessageFlowGroup {
+  id: string;
+  label: string;
+  description: string;
+  flowTypes: string[];
+}
+
+// ---------------------------------------------------------------------------
+// State Machines — conversation lifecycle, player states
+// ---------------------------------------------------------------------------
+
+/** A state machine extracted from the codebase */
+export interface StateMachine {
+  /** Unique identifier */
+  id: string;
+  /** Human-readable label */
+  label: string;
+  /** Description of what this state machine governs */
+  description: string;
+  /** Where this state machine is primarily defined */
+  fileId: string;
+  classId?: string;
+  /** All possible states */
+  states: StateMachineState[];
+  /** Transitions between states */
+  transitions: StateMachineTransition[];
+}
+
+export interface StateMachineState {
+  id: string;
+  label: string;
+  /** Whether this is the initial state */
+  isInitial?: boolean;
+  /** Whether this is a terminal state */
+  isTerminal?: boolean;
+  /** Color for rendering */
+  color?: string;
+}
+
+export interface StateMachineTransition {
+  from: string;
+  to: string;
+  /** What triggers this transition */
+  trigger: string;
+  /** Where the transition code lives */
+  fileId?: string;
+  line?: number;
+  /** Additional condition context */
+  condition?: string;
+  /** Message flow types that trigger this transition */
+  triggeringFlows?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Detailed Component Diagram
+// ---------------------------------------------------------------------------
+
+export interface ComponentDiagram {
+  boundaries: ComponentDiagramBoundary[];
+  cards: ComponentDiagramCard[];
+  edges: ComponentDiagramEdge[];
+  evidence: ComponentDiagramEvidence[];
+}
+
+export interface DiagramPoint {
+  x: number;
+  y: number;
+}
+
+export interface DiagramSize {
+  width: number;
+  height: number;
+}
+
+export interface ComponentDiagramBoundary {
+  id: string;
+  label: string;
+  technology: string;
+  description: string;
+  color: string;
+  position: DiagramPoint;
+  size: DiagramSize;
+}
+
+export interface ComponentDiagramCard {
+  id: string;
+  boundaryId: string;
+  title: string;
+  subtitle?: string;
+  fileId?: string;
+  accentColor: string;
+  position: DiagramPoint;
+  size: DiagramSize;
+  sections: ComponentDiagramSection[];
+  childCards?: ComponentDiagramMiniCard[];
+  badges?: string[];
+  metrics?: ComponentDiagramMetric[];
+  summary?: string;
+  openNext?: ComponentDiagramOpenTarget[];
+}
+
+export interface ComponentDiagramSection {
+  id: string;
+  label: ComponentDiagramSectionLabel;
+  lines: ComponentDiagramLine[];
+  style?: "list" | "chips";
+}
+
+export type ComponentDiagramSectionLabel =
+  | "Owns"
+  | "Ingress"
+  | "Egress"
+  | "Depends On"
+  | "Internals";
+
+export interface ComponentDiagramLine {
+  id: string;
+  text: string;
+  kind: ComponentDiagramLineKind;
+  confidence: ComponentDiagramConfidence;
+  evidenceIds: string[];
+  targetFileId?: string;
+  targetSymbol?: string;
+}
+
+export type ComponentDiagramLineKind =
+  | "state"
+  | "route"
+  | "message"
+  | "event"
+  | "command"
+  | "dependency"
+  | "internal";
+
+export type ComponentDiagramConfidence = "exact" | "derived" | "heuristic";
+
+export interface ComponentDiagramMiniCard {
+  title: string;
+  subtitle?: string;
+  fileId?: string;
+  lines: string[];
+  summary?: string;
+}
+
+export interface ComponentDiagramMetric {
+  label: string;
+  value: string;
+}
+
+export interface ComponentDiagramOpenTarget {
+  label: string;
+  fileId: string;
+  reason: string;
+}
+
+export interface ComponentDiagramEdge {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  color: string;
+  relationshipKind: ComponentDiagramRelationshipKind;
+  evidenceIds: string[];
+  counts?: Partial<Record<ComponentDiagramConfidence, number>>;
+  dash?: string;
+  bidirectional?: boolean;
+  sourceHandle?: "top" | "right" | "bottom" | "left";
+  targetHandle?: "top" | "right" | "bottom" | "left";
+}
+
+export type ComponentDiagramRelationshipKind =
+  | "transport"
+  | "queued_command"
+  | "event_subscription"
+  | "direct_call"
+  | "persistence_io"
+  | "mixed";
+
+export interface ComponentDiagramEvidence {
+  id: string;
+  kind: string;
+  confidence: ComponentDiagramConfidence;
+  fileId: string;
+  line?: number;
+  symbol?: string;
+  detail: string;
+}

@@ -1,0 +1,47 @@
+flowchart TB
+  classDef boundary fill:#0f172a,stroke:#475569,stroke-width:2px,color:#e5e7eb;
+  classDef client fill:#2d1400,stroke:#FE6100,stroke-width:1.5px,color:#f8fafc;
+  classDef server fill:#111827,stroke:#648FFF,stroke-width:1.5px,color:#f8fafc;
+  classDef network fill:#0a2230,stroke:#22D3EE,stroke-width:1.5px,color:#f8fafc;
+  classDef engine fill:#0f1a3d,stroke:#648FFF,stroke-width:1.5px,color:#f8fafc;
+  classDef npc fill:#2d0a1a,stroke:#DC267F,stroke-width:1.5px,color:#f8fafc;
+  classDef persistence fill:#2d1d00,stroke:#FFB000,stroke-width:1.5px,color:#f8fafc;
+  classDef debug fill:#1f2937,stroke:#d1d5db,stroke-width:1.5px,color:#f8fafc;
+
+  subgraph diagram_boundary_client["Browser Client"]
+    direction TB
+    diagram_client_main["main.ts<br/>browser bootstrap<br/>Owns: gameState • selfId • mapTiles • heldDirections<br/>Ingress: player_joined • player_update • convo_update • message<br/>Egress: join • input_start • input_stop<br/>Depends On: GameRenderer • prediction helpers • UI<br/>Internals: start()"]
+    diagram_client_renderer["renderer<br/>PixiJS scene graph<br/>Owns: tiles • activity • lines • players<br/>Ingress: onTileClick()() • player snapshots • conversation overlays<br/>Egress: move • sprite placement • chat bubble updates<br/>Depends On: Pixi container graph • main.ts state snapshots"]
+    diagram_client_prediction["prediction<br/>local physics mirror<br/>Owns: tile collision • player collision • held-input vector<br/>Ingress: input_start • input_stop • player_update<br/>Egress: predictMovement() • reconcile()<br/>Depends On: tile collision • player collision • server parity rules<br/>Internals: getHeldDirectionVector() • predictLocalPlayerStep()"]
+    diagram_client_ui["ui<br/>DOM sidebar<br/>Owns: chat • player list • conversation panel • status bar<br/>Ingress: convo_update • message • player_update<br/>Egress: start_convo • say • end_convo • accept / decline<br/>Depends On: main.ts state hooks • DOM controls<br/>Internals: conversation controls • chat controls"]
+    diagram_client_debug_log["debugLog<br/>client ring buffer<br/>Owns: MAX_CLIENT_DEBUG_EVENTS = 200 • clientDebugEvents[]<br/>Ingress: client debug events<br/>Egress: window.__AI_TOWN_CLIENT_DEBUG__ • getEvents() • clear()<br/>Depends On: window debug handle<br/>Internals: logClientDebugEvent() • getClientDebugEvents() • clearClientDebugEvents()"]
+  end
+  class diagram_boundary_client boundary;
+
+  subgraph diagram_boundary_server["Game Server"]
+    direction TB
+    diagram_server_network["GameWebSocketServer<br/>server/src/network/websocket.ts<br/>Owns: clients map • player socket registry<br/>Ingress: join • move • say • start_convo • input_start • input_stop • end_convo<br/>Egress: player_joined • player_update • convo_update • message<br/>Depends On: GameLoop • protocol.ts unions<br/>Internals: broadcastGameEvent() • toPublicPlayer() • participant-scoped convo sends"]
+    diagram_server_debug["Debug API<br/>Express router<br/>Owns: GET debug routes • POST debug routes<br/>Ingress: GET /state • GET /map • GET /players • GET /log • GET /conversations • GET /memories/:playerId • POST /tick • POST /spawn • POST /move • POST /input • POST /scenario • POST /start-convo • POST /say • POST /end-convo<br/>Egress: JSON snapshots • queued engine mutations • direct conversation mutations<br/>Depends On: GameLoop • scenario presets<br/>Internals: renderAsciiMap() • scenario loader"]
+    diagram_server_engine["ENGINE<br/>I/O-free simulation core<br/>Owns: players_ • heldKeys_ • commandQueue_ • afterTickCallbacks • eventHandlers<br/>Ingress: spawn • move_to • start_convo • say • end_convo • setPlayerInput()<br/>Egress: spawn • player_update • input_state • convo_started • convo_active • convo_ended<br/>Depends On: pathfinding (A* + heap) • collision (AABB tile) • SeededRNG<br/>Internals: GameLoop • World • ConversationManager • GameLogger<br/>World (world.ts): tiles[][] • activities • spawnPoints<br/>ConversationManager (conversation.ts): conversations • playerToConvo • nextId<br/>GameLogger (logger.ts): circular buffer (1000 events)"]
+    diagram_server_npc["NPC STACK<br/>server/src/npc/*<br/>Owns: reply scheduling • memory retrieval • reflection triggers<br/>Ingress: spawn • convo_started • convo_active • convo_ended • tick_complete<br/>Egress: start_convo • say • memory upserts<br/>Depends On: Claude CLI subprocess • scripted fallback • placeholder embeddings<br/>Internals: NpcOrchestrator • MemoryManager • Provider Stack<br/>NpcOrchestrator (orchestrator.ts): reply scheduling • initiation scans • reflection triggering • persistence coordination<br/>MemoryManager (memory.ts): composite scoring • reflection logic • conversation summarization<br/>Provider Stack (provider.ts / resilientProvider.ts): NpcModelProvider interface • ResilientNpcProvider • ClaudeCodeProvider • ScriptedNpcProvider"]
+    diagram_server_persistence["PERSISTENCE<br/>server/src/db/*<br/>Owns: Repository implementations • Npc store implementations • schema + vector index<br/>Ingress: memory writes • conversation snapshots • player/NPC snapshots<br/>Egress: memory search results • restored NPC state<br/>Depends On: in-memory fallback • Postgres + pgvector<br/>Internals: MemoryStore • NpcPersistenceStore • PostgreSQL + pgvector<br/>MemoryStore (repository.ts): Repository (Postgres) • InMemoryRepository<br/>NpcPersistenceStore (npcStore.ts): PostgresNpcStore • InMemoryNpcStore<br/>PostgreSQL + pgvector (schema.sql): 8 tables • vector(1536) • IVFFlat memory index"]
+  end
+  class diagram_boundary_server boundary;
+
+  class diagram_client_main client;
+  class diagram_client_renderer client;
+  class diagram_client_prediction client;
+  class diagram_client_ui client;
+  class diagram_client_debug_log client;
+  class diagram_server_network network;
+  class diagram_server_debug debug;
+  class diagram_server_engine engine;
+  class diagram_server_npc npc;
+  class diagram_server_persistence persistence;
+
+  diagram_boundary_client <-->|"transport<br/>client msgs ↔ server msgs"| diagram_boundary_server
+  diagram_client_main -->|"render state sync"| diagram_client_renderer
+  diagram_server_network -->|"commands + input state"| diagram_server_engine
+  diagram_server_debug -->|"debug calls + queue"| diagram_server_engine
+  diagram_server_engine -->|"events + after tick"| diagram_server_npc
+  diagram_server_npc -->|"queries + upserts"| diagram_server_persistence

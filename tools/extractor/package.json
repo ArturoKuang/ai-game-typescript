@@ -1,0 +1,16 @@
+{
+  "name": "@aitown/extractor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "extract": "tsx src/extract.ts && tsx src/renderComponentDiagram.ts && cp graph.json ../visualizer/public/graph.json",
+    "diagram:component": "tsx src/renderComponentDiagram.ts"
+  },
+  "dependencies": {
+    "ts-morph": "^25.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
