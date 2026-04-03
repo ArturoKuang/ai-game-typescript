@@ -1,0 +1,13 @@
+{
+  "name": "@aitown/tools",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix extractor install && npm --prefix visualizer install",
+    "extract": "npm --prefix extractor run extract",
+    "diagram:component": "npm --prefix extractor run diagram:component",
+    "build": "npm --prefix visualizer run build",
+    "dev": "npm run extract && npm --prefix visualizer run dev -- --host 0.0.0.0",
+    "preview": "npm run extract && npm run build && npm --prefix visualizer run preview -- --host 0.0.0.0",
+    "start": "npm run preview"
+  }
+}
