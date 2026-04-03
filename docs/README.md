@@ -25,10 +25,32 @@ This folder is the project reference set for the current AI Town codebase. It is
 - [Debug API reference](debug-api.md): route-by-route reference for `/api/debug`.
 - [Debugging workflow](debugging-workflow.md): recommended repro and verification loop for runtime bugs.
 
-## Design And Historical Notes
+## Design Notes
 
-- [Movement overhaul plan](movement-overhaul-plan.md): historical design doc for the current continuous-movement model.
 - [Chemistry system design](chemistry-system-design.md): forward-looking design notes for a future chemistry/physics layer.
+- [Architecture review](architecture-review.md): prioritized list of architectural improvements and tech debt.
+
+## Quick File Navigation
+
+If you're looking at a specific file and want context, here's a cheat sheet:
+
+| File | What it does | Doc page |
+|------|-------------|----------|
+| `server/src/engine/gameLoop.ts` | Tick pipeline, movement, commands | [Server engine](server-engine.md) |
+| `server/src/engine/collision.ts` | AABB tile collision resolution | [Server engine](server-engine.md) |
+| `server/src/engine/pathfinding.ts` | A* with binary min-heap | [Server engine](server-engine.md) |
+| `server/src/engine/conversation.ts` | Conversation state machine | [Server engine](server-engine.md) |
+| `server/src/engine/types.ts` | All shared data models | [Server engine](server-engine.md) |
+| `server/src/network/websocket.ts` | WebSocket server + event bridge | [Networking](networking.md) |
+| `server/src/network/protocol.ts` | Message type definitions | [Networking](networking.md) |
+| `server/src/npc/orchestrator.ts` | NPC reply scheduling + initiation | [NPC system](npc-system.md) |
+| `server/src/npc/memory.ts` | Memory scoring + reflection trigger | [NPC system](npc-system.md) |
+| `server/src/npc/provider.ts` | LLM interface + prompt builders | [NPC system](npc-system.md) |
+| `server/src/db/repository.ts` | Memory persistence (pgvector) | [Persistence](persistence.md) |
+| `server/src/debug/router.ts` | Debug API routes | [Debug API](debug-api.md) |
+| `client/src/main.ts` | Client entry, reconciliation, input | [Client system](client-system.md) |
+| `client/src/prediction.ts` | Client-side collision prediction | [Client system](client-system.md) |
+| `client/src/renderer.ts` | PixiJS tile + player rendering | [Client system](client-system.md) |
 
 ## Documentation Conventions
 
