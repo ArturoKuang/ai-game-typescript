@@ -1,9 +1,21 @@
 import { useState } from "react";
-import { useStore, type ComponentFocusDirection, type ComponentInspectorTab, type CouplingFilter } from "./store";
+import { useStore, type ComponentFocusDirection, type ComponentInspectorTab, type ContainerInspectorTab, type CouplingFilter, type DataModelInspectorTab } from "./store";
 import type { ArchitectureGraph, EventInfo, ZoomLevel } from "./types";
+import {
+  DATA_MODEL_CATEGORY_META,
+  DATA_MODEL_CATEGORY_ORDER,
+  getConceptGroupLabel,
+  getFamilyLeader,
+  getStructureById,
+  getStructureFamily,
+  getVisibleDataStructures,
+  type DataModelVisibilityOptions,
+} from "./dataModel";
 
 const ZOOM_LABELS: Record<ZoomLevel, string> = {
+  container: "Containers",
   component: "Components",
+  dataModel: "Data Model",
   file: "Files",
   class: "Classes",
   flow: "Data Flow",
@@ -92,6 +104,70 @@ const COMPONENT_INSPECTOR_TABS: {
   },
 ];
 
+const CONTAINER_INSPECTOR_TABS: {
+  value: ContainerInspectorTab;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "overview",
+    label: "Overview",
+    description: "What this container is, why it exists, and what it owns.",
+  },
+  {
+    value: "relationships",
+    label: "Connections",
+    description: "How this container talks to the others and over which interface.",
+  },
+  {
+    value: "ownership",
+    label: "Code ownership",
+    description: "Repo paths and component drilldowns that define this container.",
+  },
+  {
+    value: "evidence",
+    label: "Evidence",
+    description: "Source evidence backing the container summary and relationships.",
+  },
+  {
+    value: "changes",
+    label: "Where to change",
+    description: "Best next components or files to open when implementing a change.",
+  },
+];
+
+const DATA_MODEL_INSPECTOR_TABS: {
+  value: DataModelInspectorTab;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "overview",
+    label: "What it is",
+    description: "Quick summary of the structure, source, category, and why it exists.",
+  },
+  {
+    value: "shape",
+    label: "Shape",
+    description: "Fields, variants, optionality, and nested structures.",
+  },
+  {
+    value: "access",
+    label: "Access",
+    description: "How code reads, writes, looks up, iterates, serializes, or stores it.",
+  },
+  {
+    value: "evidence",
+    label: "Evidence",
+    description: "Source evidence backing the structure summary, access patterns, and relationships.",
+  },
+  {
+    value: "open_next",
+    label: "Read next",
+    description: "Best files to open next if you want to change or understand this structure.",
+  },
+];
+
 export function Sidebar() {
   const graph = useStore((s) => s.graph);
   const zoomLevel = useStore((s) => s.zoomLevel);
@@ -104,8 +180,28 @@ export function Sidebar() {
   const setSelectedFlow = useStore((s) => s.setSelectedFlow);
   const selectedStateMachine = useStore((s) => s.selectedStateMachine);
   const setSelectedStateMachine = useStore((s) => s.setSelectedStateMachine);
+  const containerInspectorTab = useStore((s) => s.containerInspectorTab);
+  const setContainerInspectorTab = useStore((s) => s.setContainerInspectorTab);
+  const containerFocusEnabled = useStore((s) => s.containerFocusEnabled);
+  const toggleContainerFocus = useStore((s) => s.toggleContainerFocus);
+  const containerSearchQuery = useStore((s) => s.containerSearchQuery);
+  const setContainerSearchQuery = useStore((s) => s.setContainerSearchQuery);
+  const dataModelInspectorTab = useStore((s) => s.dataModelInspectorTab);
+  const setDataModelInspectorTab = useStore((s) => s.setDataModelInspectorTab);
+  const dataModelFocusEnabled = useStore((s) => s.dataModelFocusEnabled);
+  const toggleDataModelFocus = useStore((s) => s.toggleDataModelFocus);
+  const dataModelSearchQuery = useStore((s) => s.dataModelSearchQuery);
+  const setDataModelSearchQuery = useStore((s) => s.setDataModelSearchQuery);
+  const dataModelShowRuntimeStores = useStore((s) => s.dataModelShowRuntimeStores);
+  const toggleDataModelShowRuntimeStores = useStore((s) => s.toggleDataModelShowRuntimeStores);
+  const dataModelShowDebugStructures = useStore((s) => s.dataModelShowDebugStructures);
+  const toggleDataModelShowDebugStructures = useStore((s) => s.toggleDataModelShowDebugStructures);
+  const dataModelExpandMirrors = useStore((s) => s.dataModelExpandMirrors);
+  const toggleDataModelExpandMirrors = useStore((s) => s.toggleDataModelExpandMirrors);
   const componentInspectorTab = useStore((s) => s.componentInspectorTab);
+  const activeComponentViewId = useStore((s) => s.activeComponentViewId);
   const setComponentInspectorTab = useStore((s) => s.setComponentInspectorTab);
+  const setActiveComponentView = useStore((s) => s.setActiveComponentView);
   const componentFocusEnabled = useStore((s) => s.componentFocusEnabled);
   const toggleComponentFocus = useStore((s) => s.toggleComponentFocus);
   const componentFocusDirection = useStore((s) => s.componentFocusDirection);
@@ -123,23 +219,39 @@ export function Sidebar() {
 
   const hasSelection = selectedNodeId || selectedEdgeId;
   const isFlowView = zoomLevel === "flow";
+  const hasContainerDiagram = Boolean(graph.containerDiagram);
+  const isContainerView = zoomLevel === "container" && hasContainerDiagram;
+  const isDataModelView = zoomLevel === "dataModel";
   const hasDetailedComponentDiagram = Boolean(graph.componentDiagram);
   const isDetailedComponentView = zoomLevel === "component" && hasDetailedComponentDiagram;
+  const dataModelVisibility = {
+    showRuntimeStores: dataModelShowRuntimeStores,
+    showDebugStructures: dataModelShowDebugStructures,
+    expandMirrors: dataModelExpandMirrors,
+  } satisfies DataModelVisibilityOptions;
+  const containerCount = graph.containerDiagram?.containers.length ?? 0;
+  const applicationCount = graph.containerDiagram?.containers.filter((item) => item.kind === "application").length ?? 0;
+  const datastoreCount = graph.containerDiagram?.containers.filter((item) => item.kind === "datastore").length ?? 0;
+  const relationshipCount = graph.containerDiagram?.relationships.length ?? 0;
+  const headerMeta = isContainerView
+    ? `${containerCount} containers · ${relationshipCount} relationships · ${applicationCount} applications · ${datastoreCount} data stores`
+    : isDataModelView
+      ? `${visibleDataModelStructureCount(graph, dataModelVisibility)} visible structures · ${visibleDataModelRelationCount(graph, dataModelVisibility)} visible relations · ${graph.dataStructureAccesses.length} access paths`
+      : `${graph.meta.fileCount} files · ${graph.meta.classCount} types · ${graph.components.length} components`;
 
   return (
-    <div style={sidebarStyle}>
+    <div style={sidebarStyle} data-testid="architecture-sidebar">
       {/* Title */}
       <h1 style={{ fontSize: 18, fontWeight: 800, color: "#fff", margin: "0 0 2px", letterSpacing: -0.3 }}>
         AI Town Architecture
       </h1>
       <div style={{ fontSize: 11, color: "#666", marginBottom: 16 }}>
-        {graph.meta.fileCount} files &middot; {graph.meta.classCount} types &middot;{" "}
-        {graph.components.length} components
+        {headerMeta}
       </div>
 
       {/* Zoom level toggle */}
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
-        {(["component", "file", "class", "flow"] as ZoomLevel[]).map((level) => (
+        {(["container", "component", "dataModel", "file", "class", "flow"] as ZoomLevel[]).map((level) => (
           <button
             key={level}
             onClick={() => setZoomLevel(level)}
@@ -162,7 +274,7 @@ export function Sidebar() {
       </div>
 
       {/* Edge filters — only for non-flow views */}
-      {!isFlowView && !(zoomLevel === "component" && hasDetailedComponentDiagram) && (
+      {!isFlowView && !isContainerView && !isDataModelView && !(zoomLevel === "component" && hasDetailedComponentDiagram) && (
         <div style={{ ...sectionStyle, padding: "10px 12px" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#aaa", marginBottom: 10 }}>
             Relationship types
@@ -206,8 +318,36 @@ export function Sidebar() {
 
       {/* Flow view controls */}
       {isFlowView && <FlowControls />}
+      {isContainerView && (
+        <ContainerTabControls
+          inspectorTab={containerInspectorTab}
+          onSelectTab={setContainerInspectorTab}
+          focusEnabled={containerFocusEnabled}
+          onToggleFocus={toggleContainerFocus}
+          searchQuery={containerSearchQuery}
+          onSearchChange={setContainerSearchQuery}
+        />
+      )}
+      {isDataModelView && (
+        <DataModelTabControls
+          inspectorTab={dataModelInspectorTab}
+          onSelectTab={setDataModelInspectorTab}
+          focusEnabled={dataModelFocusEnabled}
+          onToggleFocus={toggleDataModelFocus}
+          searchQuery={dataModelSearchQuery}
+          onSearchChange={setDataModelSearchQuery}
+          showRuntimeStores={dataModelShowRuntimeStores}
+          onToggleRuntimeStores={toggleDataModelShowRuntimeStores}
+          showDebugStructures={dataModelShowDebugStructures}
+          onToggleDebugStructures={toggleDataModelShowDebugStructures}
+          expandMirrors={dataModelExpandMirrors}
+          onToggleExpandMirrors={toggleDataModelExpandMirrors}
+        />
+      )}
       {isDetailedComponentView && (
         <ComponentTabControls
+          activeViewId={activeComponentViewId}
+          onSelectView={setActiveComponentView}
           inspectorTab={componentInspectorTab}
           onSelectTab={setComponentInspectorTab}
           focusEnabled={componentFocusEnabled}
@@ -221,17 +361,19 @@ export function Sidebar() {
 
       {/* Selection detail OR intro */}
       {!isFlowView && (
-        isDetailedComponentView ? (
+        isContainerView ? (
+          <ContainerInspector />
+        ) : isDataModelView ? (
+          <DataModelInspector />
+        ) : isDetailedComponentView ? (
           <ComponentInspector />
+        ) : hasSelection ? (
+          <>
+            {selectedNodeId && <NodeDetail nodeId={selectedNodeId} />}
+            {selectedEdgeId && <EdgeDetail edgeId={selectedEdgeId} />}
+          </>
         ) : (
-          hasSelection ? (
-            <>
-              {selectedNodeId && <NodeDetail nodeId={selectedNodeId} />}
-              {selectedEdgeId && <EdgeDetail edgeId={selectedEdgeId} />}
-            </>
-          ) : (
-            <IntroPanel />
-          )
+          <IntroPanel />
         )
       )}
 
@@ -816,8 +958,2090 @@ function StateMachineDetail({ smId }: { smId: string }) {
 // Detailed component tab controls + inspector
 // ---------------------------------------------------------------------------
 
+function ContainerTabControls(
+  {
+    inspectorTab,
+    onSelectTab,
+    focusEnabled,
+    onToggleFocus,
+    searchQuery,
+    onSearchChange,
+  }: {
+    inspectorTab: ContainerInspectorTab;
+    onSelectTab: (tab: ContainerInspectorTab) => void;
+    focusEnabled: boolean;
+    onToggleFocus: () => void;
+    searchQuery: string;
+    onSearchChange: (query: string) => void;
+  },
+) {
+  const graph = useStore((s) => s.graph);
+  const selectNode = useStore((s) => s.selectNode);
+  const selectEdge = useStore((s) => s.selectEdge);
+  if (!graph?.containerDiagram) return null;
+
+  const results = searchContainerDiagram(graph, searchQuery);
+  const activeInspectorTab =
+    CONTAINER_INSPECTOR_TABS.find((tab) => tab.value === inspectorTab) ?? CONTAINER_INSPECTOR_TABS[0];
+  const containers = graph.containerDiagram.containers;
+  const stats = [
+    `${containers.length} containers`,
+    `${graph.containerDiagram.relationships.length} relationships`,
+    `${containers.filter((item) => item.kind === "application").length} applications`,
+    `${containers.filter((item) => item.kind === "datastore").length} data stores`,
+  ];
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#aaa", marginBottom: 8 }}>
+        Container View
+      </div>
+      <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1.45, marginBottom: 10 }}>
+        Use this view to orient around the runtime applications and data stores inside the AI Town boundary before drilling into components or files.
+      </div>
+
+      <input
+        value={searchQuery}
+        onChange={(event) => onSearchChange(event.target.value)}
+        placeholder="Search containers, interfaces, paths, components..."
+        data-testid="container-search"
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "8px 10px",
+          fontSize: 11,
+          color: "#e5e7eb",
+          background: "#0f172a",
+          border: "1px solid #273449",
+          borderRadius: 8,
+          outline: "none",
+          marginBottom: 10,
+        }}
+      />
+
+      <div
+        style={{
+          marginBottom: 10,
+          padding: "10px 10px 12px",
+          border: "1px solid #273449",
+          borderRadius: 10,
+          background: "#0f172a",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#cbd5e1" }}>Focus mode</div>
+            <div style={{ fontSize: 10, color: "#64748b", marginTop: 2, lineHeight: 1.35 }}>
+              Select a container or connection to dim unrelated parts of the runtime diagram.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onToggleFocus}
+            style={{
+              padding: "6px 9px",
+              fontSize: 10,
+              fontWeight: 700,
+              color: focusEnabled ? "#fff" : "#94a3b8",
+              background: focusEnabled ? "#1d4ed8" : "transparent",
+              border: `1px solid ${focusEnabled ? "#2563eb" : "#334155"}`,
+              borderRadius: 7,
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            {focusEnabled ? "Focus on" : "Focus off"}
+          </button>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+          {stats.map((item) => (
+            <span
+              key={item}
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                color: "#dbeafe",
+                background: "#111827",
+                border: "1px solid #273449",
+                borderRadius: 999,
+                padding: "3px 8px",
+              }}
+            >
+              {item}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div
+        style={{
+          marginBottom: 10,
+          padding: "10px 10px 12px",
+          border: "1px solid #273449",
+          borderRadius: 10,
+          background: "#0f172a",
+        }}
+      >
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#cbd5e1", marginBottom: 6 }}>
+          Jump to container
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6 }}>
+          {containers.map((container) => (
+            <button
+              key={container.id}
+              type="button"
+              onClick={() => {
+                selectNode(container.id);
+                onSelectTab("overview");
+              }}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                gap: 4,
+                padding: "8px 10px",
+                textAlign: "left",
+                color: "#e5e7eb",
+                background: "#111827",
+                border: `1px solid ${container.color}35`,
+                borderRadius: 8,
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ fontSize: 10, fontWeight: 700 }}>{container.name}</span>
+              <span style={{ fontSize: 9, color: "#94a3b8" }}>
+                {container.kind === "datastore" ? "Data store" : "Application"}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div
+        style={{
+          marginBottom: 10,
+          padding: "10px 10px 12px",
+          border: "1px solid #273449",
+          borderRadius: 10,
+          background: "#0f172a",
+        }}
+      >
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#cbd5e1", marginBottom: 6 }}>
+          Inspector lens
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6 }}>
+          {CONTAINER_INSPECTOR_TABS.map((tab, index) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => onSelectTab(tab.value)}
+              style={{
+                gridColumn: index === CONTAINER_INSPECTOR_TABS.length - 1 ? "1 / -1" : undefined,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                gap: 3,
+                padding: "8px 10px",
+                textAlign: "left",
+                color: inspectorTab === tab.value ? "#fff" : "#cbd5e1",
+                background: inspectorTab === tab.value ? "#172033" : "#111827",
+                border: `1px solid ${inspectorTab === tab.value ? "#3b82f6" : "#273449"}`,
+                borderRadius: 8,
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ fontSize: 10, fontWeight: 700 }}>{tab.label}</span>
+              <span style={{ fontSize: 9, color: "#64748b", lineHeight: 1.35 }}>{tab.description}</span>
+            </button>
+          ))}
+        </div>
+        <div
+          style={{
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: "1px solid #1f2937",
+            fontSize: 10,
+            color: "#94a3b8",
+            lineHeight: 1.45,
+          }}
+        >
+          <strong style={{ color: "#e5e7eb" }}>{activeInspectorTab.label}:</strong> {activeInspectorTab.description}
+        </div>
+      </div>
+
+      {searchQuery.trim().length > 0 && (
+        <div style={{ borderTop: "1px solid #252545", paddingTop: 10 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8", marginBottom: 6 }}>
+            Search Results
+          </div>
+          {results.length === 0 && (
+            <div style={{ fontSize: 10, color: "#64748b" }}>No container or connection matches.</div>
+          )}
+          {results.slice(0, 8).map((result) => (
+            <button
+              key={result.key}
+              type="button"
+              onClick={() => {
+                if (result.kind === "relationship") {
+                  selectEdge(result.edgeId);
+                  onSelectTab("relationships");
+                  return;
+                }
+
+                selectNode(result.containerId);
+                onSelectTab(result.tab);
+              }}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "7px 8px",
+                marginBottom: 4,
+                fontSize: 10,
+                color: "#cbd5e1",
+                background: "#0f172a",
+                border: "1px solid #273449",
+                borderRadius: 6,
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ fontWeight: 700, color: "#fff" }}>{result.title}</div>
+                <span style={{ fontSize: 8, fontWeight: 700, color: "#93c5fd", textTransform: "uppercase" }}>
+                  {result.kind === "relationship" ? "connection" : result.tab}
+                </span>
+              </div>
+              <div style={{ color: "#94a3b8", marginTop: 2 }}>{result.label}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContainerInspector() {
+  const graph = useStore((s) => s.graph);
+  const selectedNodeId = useStore((s) => s.selectedNodeId);
+  const selectedEdgeId = useStore((s) => s.selectedEdgeId);
+  const inspectorTab = useStore((s) => s.containerInspectorTab);
+
+  if (!graph?.containerDiagram) return null;
+  if (!selectedNodeId && !selectedEdgeId) return <ContainerIntroPanel />;
+
+  if (selectedEdgeId) {
+    return <ContainerRelationshipInspector edgeId={selectedEdgeId} />;
+  }
+
+  const container = graph.containerDiagram.containers.find((item) => item.id === selectedNodeId);
+  if (!container) return <ContainerIntroPanel />;
+
+  switch (inspectorTab) {
+    case "relationships":
+      return <ContainerRelationshipsInspector containerId={container.id} />;
+    case "ownership":
+      return <ContainerOwnershipInspector containerId={container.id} />;
+    case "evidence":
+      return <ContainerEvidenceInspector containerId={container.id} />;
+    case "changes":
+      return <ContainerWhereToChangeInspector containerId={container.id} />;
+    case "overview":
+    default:
+      return <ContainerOverviewInspector containerId={container.id} />;
+  }
+}
+
+function ContainerIntroPanel() {
+  const graph = useStore((s) => s.graph);
+  if (!graph?.containerDiagram) return null;
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 6 }}>
+        Container Diagram
+      </div>
+      <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5, marginBottom: 10 }}>
+        This tab shows AI Town at the C4 container level: the main applications and data stores inside the software system boundary.
+      </div>
+      <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.5 }}>
+        Select a container to inspect its responsibilities, connections, code ownership, and the best next place to make a change.
+      </div>
+    </div>
+  );
+}
+
+function ContainerOverviewInspector({ containerId }: { containerId: string }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph?.containerDiagram) return null;
+  const container = graph.containerDiagram.containers.find((item) => item.id === containerId);
+  if (!container) return null;
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader title={container.name} subtitle={container.technology} color={container.color} />
+      <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.55, marginBottom: 10 }}>
+        {container.summary ?? container.description}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            color: container.color,
+            border: `1px solid ${container.color}35`,
+            background: `${container.color}12`,
+            borderRadius: 999,
+            padding: "3px 8px",
+          }}
+        >
+          {container.kind === "datastore" ? "Data store" : "Application"}
+        </span>
+        {container.badges?.map((badge) => (
+          <span
+            key={badge}
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: "#e5e7eb",
+              border: `1px solid ${container.color}35`,
+              background: `${container.color}12`,
+              borderRadius: 999,
+              padding: "3px 8px",
+            }}
+          >
+            {badge}
+          </span>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 5 }}>
+        Purpose
+      </div>
+      <div style={{ fontSize: 11, color: "#d1d5db", lineHeight: 1.55, marginBottom: 12 }}>
+        {container.description}
+      </div>
+
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>
+        {container.kind === "datastore" ? "Stores" : "Responsibilities"}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+        {container.responsibilities.map((item) => (
+          <div
+            key={item}
+            style={{
+              fontSize: 11,
+              color: "#d1d5db",
+              lineHeight: 1.5,
+              padding: "7px 9px",
+              border: "1px solid #273449",
+              borderRadius: 8,
+              background: "#0f172a",
+            }}
+          >
+            {item}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>
+        Primary code ownership
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {container.codePaths.slice(0, 3).map((path) => (
+          <div key={path} style={{ fontSize: 11, color: "#d1d5db", fontFamily: "monospace", lineHeight: 1.45 }}>
+            {path}
+          </div>
+        ))}
+        {container.codePaths.length > 3 && (
+          <div style={{ fontSize: 10, color: "#64748b" }}>
+            +{container.codePaths.length - 3} more path{container.codePaths.length - 3 === 1 ? "" : "s"} in Code ownership
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ContainerRelationshipsInspector({ containerId }: { containerId: string }) {
+  const graph = useStore((s) => s.graph);
+  const selectEdge = useStore((s) => s.selectEdge);
+  if (!graph?.containerDiagram) return null;
+  const container = graph.containerDiagram.containers.find((item) => item.id === containerId);
+  if (!container) return null;
+
+  const inbound = graph.containerDiagram.relationships.filter((relationship) => relationship.target === containerId);
+  const outbound = graph.containerDiagram.relationships.filter((relationship) => relationship.source === containerId);
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader title={`${container.name} connections`} subtitle={container.technology} color={container.color} />
+      <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5, marginBottom: 10 }}>
+        Arrow direction shows runtime dependency: <span style={{ color: "#e5e7eb" }}>source -&gt; target</span> means the source container uses the target through the labeled interface.
+      </div>
+      <RelationshipList title="Uses" mode="outbound" relationships={outbound} onSelectEdge={selectEdge} graph={graph} />
+      <RelationshipList title="Used by" mode="inbound" relationships={inbound} onSelectEdge={selectEdge} graph={graph} />
+    </div>
+  );
+}
+
+function ContainerOwnershipInspector({ containerId }: { containerId: string }) {
+  const graph = useStore((s) => s.graph);
+  const setZoomLevel = useStore((s) => s.setZoomLevel);
+  const selectNode = useStore((s) => s.selectNode);
+  const setComponentInspectorTab = useStore((s) => s.setComponentInspectorTab);
+  if (!graph?.containerDiagram) return null;
+  const container = graph.containerDiagram.containers.find((item) => item.id === containerId);
+  if (!container) return null;
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader title={`${container.name} code ownership`} subtitle={container.technology} color={container.color} />
+
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>
+          Repo paths
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {container.codePaths.map((path) => (
+            <div
+              key={path}
+              style={{
+                fontSize: 11,
+                color: "#d1d5db",
+                fontFamily: "monospace",
+                lineHeight: 1.5,
+                padding: "7px 9px",
+                border: "1px solid #273449",
+                borderRadius: 8,
+                background: "#0f172a",
+              }}
+            >
+              {path}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {container.componentTargets && container.componentTargets.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>
+            Mapped components
+          </div>
+          {container.componentTargets.map((target) => (
+            <button
+              key={`${target.kind}-${target.id}`}
+              type="button"
+              onClick={() => {
+                setZoomLevel("component");
+                selectNode(target.id);
+                setComponentInspectorTab("overview");
+              }}
+              style={actionButtonStyle}
+            >
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#fff" }}>
+                {target.kind === "boundary" ? "Open component boundary" : "Open related component"}
+              </div>
+              <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{target.reason}</div>
+              <div style={{ fontSize: 9, color: "#64748b", marginTop: 2, fontFamily: "monospace" }}>{target.id}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContainerEvidenceInspector({ containerId }: { containerId: string }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph?.containerDiagram) return null;
+  const container = graph.containerDiagram.containers.find((item) => item.id === containerId);
+  if (!container) return null;
+
+  const relatedRelationships = graph.containerDiagram.relationships.filter(
+    (relationship) => relationship.source === containerId || relationship.target === containerId,
+  );
+  const evidenceLookup = new Map(graph.containerDiagram.evidence.map((item) => [item.id, item]));
+  const evidenceIds = new Set<string>(container.evidenceIds);
+  for (const relationship of relatedRelationships) {
+    for (const evidenceId of relationship.evidenceIds) {
+      evidenceIds.add(evidenceId);
+    }
+  }
+
+  const evidence = Array.from(evidenceIds)
+    .map((evidenceId) => evidenceLookup.get(evidenceId))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader title={`${container.name} evidence`} subtitle={container.technology} color={container.color} />
+      <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1.45, marginBottom: 10 }}>
+        Evidence is secondary in this view. Use it when you need to confirm why a container or connection appears the way it does.
+      </div>
+      {evidence.map((item) => (
+        <EvidenceRow key={item.id} item={item} />
+      ))}
+    </div>
+  );
+}
+
+function ContainerWhereToChangeInspector({ containerId }: { containerId: string }) {
+  const graph = useStore((s) => s.graph);
+  const setZoomLevel = useStore((s) => s.setZoomLevel);
+  const selectNode = useStore((s) => s.selectNode);
+  const setComponentInspectorTab = useStore((s) => s.setComponentInspectorTab);
+  const setSelectedFlow = useStore((s) => s.setSelectedFlow);
+  if (!graph?.containerDiagram) return null;
+  const container = graph.containerDiagram.containers.find((item) => item.id === containerId);
+  if (!container) return null;
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader title={`Where to change: ${container.name}`} subtitle={container.technology} color={container.color} />
+      <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1.45, marginBottom: 10 }}>
+        Use these curated drilldowns to move from the container view into the components, files, or flows most likely to change for this area.
+      </div>
+      {(container.openNext ?? []).map((target) => (
+        <button
+          key={`${target.label}-${target.reason}`}
+          type="button"
+          onClick={() => {
+            if (target.target.kind === "component_boundary") {
+              setZoomLevel("component");
+              selectNode(target.target.boundaryId);
+              setComponentInspectorTab("overview");
+            } else if (target.target.kind === "component_card") {
+              setZoomLevel("component");
+              selectNode(target.target.cardId);
+              setComponentInspectorTab("overview");
+            } else if (target.target.kind === "flow") {
+              setZoomLevel("flow");
+              setSelectedFlow(target.target.flowId);
+            } else {
+              setZoomLevel("file");
+              selectNode(target.target.fileId);
+            }
+          }}
+          style={actionButtonStyle}
+        >
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#fff" }}>{target.label}</div>
+          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{target.reason}</div>
+        </button>
+      ))}
+      {(container.openNext ?? []).length === 0 && (
+        <div style={{ fontSize: 10, color: "#64748b" }}>No curated drilldowns for this container yet.</div>
+      )}
+    </div>
+  );
+}
+
+function ContainerRelationshipInspector({ edgeId }: { edgeId: string }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph?.containerDiagram) return null;
+  const relationship = graph.containerDiagram.relationships.find((item) => item.id === edgeId);
+  if (!relationship) return <ContainerIntroPanel />;
+
+  const source = graph.containerDiagram.containers.find((item) => item.id === relationship.source);
+  const target = graph.containerDiagram.containers.find((item) => item.id === relationship.target);
+  const evidenceLookup = new Map(graph.containerDiagram.evidence.map((item) => [item.id, item]));
+  const evidence = relationship.evidenceIds
+    .map((evidenceId) => evidenceLookup.get(evidenceId))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader
+        title={`${source?.name ?? relationship.source} -> ${target?.name ?? relationship.target}`}
+        subtitle={relationship.technology}
+        color="#cbd5e1"
+      />
+      <div style={{ fontSize: 10, color: "#94a3b8", lineHeight: 1.45, marginBottom: 8 }}>
+        The source container depends on the target container through this interface.
+      </div>
+      <div style={{ fontSize: 11, color: "#d1d5db", lineHeight: 1.55, marginBottom: 8 }}>
+        {relationship.description}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+        <span style={relationshipMetaBadgeStyle}>
+          Interface: {relationship.technology}
+        </span>
+        {relationship.optional && (
+          <span style={relationshipMetaBadgeStyle}>Optional</span>
+        )}
+        {relationship.synchronous === false && (
+          <span style={relationshipMetaBadgeStyle}>Async</span>
+        )}
+      </div>
+      {evidence.map((item) => (
+        <EvidenceRow key={item.id} item={item} />
+      ))}
+      <div style={{ fontSize: 9, color: "#475569", marginTop: 8 }}>
+        Evidence confidence: {relationship.confidence}
+      </div>
+    </div>
+  );
+}
+
+function searchContainerDiagram(
+  graph: ArchitectureGraph,
+  query: string,
+): Array<
+  | {
+    key: string;
+    kind: "container";
+    containerId: string;
+    tab: ContainerInspectorTab;
+    title: string;
+    label: string;
+  }
+  | {
+    key: string;
+    kind: "relationship";
+    edgeId: string;
+    title: string;
+    label: string;
+  }
+> {
+  const needle = query.trim().toLowerCase();
+  if (!needle || !graph.containerDiagram) return [];
+
+  const results: Array<
+    | {
+      key: string;
+      kind: "container";
+      containerId: string;
+      tab: ContainerInspectorTab;
+      title: string;
+      label: string;
+    }
+    | {
+      key: string;
+      kind: "relationship";
+      edgeId: string;
+      title: string;
+      label: string;
+    }
+  > = [];
+  const seen = new Set<string>();
+
+  const pushResult = (result: (typeof results)[number]) => {
+    if (seen.has(result.key)) return;
+    seen.add(result.key);
+    results.push(result);
+  };
+
+  for (const container of graph.containerDiagram.containers) {
+    const containerCandidates: Array<{ candidate: string; tab: ContainerInspectorTab; label?: string }> = [
+      { candidate: container.name, tab: "overview", label: `Container name: ${container.name}` },
+      { candidate: container.technology, tab: "overview", label: `Technology: ${container.technology}` },
+      { candidate: container.description, tab: "overview", label: container.description },
+      { candidate: container.summary ?? "", tab: "overview", label: container.summary ?? "" },
+      ...container.responsibilities.map((item) => ({ candidate: item, tab: "overview" as const, label: item })),
+      ...container.codePaths.map((path) => ({ candidate: path, tab: "ownership" as const, label: path })),
+      ...(container.componentTargets?.flatMap((target) => ([
+        { candidate: target.reason, tab: "ownership" as const, label: `Mapped component: ${target.reason}` },
+        { candidate: target.id, tab: "ownership" as const, label: `Mapped component id: ${target.id}` },
+      ])) ?? []),
+      ...(container.openNext?.flatMap((target) => ([
+        { candidate: target.label, tab: "changes" as const, label: `Change entry point: ${target.label}` },
+        { candidate: target.reason, tab: "changes" as const, label: target.reason },
+      ])) ?? []),
+    ];
+
+    for (const entry of containerCandidates) {
+      if (!entry.candidate || !entry.candidate.toLowerCase().includes(needle)) continue;
+      pushResult({
+        key: `container:${container.id}:${entry.tab}:${entry.label ?? entry.candidate}`,
+        kind: "container",
+        containerId: container.id,
+        tab: entry.tab,
+        title: container.name,
+        label: entry.label ?? entry.candidate,
+      });
+    }
+  }
+
+  for (const relationship of graph.containerDiagram.relationships) {
+    const source = graph.containerDiagram.containers.find((item) => item.id === relationship.source);
+    const target = graph.containerDiagram.containers.find((item) => item.id === relationship.target);
+    const title = `${source?.name ?? relationship.source} -> ${target?.name ?? relationship.target}`;
+    const candidates = [
+      relationship.description,
+      relationship.technology,
+      title,
+      `${relationship.description} · ${relationship.technology}`,
+    ];
+
+    for (const candidate of candidates) {
+      if (!candidate.toLowerCase().includes(needle)) continue;
+      pushResult({
+        key: `relationship:${relationship.id}:${candidate}`,
+        kind: "relationship",
+        edgeId: relationship.id,
+        title,
+        label: `${relationship.description} · ${relationship.technology}${relationship.optional ? " · optional" : ""}`,
+      });
+    }
+  }
+
+  return results;
+}
+
+function RelationshipList(
+  {
+    title,
+    mode,
+    relationships,
+    onSelectEdge,
+    graph,
+  }: {
+    title: string;
+    mode: "inbound" | "outbound";
+    relationships: ArchitectureGraph["containerDiagram"]["relationships"];
+    onSelectEdge: (id: string | null) => void;
+    graph: ArchitectureGraph;
+  },
+) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>
+        {title}
+      </div>
+      {relationships.length === 0 && (
+        <div style={{ fontSize: 10, color: "#64748b" }}>None</div>
+      )}
+      {relationships.map((relationship) => {
+        const otherId = mode === "inbound" ? relationship.source : relationship.target;
+        const other = graph.containerDiagram?.containers.find((item) => item.id === otherId);
+        return (
+          <button key={relationship.id} type="button" onClick={() => onSelectEdge(relationship.id)} style={actionButtonStyle}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#fff" }}>
+              {other?.name ?? otherId}
+            </div>
+            <div style={{ fontSize: 10, color: "#cbd5e1", marginTop: 2 }}>{relationship.description}</div>
+            <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>
+              {relationship.technology}
+              {relationship.optional ? " · optional" : ""}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function InspectorHeader({ title, subtitle, color }: { title: string; subtitle?: string; color: string }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{title}</div>
+      {subtitle && (
+        <div style={{ fontSize: 10, color: color, marginTop: 2, fontFamily: "monospace" }}>
+          [{subtitle}]
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EvidenceRow({ item }: { item: { kind: string; confidence: string; fileId?: string; line?: number; symbol?: string; detail: string } }) {
+  return (
+    <div
+      style={{
+        padding: "8px 10px",
+        marginBottom: 6,
+        border: "1px solid #273449",
+        borderRadius: 8,
+        background: "#0f172a",
+      }}
+    >
+      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 4 }}>
+        {item.kind}
+        {item.fileId ? ` · ${item.fileId}` : ""}
+        {item.line ? `:${item.line}` : ""}
+        {item.symbol ? ` · ${item.symbol}` : ""}
+        {` · ${item.confidence}`}
+      </div>
+      <div style={{ fontSize: 11, color: "#d1d5db", lineHeight: 1.5 }}>{item.detail}</div>
+    </div>
+  );
+}
+
+const actionButtonStyle = {
+  display: "block",
+  width: "100%",
+  appearance: "none" as const,
+  textAlign: "left" as const,
+  padding: "8px 10px",
+  marginBottom: 6,
+  background: "#0f172a",
+  border: "1px solid #273449",
+  borderRadius: 8,
+  cursor: "pointer",
+};
+
+const relationshipMetaBadgeStyle = {
+  fontSize: 9,
+  fontWeight: 700,
+  color: "#dbeafe",
+  background: "#111827",
+  border: "1px solid #273449",
+  borderRadius: 999,
+  padding: "3px 8px",
+};
+
+function DataModelTabControls(
+  {
+    inspectorTab,
+    onSelectTab,
+    focusEnabled,
+    onToggleFocus,
+    searchQuery,
+    onSearchChange,
+    showRuntimeStores,
+    onToggleRuntimeStores,
+    showDebugStructures,
+    onToggleDebugStructures,
+    expandMirrors,
+    onToggleExpandMirrors,
+  }: {
+    inspectorTab: DataModelInspectorTab;
+    onSelectTab: (tab: DataModelInspectorTab) => void;
+    focusEnabled: boolean;
+    onToggleFocus: () => void;
+    searchQuery: string;
+    onSearchChange: (query: string) => void;
+    showRuntimeStores: boolean;
+    onToggleRuntimeStores: () => void;
+    showDebugStructures: boolean;
+    onToggleDebugStructures: () => void;
+    expandMirrors: boolean;
+    onToggleExpandMirrors: () => void;
+  },
+) {
+  const graph = useStore((s) => s.graph);
+  const selectNode = useStore((s) => s.selectNode);
+  if (!graph) return null;
+
+  const visibility = {
+    showRuntimeStores,
+    showDebugStructures,
+    expandMirrors,
+  } satisfies DataModelVisibilityOptions;
+  const searchState = searchDataModel(graph, searchQuery, visibility);
+  const activeInspectorTab =
+    DATA_MODEL_INSPECTOR_TABS.find((tab) => tab.value === inspectorTab) ?? DATA_MODEL_INSPECTOR_TABS[0];
+  const categoryCounts = getDataModelCategoryCounts(graph, visibility, { includeHiddenCategories: true });
+  const summaryStats = [
+    `${visibleDataModelStructureCount(graph, visibility)} visible structures`,
+    `${visibleDataModelRelationCount(graph, visibility)} visible relations`,
+    `${graph.dataStructureAccesses.length} access paths`,
+  ];
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#aaa", marginBottom: 8 }}>
+        Data Model Explorer
+      </div>
+
+      <input
+        value={searchQuery}
+        onChange={(event) => onSearchChange(event.target.value)}
+        placeholder="Search structures, fields, variants, access paths..."
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "8px 10px",
+          fontSize: 11,
+          color: "#e5e7eb",
+          background: "#0f172a",
+          border: "1px solid #273449",
+          borderRadius: 8,
+          outline: "none",
+          marginBottom: 10,
+        }}
+      />
+
+      <div
+        style={{
+          marginBottom: 10,
+          padding: "8px 10px 10px",
+          border: "1px solid #273449",
+          borderRadius: 10,
+          background: "#0f172a",
+        }}
+      >
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+          <button
+            type="button"
+            onClick={onToggleRuntimeStores}
+            style={{
+              padding: "4px 8px",
+              fontSize: 9,
+              fontWeight: 700,
+              color: showRuntimeStores ? "#fff" : "#94a3b8",
+              background: showRuntimeStores ? "#7c3aed" : "transparent",
+              border: `1px solid ${showRuntimeStores ? "#8b5cf6" : "#334155"}`,
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            In-memory
+          </button>
+          <button
+            type="button"
+            onClick={onToggleDebugStructures}
+            style={{
+              padding: "4px 8px",
+              fontSize: 9,
+              fontWeight: 700,
+              color: showDebugStructures ? "#fff" : "#94a3b8",
+              background: showDebugStructures ? "#475569" : "transparent",
+              border: `1px solid ${showDebugStructures ? "#64748b" : "#334155"}`,
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            Harnesses
+          </button>
+          <button
+            type="button"
+            onClick={onToggleExpandMirrors}
+            style={{
+              padding: "4px 8px",
+              fontSize: 9,
+              fontWeight: 700,
+              color: expandMirrors ? "#fff" : "#94a3b8",
+              background: expandMirrors ? "#0f766e" : "transparent",
+              border: `1px solid ${expandMirrors ? "#14b8a6" : "#334155"}`,
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            Mirrors
+          </button>
+          <button
+            type="button"
+            onClick={onToggleFocus}
+            style={{
+              padding: "4px 8px",
+              fontSize: 9,
+              fontWeight: 700,
+              color: focusEnabled ? "#fff" : "#94a3b8",
+              background: focusEnabled ? "#1d4ed8" : "transparent",
+              border: `1px solid ${focusEnabled ? "#2563eb" : "#334155"}`,
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            Focus
+          </button>
+        </div>
+
+        <div style={{ fontSize: 9, color: "#64748b" }}>
+          {summaryStats.join(" · ")}
+        </div>
+      </div>
+
+      <div
+        style={{
+          marginBottom: 10,
+          padding: "8px 10px 10px",
+          border: "1px solid #273449",
+          borderRadius: 10,
+          background: "#0f172a",
+        }}
+      >
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          {categoryCounts.map((item) => (
+            <button
+              key={item.category}
+              type="button"
+              onClick={() => {
+                if (item.category === "in_memory" && !showRuntimeStores) {
+                  onToggleRuntimeStores();
+                }
+                if (item.category === "debug_test" && !showDebugStructures) {
+                  onToggleDebugStructures();
+                }
+                selectNode(`data-boundary-${item.category}`);
+                onSelectTab("overview");
+              }}
+              style={{
+                padding: "4px 8px",
+                fontSize: 9,
+                fontWeight: 700,
+                color: item.hidden ? "#64748b" : "#e2e8f0",
+                background: item.hidden ? "#0b1120" : "#111827",
+                border: `1px solid ${dataModelCategoryColor(item.category)}${item.hidden ? "22" : "35"}`,
+                borderRadius: 6,
+                cursor: "pointer",
+                opacity: item.hidden ? 0.7 : 1,
+              }}
+            >
+              {dataModelCategoryLabel(item.category)} ({item.count})
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
+        {DATA_MODEL_INSPECTOR_TABS.map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            onClick={() => onSelectTab(tab.value)}
+            style={{
+              padding: "4px 8px",
+              fontSize: 9,
+              fontWeight: 700,
+              color: inspectorTab === tab.value ? "#fff" : "#94a3b8",
+              background: inspectorTab === tab.value ? "#172033" : "transparent",
+              border: `1px solid ${inspectorTab === tab.value ? "#3b82f6" : "#334155"}`,
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {searchQuery.trim().length > 0 && (
+        <div style={{ borderTop: "1px solid #252545", paddingTop: 10 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8", marginBottom: 6 }}>
+            Search Results
+          </div>
+          {searchState.results.length === 0 && (
+            <div style={{ fontSize: 10, color: "#64748b" }}>
+              No visible structure matches.
+            </div>
+          )}
+          {searchState.hiddenRuntimeStoreMatches > 0 && !showRuntimeStores && (
+            <button
+              type="button"
+              onClick={onToggleRuntimeStores}
+              style={{ ...actionButtonStyle, marginBottom: 6 }}
+            >
+              <div style={{ fontSize: 10, color: "#fff", fontWeight: 700 }}>
+                Reveal {searchState.hiddenRuntimeStoreMatches} hidden in-memory match{searchState.hiddenRuntimeStoreMatches === 1 ? "" : "es"}
+              </div>
+              <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>
+                Search found matching RAM-backed structures, but they are hidden behind the current scope.
+              </div>
+            </button>
+          )}
+          {searchState.hiddenDebugMatches > 0 && !showDebugStructures && (
+            <button
+              type="button"
+              onClick={onToggleDebugStructures}
+              style={{ ...actionButtonStyle, marginBottom: 6 }}
+            >
+              <div style={{ fontSize: 10, color: "#fff", fontWeight: 700 }}>
+                Reveal {searchState.hiddenDebugMatches} hidden harness/test match{searchState.hiddenDebugMatches === 1 ? "" : "es"}
+              </div>
+              <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>
+                These are harness or diagnostic structures that stay hidden by default.
+              </div>
+            </button>
+          )}
+          {searchState.results.slice(0, 8).map((result) => (
+            <button
+              key={`${result.structureId}-${result.label}-${result.tab}`}
+              type="button"
+              onClick={() => {
+                selectNode(result.structureId);
+                onSelectTab(result.tab);
+              }}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "7px 8px",
+                marginBottom: 4,
+                fontSize: 10,
+                color: "#cbd5e1",
+                background: "#0f172a",
+                border: "1px solid #273449",
+                borderRadius: 6,
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ fontWeight: 700, color: "#fff" }}>{result.structureName}</div>
+                <span style={{ fontSize: 8, fontWeight: 700, color: "#93c5fd", textTransform: "uppercase" }}>{result.tab}</span>
+              </div>
+              <div style={{ color: "#94a3b8", marginTop: 2 }}>{result.label}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DataModelInspector() {
+  const graph = useStore((s) => s.graph);
+  const selectedNodeId = useStore((s) => s.selectedNodeId);
+  const selectedEdgeId = useStore((s) => s.selectedEdgeId);
+  const inspectorTab = useStore((s) => s.dataModelInspectorTab);
+
+  if (!graph) return null;
+  if (!selectedNodeId && !selectedEdgeId) return <DataModelIntroPanel />;
+
+  if (selectedEdgeId) {
+    return <DataModelRelationInspector relationId={selectedEdgeId} />;
+  }
+
+  const boundaryCategory = selectedNodeId?.startsWith("data-boundary-")
+    ? selectedNodeId.replace("data-boundary-", "")
+    : null;
+  if (boundaryCategory) {
+    return <DataModelBoundaryInspector category={boundaryCategory} />;
+  }
+
+  const structure = graph.dataStructures.find((item) => item.id === selectedNodeId);
+  if (!structure) return <DataModelIntroPanel />;
+
+  switch (inspectorTab) {
+    case "shape":
+      return <DataModelShapeInspector structureId={structure.id} />;
+    case "access":
+      return <DataModelAccessInspector structureId={structure.id} />;
+    case "evidence":
+      return <DataModelEvidenceInspector structureId={structure.id} />;
+    case "open_next":
+      return <DataModelOpenNextInspector structureId={structure.id} />;
+    case "overview":
+    default:
+      return <DataModelOverviewInspector structureId={structure.id} />;
+  }
+}
+
+function DataModelIntroPanel() {
+  const graph = useStore((s) => s.graph);
+  const showRuntimeStores = useStore((s) => s.dataModelShowRuntimeStores);
+  const showDebugStructures = useStore((s) => s.dataModelShowDebugStructures);
+  const expandMirrors = useStore((s) => s.dataModelExpandMirrors);
+  if (!graph) return null;
+  const visibility = {
+    showRuntimeStores,
+    showDebugStructures,
+    expandMirrors,
+  } satisfies DataModelVisibilityOptions;
+  const categoryCounts = getDataModelCategoryCounts(graph, visibility, { includeHiddenCategories: true });
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 6 }}>
+        Data Model
+      </div>
+      <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5, marginBottom: 10 }}>
+        This tab shows the repo’s important data structures: gameplay models, wire contracts, database-backed shapes,
+        disk-backed files, and the in-memory state or indexes that explain how those structures are accessed.
+      </div>
+      <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.5, marginBottom: 8 }}>
+        Select a structure to inspect its shape, access patterns, evidence, mirror definitions, and the next files worth opening.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, marginBottom: 10 }}>
+        {categoryCounts.map((item) => (
+          <div
+            key={item.category}
+            style={{
+              padding: "8px 9px",
+              border: `1px solid ${dataModelCategoryColor(item.category)}35`,
+              borderRadius: 8,
+              background: "#0f172a",
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#fff" }}>{dataModelCategoryLabel(item.category)}</div>
+            <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 2 }}>
+              {item.count} structures{item.hidden ? " · hidden" : ""}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1.5 }}>
+        Edges show containment, wire serialization, database mapping, disk loading, in-memory storage, and indexing. Mirror duplicates are collapsed by default.
+      </div>
+    </div>
+  );
+}
+
+function DataModelBoundaryInspector({ category }: { category: string }) {
+  const graph = useStore((s) => s.graph);
+  const selectNode = useStore((s) => s.selectNode);
+  const setDataModelInspectorTab = useStore((s) => s.setDataModelInspectorTab);
+  const showRuntimeStores = useStore((s) => s.dataModelShowRuntimeStores);
+  const showDebugStructures = useStore((s) => s.dataModelShowDebugStructures);
+  const expandMirrors = useStore((s) => s.dataModelExpandMirrors);
+  if (!graph) return null;
+  const visibility = {
+    showRuntimeStores,
+    showDebugStructures,
+    expandMirrors,
+  } satisfies DataModelVisibilityOptions;
+  const items = getVisibleDataStructures(graph, visibility)
+    .filter((structure) => structure.category === category)
+    .sort(compareStructureOrder);
+  const grouped = groupStructuresByConcept(items);
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader
+        title={`${dataModelCategoryLabel(category)} category`}
+        subtitle={`${items.length} structures`}
+        color={dataModelCategoryColor(category)}
+      />
+      <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.5, marginBottom: 10 }}>
+        {describeDataModelCategory(category)}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, marginBottom: 10 }}>
+        {grouped.map((group) => (
+          <div
+            key={group.conceptGroup}
+            style={{
+              padding: "8px 9px",
+              border: "1px solid #273449",
+              borderRadius: 8,
+              background: "#0f172a",
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#fff" }}>{getConceptGroupLabel(group.conceptGroup)}</div>
+            <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 2 }}>{group.items.length} structures</div>
+          </div>
+        ))}
+      </div>
+      {grouped.map((group) => (
+        <div key={group.conceptGroup} style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 6 }}>
+            {getConceptGroupLabel(group.conceptGroup)}
+          </div>
+          {group.items.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => {
+                selectNode(item.id);
+                setDataModelInspectorTab("overview");
+              }}
+              style={actionButtonStyle}
+            >
+              <div style={{ fontSize: 10, color: "#fff", fontWeight: 700 }}>{item.name}</div>
+              <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+                {humanizeDataStructureKindLabel(item.kind)} · {item.fields.length} fields · {item.variants.length} variants
+              </div>
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DataModelOverviewInspector({ structureId }: { structureId: string }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph) return null;
+  const structure = getStructureById(graph, structureId);
+  if (!structure) return null;
+  const family = getStructureFamily(graph, structure);
+  const familyIds = new Set(family.map((item) => item.id));
+
+  const mirrorNames = family
+    .filter((item) => item.id !== structure.id)
+    .map((item) => `${item.name} · ${item.fileId}`);
+  const accessCount = graph.dataStructureAccesses.filter((item) => familyIds.has(item.structureId)).length;
+  const relationCount = graph.dataStructureRelations.filter((item) => familyIds.has(item.sourceId) || familyIds.has(item.targetId)).length;
+  const evidenceCount = collectStructureEvidence(graph, family).length;
+  const badges = buildStructureOverviewBadges(structure, family.length);
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader
+        title={structure.name}
+        subtitle={`${dataModelCategoryLabel(structure.category)} · ${humanizeDataStructureKindLabel(structure.kind)}`}
+        color={dataModelCategoryColor(structure.category)}
+      />
+
+      <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.55, marginBottom: 10 }}>
+        {structure.summary ?? structure.purpose ?? "No summary extracted for this structure."}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, marginBottom: 10 }}>
+        {[
+          `${structure.fields.length} fields`,
+          `${structure.variants.length} variants`,
+          `${accessCount} accesses`,
+          `${relationCount} relationships`,
+          `${evidenceCount} evidence rows`,
+          `${mirrorNames.length} mirrors`,
+        ].map((item) => (
+          <div
+            key={item}
+            style={{
+              padding: "7px 8px",
+              border: "1px solid #273449",
+              borderRadius: 8,
+              background: "#0f172a",
+              fontSize: 10,
+              fontWeight: 700,
+              color: "#e2e8f0",
+            }}
+          >
+            {item}
+          </div>
+        ))}
+      </div>
+
+      {badges.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          {badges.map((badge) => (
+            <span
+              key={badge}
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: "#e5e7eb",
+                border: `1px solid ${dataModelCategoryColor(structure.category)}35`,
+                background: `${dataModelCategoryColor(structure.category)}12`,
+                borderRadius: 999,
+                padding: "3px 8px",
+              }}
+            >
+              {badge}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>Storage medium</div>
+      <div style={{ fontSize: 10, color: "#e2e8f0", marginBottom: 10 }}>
+        {dataModelStorageLabel(structure.category)}
+      </div>
+
+      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>Source</div>
+      <div style={{ fontSize: 10, color: "#e2e8f0", fontFamily: "monospace", marginBottom: 10 }}>{structure.fileId}</div>
+
+      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>Why it exists</div>
+      <div style={{ fontSize: 10, color: "#e2e8f0", marginBottom: 10 }}>
+        {structure.purpose ?? structure.summary ?? "No purpose summary extracted."}
+      </div>
+
+      {structure.conceptGroup && (
+        <>
+          <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>Concept group</div>
+          <div style={{ fontSize: 10, color: "#e2e8f0", marginBottom: 10 }}>
+            {getConceptGroupLabel(structure.conceptGroup)}
+          </div>
+        </>
+      )}
+
+      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>Shape</div>
+      <div style={{ fontSize: 10, color: "#e2e8f0", marginBottom: 10 }}>
+        {structure.fields.length} top-level fields · {structure.variants.length} variants
+      </div>
+
+      {mirrorNames.length > 0 && (
+        <>
+          <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>Mirrors</div>
+          {mirrorNames.map((label) => (
+            <div key={label} style={{ fontSize: 10, color: "#e2e8f0", marginBottom: 2 }}>
+              {label}
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function DataModelShapeInspector({ structureId }: { structureId: string }) {
+  const graph = useStore((s) => s.graph);
+  const selectNode = useStore((s) => s.selectNode);
+  const setDataModelInspectorTab = useStore((s) => s.setDataModelInspectorTab);
+  if (!graph) return null;
+  const structure = graph.dataStructures.find((item) => item.id === structureId);
+  if (!structure) return null;
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader
+        title={`${structure.name} shape`}
+        subtitle={humanizeDataStructureKindLabel(structure.kind)}
+        color={dataModelCategoryColor(structure.category)}
+      />
+
+      {structure.fields.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 6 }}>Fields</div>
+          {structure.fields.map((field) => (
+            <div
+              key={field.id}
+              style={{
+                padding: "7px 8px",
+                marginBottom: 6,
+                border: "1px solid #273449",
+                borderRadius: 8,
+                background: "#0f172a",
+              }}
+            >
+              <div style={{ fontSize: 10, color: "#fff", fontWeight: 700, fontFamily: "monospace" }}>
+                {field.name}
+                {field.optional ? "?" : ""}: {field.typeText}
+              </div>
+              {field.description && (
+                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3, lineHeight: 1.45 }}>{field.description}</div>
+              )}
+              {field.referencedStructureId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    selectNode(field.referencedStructureId ?? null);
+                    setDataModelInspectorTab("shape");
+                  }}
+                  style={{
+                    marginTop: 5,
+                    padding: "4px 6px",
+                    fontSize: 9,
+                    color: "#bfdbfe",
+                    background: "#172033",
+                    border: "1px solid #334155",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                  }}
+                >
+                  Open nested structure
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {structure.variants.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 6 }}>Variants</div>
+          {structure.variants.map((variant) => (
+            <div
+              key={variant.id}
+              style={{
+                padding: "8px 10px",
+                marginBottom: 8,
+                border: "1px solid #273449",
+                borderRadius: 8,
+                background: "#0f172a",
+              }}
+            >
+              <div style={{ fontSize: 10, color: "#fff", fontWeight: 700, fontFamily: "monospace" }}>
+                {variant.discriminatorField && variant.discriminatorValue
+                  ? `${variant.discriminatorField}="${variant.discriminatorValue}"`
+                  : variant.label}
+              </div>
+              {variant.fields.length === 0 ? (
+                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>No additional payload fields.</div>
+              ) : (
+                variant.fields.map((field) => (
+                  <div key={field.id} style={{ fontSize: 10, color: "#e2e8f0", marginTop: 4, fontFamily: "monospace" }}>
+                    {field.name}
+                    {field.optional ? "?" : ""}: {field.typeText}
+                  </div>
+                ))
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DataModelAccessInspector({ structureId }: { structureId: string }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph) return null;
+  const structure = getStructureById(graph, structureId);
+  if (!structure) return null;
+  const family = getStructureFamily(graph, structure);
+  const familyIds = new Set(family.map((item) => item.id));
+
+  const accesses = graph.dataStructureAccesses
+    .filter((access) => familyIds.has(access.structureId))
+    .sort((left, right) => {
+      const leftKey = `${left.accessKind}:${left.actorFileId}:${left.actorName ?? ""}`;
+      const rightKey = `${right.accessKind}:${right.actorFileId}:${right.actorName ?? ""}`;
+      return leftKey.localeCompare(rightKey);
+    });
+
+  const relationSummaries = dedupeStructureRelations(
+    graph.dataStructureRelations.filter(
+      (relation) => familyIds.has(relation.sourceId) || familyIds.has(relation.targetId),
+    ),
+  );
+  const highSignalAccesses = accesses.filter((access) => !isLowSignalDataAccess(access));
+  const lowSignalCount = accesses.length - highSignalAccesses.length;
+  const groupedAccesses = groupAccessesForInspector(highSignalAccesses);
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader
+        title={`${structure.name} access patterns`}
+        subtitle={dataModelCategoryLabel(structure.category)}
+        color={dataModelCategoryColor(structure.category)}
+      />
+
+      {relationSummaries.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 6 }}>Structural relationships</div>
+          {relationSummaries.map((relation) => {
+            const otherId = familyIds.has(relation.sourceId) ? relation.targetId : relation.sourceId;
+            const other = getStructureById(graph, otherId);
+            return (
+              <div
+                key={relation.id}
+                style={{
+                  padding: "7px 8px",
+                  marginBottom: 6,
+                  border: "1px solid #273449",
+                  borderRadius: 8,
+                  background: "#0f172a",
+                }}
+              >
+                <div style={{ fontSize: 10, color: "#fff", fontWeight: 700 }}>
+                  {humanizeDataRelationKind(relation.kind)} · {other?.name ?? otherId}
+                </div>
+                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3, lineHeight: 1.45 }}>
+                  {relation.reason ?? relation.label}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 6 }}>Direct accesses</div>
+        {groupedAccesses.length === 0 && (
+          <div style={{ fontSize: 10, color: "#64748b" }}>No direct access rows extracted for this structure.</div>
+        )}
+        {groupedAccesses.map((group) => (
+          <div key={group.label} style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#cbd5e1", marginBottom: 6 }}>{group.label}</div>
+            {group.items.map((access) => (
+              <div
+                key={access.id}
+                style={{
+                  padding: "8px 10px",
+                  marginBottom: 8,
+                  border: "1px solid #273449",
+                  borderRadius: 8,
+                  background: "#0f172a",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ fontSize: 10, color: "#fff", fontWeight: 700 }}>
+                    {humanizeDataAccessKind(access.accessKind)}
+                    {access.actorName ? ` · ${access.actorName}` : ""}
+                  </div>
+                  <span
+                    style={{
+                      fontSize: 8,
+                      fontWeight: 800,
+                      color: "#bfdbfe",
+                      background: "#172033",
+                      border: "1px solid #334155",
+                      borderRadius: 999,
+                      padding: "2px 6px",
+                    }}
+                  >
+                    {humanizeDataLifecycle(access.lifecycle)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3, lineHeight: 1.45 }}>
+                  {access.reason ?? "No explanation extracted."}
+                </div>
+                <div style={{ fontSize: 9, color: "#64748b", marginTop: 4, fontFamily: "monospace" }}>
+                  {access.actorFileId}
+                  {access.line ? `:${access.line}` : ""}
+                  {access.accessPath ? ` · ${access.accessPath}` : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+        {lowSignalCount > 0 && (
+          <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1.45 }}>
+            {lowSignalCount} low-signal typed reference{lowSignalCount === 1 ? "" : "s"} hidden to keep the access view focused on reads, writes, indexes, wire serialization, and database access.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DataModelEvidenceInspector({ structureId }: { structureId: string }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph) return null;
+  const structure = getStructureById(graph, structureId);
+  if (!structure) return null;
+  const family = getStructureFamily(graph, structure);
+  const items = collectStructureEvidence(graph, family);
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader
+        title={`${structure.name} evidence`}
+        subtitle={structure.fileId}
+        color={dataModelCategoryColor(structure.category)}
+      />
+      {items.map((item) => (
+        <EvidenceRow key={item.id} item={item} />
+      ))}
+    </div>
+  );
+}
+
+function DataModelOpenNextInspector({ structureId }: { structureId: string }) {
+  const graph = useStore((s) => s.graph);
+  const setZoomLevel = useStore((s) => s.setZoomLevel);
+  const selectNode = useStore((s) => s.selectNode);
+  if (!graph) return null;
+  const structure = getStructureById(graph, structureId);
+  if (!structure) return null;
+  const family = getStructureFamily(graph, structure);
+  const familyIds = new Set(family.map((item) => item.id));
+
+  const recommendations: Array<{ fileId: string; reason: string }> = [];
+  recommendations.push({ fileId: structure.fileId, reason: "Canonical definition of the structure." });
+
+  for (const access of graph.dataStructureAccesses.filter((item) => familyIds.has(item.structureId))) {
+    recommendations.push({
+      fileId: access.actorFileId,
+      reason: `${humanizeDataAccessKind(access.accessKind)} path${access.actorName ? ` in ${access.actorName}` : ""}.`,
+    });
+  }
+
+  for (const relation of graph.dataStructureRelations.filter((item) => familyIds.has(item.sourceId) || familyIds.has(item.targetId))) {
+    const otherId = familyIds.has(relation.sourceId) ? relation.targetId : relation.sourceId;
+    const other = getStructureById(graph, otherId);
+    if (!other) continue;
+    recommendations.push({
+      fileId: other.fileId,
+      reason: `${humanizeDataRelationKind(relation.kind)} relationship with ${other.name}.`,
+    });
+  }
+
+  const unique = recommendations
+    .filter((item, index, items) => items.findIndex((other) => other.fileId === item.fileId) === index)
+    .sort((left, right) => scoreReadNextFile(left.fileId, structure) - scoreReadNextFile(right.fileId, structure));
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader
+        title={`Open next: ${structure.name}`}
+        subtitle={structure.fileId}
+        color={dataModelCategoryColor(structure.category)}
+      />
+      {unique.slice(0, 6).map((item) => (
+        <button
+          key={`${item.fileId}-${item.reason}`}
+          type="button"
+          onClick={() => {
+            setZoomLevel("file");
+            selectNode(item.fileId);
+          }}
+          style={actionButtonStyle}
+        >
+          <div style={{ fontSize: 10, color: "#fff", fontWeight: 700, fontFamily: "monospace" }}>{item.fileId}</div>
+          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>{item.reason}</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DataModelRelationInspector({ relationId }: { relationId: string }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph) return null;
+  const relation = graph.dataStructureRelations.find((item) => item.id === relationId);
+  if (!relation) return <DataModelIntroPanel />;
+
+  const source = graph.dataStructures.find((item) => item.id === relation.sourceId);
+  const target = graph.dataStructures.find((item) => item.id === relation.targetId);
+  const evidenceLookup = new Map(graph.dataModelEvidence.map((item) => [item.id, item]));
+  const evidence = relation.evidenceIds
+    .map((evidenceId) => evidenceLookup.get(evidenceId))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader
+        title={`${source?.name ?? relation.sourceId} -> ${target?.name ?? relation.targetId}`}
+        subtitle={humanizeDataRelationKind(relation.kind)}
+        color="#cbd5e1"
+      />
+      <div style={{ fontSize: 11, color: "#d1d5db", lineHeight: 1.55, marginBottom: 10 }}>
+        {relation.reason ?? relation.label}
+      </div>
+      {evidence.map((item) => (
+        <EvidenceRow key={item.id} item={item} />
+      ))}
+    </div>
+  );
+}
+
+function searchDataModel(
+  graph: ArchitectureGraph,
+  query: string,
+  visibility: DataModelVisibilityOptions,
+): {
+  results: Array<{
+    structureId: string;
+    structureName: string;
+    label: string;
+    tab: DataModelInspectorTab;
+  }>;
+  hiddenRuntimeStoreMatches: number;
+  hiddenDebugMatches: number;
+} {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return { results: [], hiddenRuntimeStoreMatches: 0, hiddenDebugMatches: 0 };
+  }
+
+  const visibleStructures = getVisibleDataStructures(graph, visibility);
+  const results: Array<{ structureId: string; structureName: string; label: string; tab: DataModelInspectorTab }> = [];
+  const seen = new Set<string>();
+  let hiddenRuntimeStoreMatches = 0;
+  let hiddenDebugMatches = 0;
+
+  for (const structure of visibleStructures) {
+    const family = getStructureFamily(graph, structure);
+    const familyIds = new Set(family.map((item) => item.id));
+    const maybePush = (label: string, tab: DataModelInspectorTab) => {
+      if (!label.toLowerCase().includes(needle)) return;
+      const key = `${structure.id}:${tab}:${label}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      results.push({
+        structureId: structure.id,
+        structureName: structure.name,
+        label,
+        tab,
+      });
+    };
+
+    maybePush(structure.name, "overview");
+    if (structure.summary) maybePush(structure.summary, "overview");
+    maybePush(structure.fileId, "overview");
+    for (const mirror of family.filter((item) => item.id !== structure.id)) {
+      maybePush(`Mirrored in ${mirror.fileId}`, "overview");
+    }
+    for (const field of structure.fields) {
+      maybePush(`${field.name}: ${field.typeText}`, "shape");
+    }
+    for (const variant of structure.variants) {
+      maybePush(variant.discriminatorValue ?? variant.label, "shape");
+      for (const field of variant.fields) maybePush(`${field.name}: ${field.typeText}`, "shape");
+    }
+    for (const access of graph.dataStructureAccesses.filter((item) => familyIds.has(item.structureId))) {
+      if (access.actorName) maybePush(access.actorName, "access");
+      if (access.accessPath) maybePush(access.accessPath, "access");
+      if (access.reason) maybePush(access.reason, "access");
+    }
+  }
+
+  for (const structure of graph.dataStructures) {
+    const familyLeader = getFamilyLeader(graph, structure);
+    const hiddenByMirror = !visibility.expandMirrors && Boolean(familyLeader && familyLeader.id !== structure.id && structure.mirrorIds.length > 0);
+    const hiddenByStore = !visibility.showRuntimeStores && structure.category === "in_memory";
+    const hiddenByDebug = !visibility.showDebugStructures && structure.category === "debug_test";
+    if (!hiddenByStore && !hiddenByDebug && !hiddenByMirror) continue;
+    const haystack = [
+      structure.name,
+      structure.summary ?? "",
+      structure.purpose ?? "",
+      structure.fileId,
+      ...structure.fields.map((field) => `${field.name}: ${field.typeText}`),
+      ...structure.variants.map((variant) => variant.discriminatorValue ?? variant.label),
+    ].join(" ").toLowerCase();
+    if (!haystack.includes(needle)) continue;
+    if (hiddenByStore) hiddenRuntimeStoreMatches += 1;
+    if (hiddenByDebug) hiddenDebugMatches += 1;
+  }
+
+  return {
+    results: results.sort((left, right) => {
+      const leftNameScore = left.structureName.toLowerCase() === needle ? 0 : left.structureName.toLowerCase().startsWith(needle) ? 1 : 2;
+      const rightNameScore = right.structureName.toLowerCase() === needle ? 0 : right.structureName.toLowerCase().startsWith(needle) ? 1 : 2;
+      return leftNameScore - rightNameScore || left.structureName.localeCompare(right.structureName) || left.label.localeCompare(right.label);
+    }),
+    hiddenRuntimeStoreMatches,
+    hiddenDebugMatches,
+  };
+}
+
+function visibleDataModelStructureCount(graph: ArchitectureGraph, visibility: DataModelVisibilityOptions): number {
+  return getVisibleDataStructures(graph, visibility).length;
+}
+
+function visibleDataModelRelationCount(graph: ArchitectureGraph, visibility: DataModelVisibilityOptions): number {
+  const visibleIds = new Set(getVisibleDataStructures(graph, visibility).map((structure) => structure.id));
+  const collapsedRelationKeys = new Set<string>();
+  for (const relation of graph.dataStructureRelations) {
+    if (relation.kind === "mirrors" && !visibility.expandMirrors) continue;
+    const sourceId = visibility.expandMirrors ? relation.sourceId : getFamilyLeader(graph, relation.sourceId)?.id ?? relation.sourceId;
+    const targetId = visibility.expandMirrors ? relation.targetId : getFamilyLeader(graph, relation.targetId)?.id ?? relation.targetId;
+    if (sourceId === targetId) continue;
+    if (!visibleIds.has(sourceId) || !visibleIds.has(targetId)) continue;
+    collapsedRelationKeys.add(`${relation.kind}:${sourceId}:${targetId}`);
+  }
+  return collapsedRelationKeys.size;
+}
+
+function getDataModelCategoryCounts(
+  graph: ArchitectureGraph,
+  visibility: DataModelVisibilityOptions,
+  options?: { includeHiddenCategories?: boolean },
+): Array<{ category: string; count: number; hidden: boolean }> {
+  const visibleCounts = new Map<string, number>();
+  for (const structure of getVisibleDataStructures(graph, visibility)) {
+    visibleCounts.set(structure.category, (visibleCounts.get(structure.category) ?? 0) + 1);
+  }
+
+  const totalCounts = new Map<string, number>();
+  const expandedVisibility = {
+    showRuntimeStores: true,
+    showDebugStructures: true,
+    expandMirrors: visibility.expandMirrors,
+  } satisfies DataModelVisibilityOptions;
+  for (const structure of getVisibleDataStructures(graph, expandedVisibility)) {
+    totalCounts.set(structure.category, (totalCounts.get(structure.category) ?? 0) + 1);
+  }
+
+  return DATA_MODEL_CATEGORY_ORDER
+    .map((category) => {
+      const visibleCount = visibleCounts.get(category) ?? 0;
+      const totalCount = totalCounts.get(category) ?? 0;
+      return {
+        category,
+        count: options?.includeHiddenCategories ? totalCount : visibleCount,
+        hidden: totalCount > 0 && visibleCount === 0,
+      };
+    })
+    .filter((item) => item.count > 0);
+}
+
+function dataModelCategoryLabel(category: string): string {
+  return DATA_MODEL_CATEGORY_META[category as keyof typeof DATA_MODEL_CATEGORY_META]?.label
+    ?? category.replaceAll("_", " ").replace(/\b\w/g, (value) => value.toUpperCase());
+}
+
+function dataModelCategoryColor(category: string): string {
+  return DATA_MODEL_CATEGORY_META[category as keyof typeof DATA_MODEL_CATEGORY_META]?.color ?? "#cbd5e1";
+}
+
+function describeDataModelCategory(category: string): string {
+  return DATA_MODEL_CATEGORY_META[category as keyof typeof DATA_MODEL_CATEGORY_META]?.description ?? "Data structures in this category.";
+}
+
+function dataModelStorageLabel(category: string): string {
+  switch (category) {
+    case "in_memory":
+      return "Process memory (RAM)";
+    case "database":
+      return "Database-backed storage";
+    case "disk_file":
+      return "Disk-backed file";
+    case "transport":
+      return "Wire payload / network contract";
+    case "ui_view":
+      return "UI-facing view model";
+    case "debug_test":
+      return "Harness / test-only model";
+    default:
+      return "Authoritative gameplay state";
+  }
+}
+
+function humanizeDataStructureKindLabel(kind: string): string {
+  switch (kind) {
+    case "type_alias":
+      return "Type alias";
+    default:
+      return kind.replaceAll("_", " ").replace(/^\w/, (c) => c.toUpperCase());
+  }
+}
+
+function humanizeDataAccessKind(kind: string): string {
+  switch (kind) {
+    case "index_lookup":
+      return "Index lookup";
+    case "persist_read":
+      return "Persistence read";
+    case "persist_write":
+      return "Persistence write";
+    default:
+      return kind.replaceAll("_", " ").replace(/\b\w/g, (value) => value.toUpperCase());
+  }
+}
+
+function humanizeDataLifecycle(lifecycle: string): string {
+  switch (lifecycle) {
+    case "tick_path":
+      return "tick path";
+    case "event_driven":
+      return "event driven";
+    case "request_path":
+      return "request path";
+    case "debug_only":
+      return "debug only";
+    case "test_only":
+      return "test only";
+    default:
+      return lifecycle.replaceAll("_", " ");
+  }
+}
+
+function humanizeDataRelationKind(kind: string): string {
+  switch (kind) {
+    case "persisted_as":
+      return "Persisted as";
+    case "serialized_as":
+      return "Serialized as";
+    case "loaded_from":
+      return "Loaded from";
+    case "stored_in":
+      return "Stored in";
+    case "indexed_by":
+      return "Indexed by";
+    default:
+      return kind.replaceAll("_", " ").replace(/\b\w/g, (value) => value.toUpperCase());
+  }
+}
+
+function buildStructureOverviewBadges(
+  structure: ArchitectureGraph["dataStructures"][number],
+  familySize: number,
+): string[] {
+  const badges = [...structure.badges];
+  if (structure.canonical) badges.unshift("Canonical");
+  if (familySize > 1 && !badges.includes("Mirrored")) badges.push("Mirrored");
+  return badges;
+}
+
+function collectStructureEvidence(
+  graph: ArchitectureGraph,
+  family: ArchitectureGraph["dataStructures"],
+): ArchitectureGraph["dataModelEvidence"] {
+  const evidenceLookup = new Map(graph.dataModelEvidence.map((item) => [item.id, item]));
+  const familyIds = new Set(family.map((item) => item.id));
+  const evidenceIds = new Set<string>();
+  for (const structure of family) {
+    for (const evidenceId of structure.evidenceIds) evidenceIds.add(evidenceId);
+    for (const field of structure.fields) {
+      for (const evidenceId of field.evidenceIds) evidenceIds.add(evidenceId);
+    }
+    for (const variant of structure.variants) {
+      for (const evidenceId of variant.evidenceIds) evidenceIds.add(evidenceId);
+      for (const field of variant.fields) {
+        for (const evidenceId of field.evidenceIds) evidenceIds.add(evidenceId);
+      }
+    }
+  }
+  for (const access of graph.dataStructureAccesses.filter((item) => familyIds.has(item.structureId))) {
+    for (const evidenceId of access.evidenceIds) evidenceIds.add(evidenceId);
+  }
+  for (const relation of graph.dataStructureRelations.filter((item) => familyIds.has(item.sourceId) || familyIds.has(item.targetId))) {
+    for (const evidenceId of relation.evidenceIds) evidenceIds.add(evidenceId);
+  }
+  return Array.from(evidenceIds)
+    .map((id) => evidenceLookup.get(id))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .sort((left, right) => `${left.fileId}:${left.line ?? 0}`.localeCompare(`${right.fileId}:${right.line ?? 0}`));
+}
+
+function groupStructuresByConcept(
+  items: ArchitectureGraph["dataStructures"],
+): Array<{ conceptGroup?: string; items: ArchitectureGraph["dataStructures"] }> {
+  const groups = new Map<string | undefined, ArchitectureGraph["dataStructures"]>();
+  for (const item of items) {
+    const existing = groups.get(item.conceptGroup) ?? [];
+    existing.push(item);
+    groups.set(item.conceptGroup, existing);
+  }
+  return Array.from(groups.entries())
+    .map(([conceptGroup, groupItems]) => ({ conceptGroup, items: groupItems }))
+    .sort((left, right) => getConceptGroupLabel(left.conceptGroup).localeCompare(getConceptGroupLabel(right.conceptGroup)));
+}
+
+function dedupeStructureRelations(
+  relations: ArchitectureGraph["dataStructureRelations"],
+): ArchitectureGraph["dataStructureRelations"] {
+  const seen = new Set<string>();
+  return relations.filter((relation) => {
+    const key = `${relation.kind}:${relation.sourceId}:${relation.targetId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isLowSignalDataAccess(
+  access: ArchitectureGraph["dataStructureAccesses"][number],
+): boolean {
+  if (access.accessKind === "write" || access.accessKind === "lookup" || access.accessKind === "index_lookup") return false;
+  if (access.accessKind === "iterate" || access.accessKind === "serialize" || access.accessKind === "deserialize") return false;
+  if (access.accessKind === "persist_read" || access.accessKind === "persist_write" || access.accessKind === "append" || access.accessKind === "remove") return false;
+  const reason = access.reason ?? "";
+  return reason === "Return type." || reason.startsWith("Parameter ") || reason === "Local typed value.";
+}
+
+function groupAccessesForInspector(
+  accesses: ArchitectureGraph["dataStructureAccesses"],
+): Array<{ label: string; items: ArchitectureGraph["dataStructureAccesses"] }> {
+  const sections = new Map<string, ArchitectureGraph["dataStructureAccesses"]>();
+  for (const access of accesses) {
+    const label = accessGroupLabel(access.accessKind);
+    const items = sections.get(label) ?? [];
+    items.push(access);
+    sections.set(label, items);
+  }
+  return Array.from(sections.entries()).map(([label, items]) => ({
+    label,
+    items: items.sort((left, right) => {
+      const lifecycleDelta = humanizeDataLifecycle(left.lifecycle).localeCompare(humanizeDataLifecycle(right.lifecycle));
+      if (lifecycleDelta !== 0) return lifecycleDelta;
+      return `${left.actorFileId}:${left.actorName ?? ""}`.localeCompare(`${right.actorFileId}:${right.actorName ?? ""}`);
+    }),
+  }));
+}
+
+function accessGroupLabel(kind: string): string {
+  if (kind === "lookup" || kind === "index_lookup" || kind === "iterate") return "Lookup & iteration";
+  if (kind === "write" || kind === "append" || kind === "remove" || kind === "create") return "Writes & mutation";
+  if (kind === "serialize" || kind === "deserialize" || kind === "persist_read" || kind === "persist_write" || kind === "mirror") {
+    return "Wire & storage";
+  }
+  return "Other references";
+}
+
+function scoreReadNextFile(
+  fileId: string,
+  structure: ArchitectureGraph["dataStructures"][number],
+): number {
+  let score = 0;
+  if (fileId === structure.fileId) score -= 100;
+  if (fileId.startsWith("server/src/engine/")) score -= 30;
+  if (fileId.startsWith("server/src/network/")) score -= 20;
+  if (fileId.startsWith("server/src/db/")) score -= 18;
+  if (fileId.startsWith("client/src/types.ts")) score -= 16;
+  if (fileId.startsWith("client/src/")) score -= 8;
+  if (fileId.includes("/debug/")) score += 40;
+  return score;
+}
+
 function ComponentTabControls(
   {
+    activeViewId,
+    onSelectView,
     inspectorTab,
     onSelectTab,
     focusEnabled,
@@ -827,6 +3051,8 @@ function ComponentTabControls(
     searchQuery,
     onSearchChange,
   }: {
+    activeViewId: string | null;
+    onSelectView: (viewId: string | null) => void;
     inspectorTab: ComponentInspectorTab;
     onSelectTab: (tab: ComponentInspectorTab) => void;
     focusEnabled: boolean;
@@ -844,13 +3070,22 @@ function ComponentTabControls(
   const setHighlightedEvidenceId = useStore((s) => s.setHighlightedEvidenceId);
   if (!graph?.componentDiagram) return null;
 
+  const activeView = getActiveComponentView(graph.componentDiagram, activeViewId);
+  if (!activeView) return null;
+
+  const activeCards = graph.componentDiagram.cards.filter((card) => card.viewId === activeView.id);
+  const activeBoundaries = graph.componentDiagram.boundaries.filter((boundary) => boundary.viewId === activeView.id);
+  const activeContainers = graph.componentDiagram.containers.filter((container) => container.viewId === activeView.id);
   const evidenceLookup = new Map(graph.componentDiagram.evidence.map((item) => [item.id, item]));
-  const results = searchComponentDiagram(graph, searchQuery, evidenceLookup);
+  const results = searchComponentDiagram(graph, activeView.id, searchQuery, evidenceLookup);
   const selectedCard = selectedNodeId
-    ? graph.componentDiagram.cards.find((card) => card.id === selectedNodeId) ?? null
+    ? activeCards.find((card) => card.id === selectedNodeId) ?? null
     : null;
   const selectedBoundary = selectedNodeId
-    ? graph.componentDiagram.boundaries.find((boundary) => boundary.id === selectedNodeId) ?? null
+    ? activeBoundaries.find((boundary) => boundary.id === selectedNodeId) ?? null
+    : null;
+  const selectedContainer = selectedNodeId
+    ? activeContainers.find((container) => container.id === selectedNodeId) ?? null
     : null;
   const canUseDirectionFilter = Boolean(selectedCard);
   const isEdgeSelected = Boolean(selectedEdgeId);
@@ -863,10 +3098,59 @@ function ComponentTabControls(
         Component Explorer
       </div>
 
+      <div
+        style={{
+          marginBottom: 10,
+          padding: "10px 10px 12px",
+          border: "1px solid #273449",
+          borderRadius: 10,
+          background: "#0f172a",
+        }}
+      >
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#cbd5e1", marginBottom: 6 }}>
+          Container Scope
+        </div>
+        <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1.4, marginBottom: 8 }}>
+          C4 component diagrams are scoped to one application container at a time. Switch the active container here.
+        </div>
+        <div style={{ display: "grid", gap: 6 }}>
+          {graph.componentDiagram.views.map((view) => {
+            const active = activeView.id === view.id;
+            return (
+              <button
+                key={view.id}
+                type="button"
+                onClick={() => {
+                  onSelectView(view.id);
+                  selectNode(view.boundaryId);
+                  onSelectTab("overview");
+                }}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  gap: 3,
+                  width: "100%",
+                  padding: "8px 10px",
+                  textAlign: "left",
+                  background: active ? "#172033" : "#111827",
+                  border: `1px solid ${active ? "#3b82f6" : "#273449"}`,
+                  borderRadius: 8,
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ fontSize: 10, fontWeight: 700, color: active ? "#fff" : "#cbd5e1" }}>{view.name}</span>
+                <span style={{ fontSize: 9, color: "#64748b", lineHeight: 1.35 }}>{view.description}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <input
         value={searchQuery}
         onChange={(event) => onSearchChange(event.target.value)}
-        placeholder="Search components, routes, events, files..."
+        placeholder={`Search ${activeView.name} components, routes, events, files...`}
         style={{
           width: "100%",
           boxSizing: "border-box",
@@ -898,6 +3182,8 @@ function ComponentTabControls(
                 ? `Filtering around ${selectedCard.title}.`
                 : selectedBoundary
                   ? `Select a component card inside ${selectedBoundary.label} to use the directional filter.`
+                  : selectedContainer
+                    ? `Select a component card inside ${activeView.name} to use the directional filter.`
                   : isEdgeSelected
                     ? "Edge selection already isolates that connection. Select a component card to use the directional filter."
                     : "Select a component card to dim unrelated nodes and focus the diagram."}
@@ -1024,7 +3310,7 @@ function ComponentTabControls(
           How to read this chart
         </div>
         <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.45, marginBottom: 6 }}>
-          Boxes are major parts of the app. Arrows show how those parts talk to each other.
+          This is the C4 component diagram for <strong>{activeView.name}</strong>. Large surrounding boxes are repeated runtime containers; the inner boundary is the selected application container; the inner cards are its components.
         </div>
         <ConfidenceLegendRow
           label="Code"
@@ -1049,7 +3335,7 @@ function ComponentTabControls(
             Search Results
           </div>
           {results.length === 0 && (
-            <div style={{ fontSize: 10, color: "#64748b" }}>No component matches.</div>
+            <div style={{ fontSize: 10, color: "#64748b" }}>No matches in the active component diagram.</div>
           )}
           {results.slice(0, 8).map((result) => (
             <button
@@ -1088,50 +3374,58 @@ function ComponentInspector() {
   const graph = useStore((s) => s.graph);
   const selectedNodeId = useStore((s) => s.selectedNodeId);
   const selectedEdgeId = useStore((s) => s.selectedEdgeId);
+  const activeComponentViewId = useStore((s) => s.activeComponentViewId);
   const inspectorTab = useStore((s) => s.componentInspectorTab);
   const highlightedEvidenceId = useStore((s) => s.highlightedEvidenceId);
 
   if (!graph?.componentDiagram) return null;
-  if (!selectedNodeId && !selectedEdgeId) return <ComponentIntroPanel />;
+  const activeView = getActiveComponentView(graph.componentDiagram, activeComponentViewId);
+  if (!activeView) return null;
+  if (!selectedNodeId && !selectedEdgeId) return <ComponentIntroPanel viewName={activeView.name} />;
 
   if (selectedEdgeId) {
-    return <ComponentEdgeInspector edgeId={selectedEdgeId} highlightedEvidenceId={highlightedEvidenceId} />;
+    return <ComponentEdgeInspector viewId={activeView.id} edgeId={selectedEdgeId} highlightedEvidenceId={highlightedEvidenceId} />;
   }
 
-  const boundary = graph.componentDiagram.boundaries.find((item) => item.id === selectedNodeId);
+  const boundary = graph.componentDiagram.boundaries.find((item) => item.id === selectedNodeId && item.viewId === activeView.id);
   if (boundary) {
-    return <ComponentBoundaryInspector boundaryId={boundary.id} />;
+    return <ComponentBoundaryInspector viewId={activeView.id} boundaryId={boundary.id} />;
   }
 
-  const card = graph.componentDiagram.cards.find((item) => item.id === selectedNodeId);
-  if (!card) return <ComponentIntroPanel />;
+  const container = graph.componentDiagram.containers.find((item) => item.id === selectedNodeId && item.viewId === activeView.id);
+  if (container) {
+    return <ComponentContextContainerInspector viewId={activeView.id} containerId={container.id} />;
+  }
+
+  const card = graph.componentDiagram.cards.find((item) => item.id === selectedNodeId && item.viewId === activeView.id);
+  if (!card) return <ComponentIntroPanel viewName={activeView.name} />;
 
   switch (inspectorTab) {
     case "contract":
-      return <ComponentContractInspector cardId={card.id} />;
+      return <ComponentContractInspector viewId={activeView.id} cardId={card.id} />;
     case "internals":
-      return <ComponentInternalsInspector cardId={card.id} />;
+      return <ComponentInternalsInspector viewId={activeView.id} cardId={card.id} />;
     case "evidence":
-      return <ComponentEvidenceInspector cardId={card.id} highlightedEvidenceId={highlightedEvidenceId} />;
+      return <ComponentEvidenceInspector viewId={activeView.id} cardId={card.id} highlightedEvidenceId={highlightedEvidenceId} />;
     case "open_next":
-      return <ComponentOpenNextInspector cardId={card.id} />;
+      return <ComponentOpenNextInspector viewId={activeView.id} cardId={card.id} />;
     case "overview":
     default:
-      return <ComponentOverviewInspector cardId={card.id} />;
+      return <ComponentOverviewInspector viewId={activeView.id} cardId={card.id} />;
   }
 }
 
-function ComponentIntroPanel() {
-  const graph = useStore((s) => s.graph);
-  if (!graph?.componentDiagram) return null;
-
+function ComponentIntroPanel({ viewName }: { viewName: string }) {
   return (
     <div style={sectionStyle}>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#ccc", marginBottom: 10 }}>
-        Components Tab
+        {viewName} Components
       </div>
       <div style={tipStyle}>
-        The canvas is intentionally sparse. Use the sidebar buttons above for a quick summary, inputs and outputs, what is inside, why the view shows this, and which files to read next.
+        This tab shows one C4 component diagram at a time. Use the container scope switch above to move between application containers.
+      </div>
+      <div style={tipStyle}>
+        The inner boundary is the selected application container. The surrounding boxes are repeated runtime containers from the container view.
       </div>
       <div style={tipStyle}>
         Click a component card to switch the sidebar into a component-specific inspector.
@@ -1140,7 +3434,7 @@ function ComponentIntroPanel() {
         Small badges on the chart tell you whether a line came straight from code, is a short summary of several code facts, or is a best-effort guess.
       </div>
       <div style={tipStyle}>
-        Use the search box to find a route, message type, event, or file and jump directly to the owning component.
+        Use the search box to find a route, message type, event, or file inside the active component diagram.
       </div>
       <div style={tipStyle}>
         Use Diagram filter to show everything touching a selected component, only who feeds it, or only what it affects.
@@ -1182,13 +3476,22 @@ function ConfidenceLegendRow(
   );
 }
 
-function ComponentBoundaryInspector({ boundaryId }: { boundaryId: string }) {
+function ComponentBoundaryInspector(
+  {
+    viewId,
+    boundaryId,
+  }: {
+    viewId: string;
+    boundaryId: string;
+  },
+) {
   const graph = useStore((s) => s.graph);
   if (!graph?.componentDiagram) return null;
 
-  const boundary = graph.componentDiagram.boundaries.find((item) => item.id === boundaryId);
+  const boundary = graph.componentDiagram.boundaries.find((item) => item.id === boundaryId && item.viewId === viewId);
   if (!boundary) return null;
-  const cards = graph.componentDiagram.cards.filter((card) => card.boundaryId === boundary.id);
+  const cards = graph.componentDiagram.cards.filter((card) => card.boundaryId === boundary.id && card.viewId === viewId);
+  const containers = graph.componentDiagram.containers.filter((container) => container.viewId === viewId);
 
   return (
     <div style={sectionStyle}>
@@ -1207,22 +3510,86 @@ function ComponentBoundaryInspector({ boundaryId }: { boundaryId: string }) {
           </div>
         ))}
       </div>
+      {containers.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 6 }}>
+            Surrounding Containers
+          </div>
+          {containers.map((container) => (
+            <div key={container.id} style={{ fontSize: 11, color: "#e5e7eb", marginBottom: 4 }}>
+              {container.name}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function ComponentOverviewInspector({ cardId }: { cardId: string }) {
+function ComponentContextContainerInspector(
+  {
+    viewId,
+    containerId,
+  }: {
+    viewId: string;
+    containerId: string;
+  },
+) {
   const graph = useStore((s) => s.graph);
   if (!graph?.componentDiagram) return null;
-  const card = graph.componentDiagram.cards.find((item) => item.id === cardId);
+  const container = graph.componentDiagram.containers.find((item) => item.id === containerId && item.viewId === viewId);
+  if (!container) return null;
+
+  const connectedEdges = graph.componentDiagram.edges.filter(
+    (edge) => edge.viewId === viewId && (edge.source === container.id || edge.target === container.id),
+  );
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: container.color }}>{container.name}</div>
+      <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>{container.technology}</div>
+      <div style={{ fontSize: 11, color: "#cbd5e1", marginTop: 8, lineHeight: 1.55 }}>
+        {container.description}
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", marginBottom: 4 }}>
+          Connections
+        </div>
+        {connectedEdges.map((edge) => {
+          const otherId = edge.source === container.id ? edge.target : edge.source;
+          return (
+            <div key={edge.id} style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 10, color: "#e5e7eb" }}>{getDiagramEntityLabel(graph, viewId, otherId)}</div>
+              <div style={{ fontSize: 9, color: "#64748b", marginTop: 1 }}>
+                {humanizeRelationshipKind(edge.relationshipKind)}
+                {edge.technology ? ` · ${edge.technology}` : ""}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ComponentOverviewInspector(
+  {
+    viewId,
+    cardId,
+  }: {
+    viewId: string;
+    cardId: string;
+  },
+) {
+  const graph = useStore((s) => s.graph);
+  if (!graph?.componentDiagram) return null;
+  const card = graph.componentDiagram.cards.find((item) => item.id === cardId && item.viewId === viewId);
   if (!card) return null;
 
-  const connectedEdges = graph.componentDiagram.edges.filter((edge) => edge.source === card.id || edge.target === card.id);
+  const connectedEdges = graph.componentDiagram.edges.filter((edge) => edge.viewId === viewId && (edge.source === card.id || edge.target === card.id));
   const neighbors = connectedEdges.map((edge) => {
     const neighborId = edge.source === card.id ? edge.target : edge.source;
-    const neighborCard = graph.componentDiagram?.cards.find((item) => item.id === neighborId);
-    const neighborBoundary = graph.componentDiagram?.boundaries.find((item) => item.id === neighborId);
-    return neighborCard?.title ?? neighborBoundary?.label ?? neighborId;
+    return getDiagramEntityLabel(graph, viewId, neighborId);
   });
 
   return (
@@ -1286,14 +3653,22 @@ function ComponentOverviewInspector({ cardId }: { cardId: string }) {
   );
 }
 
-function ComponentContractInspector({ cardId }: { cardId: string }) {
+function ComponentContractInspector(
+  {
+    viewId,
+    cardId,
+  }: {
+    viewId: string;
+    cardId: string;
+  },
+) {
   const graph = useStore((s) => s.graph);
   if (!graph?.componentDiagram) return null;
-  const card = graph.componentDiagram.cards.find((item) => item.id === cardId);
+  const card = graph.componentDiagram.cards.find((item) => item.id === cardId && item.viewId === viewId);
   if (!card) return null;
 
-  const inboundEdges = graph.componentDiagram.edges.filter((edge) => edge.target === card.id);
-  const outboundEdges = graph.componentDiagram.edges.filter((edge) => edge.source === card.id);
+  const inboundEdges = graph.componentDiagram.edges.filter((edge) => edge.viewId === viewId && edge.target === card.id);
+  const outboundEdges = graph.componentDiagram.edges.filter((edge) => edge.viewId === viewId && edge.source === card.id);
 
   return (
     <div style={sectionStyle}>
@@ -1312,16 +3687,24 @@ function ComponentContractInspector({ cardId }: { cardId: string }) {
         </div>
       ))}
 
-      <EdgeList title="Who Feeds This Component" edges={inboundEdges} currentCardId={card.id} />
-      <EdgeList title="What This Component Affects" edges={outboundEdges} currentCardId={card.id} />
+      <EdgeList viewId={viewId} title="Who Feeds This Component" edges={inboundEdges} currentCardId={card.id} />
+      <EdgeList viewId={viewId} title="What This Component Affects" edges={outboundEdges} currentCardId={card.id} />
     </div>
   );
 }
 
-function ComponentInternalsInspector({ cardId }: { cardId: string }) {
+function ComponentInternalsInspector(
+  {
+    viewId,
+    cardId,
+  }: {
+    viewId: string;
+    cardId: string;
+  },
+) {
   const graph = useStore((s) => s.graph);
   if (!graph?.componentDiagram) return null;
-  const card = graph.componentDiagram.cards.find((item) => item.id === cardId);
+  const card = graph.componentDiagram.cards.find((item) => item.id === cardId && item.viewId === viewId);
   if (!card) return null;
 
   return (
@@ -1368,9 +3751,11 @@ function ComponentInternalsInspector({ cardId }: { cardId: string }) {
 
 function ComponentEvidenceInspector(
   {
+    viewId,
     cardId,
     highlightedEvidenceId,
   }: {
+    viewId: string;
     cardId: string;
     highlightedEvidenceId: string | null;
   },
@@ -1379,7 +3764,7 @@ function ComponentEvidenceInspector(
   const setHighlightedEvidenceId = useStore((s) => s.setHighlightedEvidenceId);
   if (!graph?.componentDiagram) return null;
 
-  const card = graph.componentDiagram.cards.find((item) => item.id === cardId);
+  const card = graph.componentDiagram.cards.find((item) => item.id === cardId && item.viewId === viewId);
   if (!card) return null;
   const evidenceLookup = new Map(graph.componentDiagram.evidence.map((item) => [item.id, item]));
 
@@ -1392,6 +3777,7 @@ function ComponentEvidenceInspector(
     }
   }
   for (const edge of graph.componentDiagram.edges) {
+    if (edge.viewId !== viewId) continue;
     if (edge.source === card.id || edge.target === card.id) {
       for (const evidenceId of edge.evidenceIds) {
         cardEvidenceIds.add(evidenceId);
@@ -1454,10 +3840,18 @@ function ComponentEvidenceInspector(
   );
 }
 
-function ComponentOpenNextInspector({ cardId }: { cardId: string }) {
+function ComponentOpenNextInspector(
+  {
+    viewId,
+    cardId,
+  }: {
+    viewId: string;
+    cardId: string;
+  },
+) {
   const graph = useStore((s) => s.graph);
   if (!graph?.componentDiagram) return null;
-  const card = graph.componentDiagram.cards.find((item) => item.id === cardId);
+  const card = graph.componentDiagram.cards.find((item) => item.id === cardId && item.viewId === viewId);
   if (!card) return null;
 
   return (
@@ -1490,9 +3884,11 @@ function ComponentOpenNextInspector({ cardId }: { cardId: string }) {
 
 function ComponentEdgeInspector(
   {
+    viewId,
     edgeId,
     highlightedEvidenceId,
   }: {
+    viewId: string;
     edgeId: string;
     highlightedEvidenceId: string | null;
   },
@@ -1500,18 +3896,21 @@ function ComponentEdgeInspector(
   const graph = useStore((s) => s.graph);
   if (!graph?.componentDiagram) return null;
 
-  const edge = graph.componentDiagram.edges.find((item) => item.id === edgeId);
+  const edge = graph.componentDiagram.edges.find((item) => item.id === edgeId && item.viewId === viewId);
   if (!edge) return null;
   const evidenceLookup = new Map(graph.componentDiagram.evidence.map((item) => [item.id, item]));
-  const sourceLabel = getDiagramEntityLabel(graph, edge.source);
-  const targetLabel = getDiagramEntityLabel(graph, edge.target);
+  const sourceLabel = getDiagramEntityLabel(graph, viewId, edge.source);
+  const targetLabel = getDiagramEntityLabel(graph, viewId, edge.target);
 
   return (
     <div style={sectionStyle}>
       <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{sourceLabel} → {targetLabel}</div>
-      <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>{humanizeRelationshipKind(edge.relationshipKind)}</div>
+      <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
+        {humanizeRelationshipKind(edge.relationshipKind)}
+        {edge.technology ? ` · ${edge.technology}` : ""}
+      </div>
       <div style={{ fontSize: 11, color: "#cbd5e1", marginTop: 8, lineHeight: 1.5 }}>
-        {edge.label.split("\n").map((line) => (
+        {`${edge.label}${edge.technology ? `\n${edge.technology}` : ""}`.split("\n").map((line) => (
           <div key={line}>{line}</div>
         ))}
       </div>
@@ -1551,10 +3950,12 @@ function ComponentEdgeInspector(
 
 function EdgeList(
   {
+    viewId,
     title,
     edges,
     currentCardId,
   }: {
+    viewId: string;
     title: string;
     edges: { id: string; source: string; target: string; label: string; relationshipKind: string }[];
     currentCardId: string;
@@ -1572,7 +3973,7 @@ function EdgeList(
         const otherId = edge.source === currentCardId ? edge.target : edge.source;
         return (
           <div key={edge.id} style={{ marginBottom: 6 }}>
-            <div style={{ fontSize: 10, color: "#e5e7eb" }}>{getDiagramEntityLabel(graph, otherId)}</div>
+            <div style={{ fontSize: 10, color: "#e5e7eb" }}>{getDiagramEntityLabel(graph, viewId, otherId)}</div>
             <div style={{ fontSize: 9, color: "#64748b", marginTop: 1 }}>
               {humanizeRelationshipKind(edge.relationshipKind)} · {edge.label.replaceAll("\n", " / ")}
             </div>
@@ -1585,12 +3986,15 @@ function EdgeList(
 
 function getDiagramEntityLabel(
   graph: ArchitectureGraph,
+  viewId: string,
   id: string,
 ): string {
-  const card = graph.componentDiagram?.cards.find((item) => item.id === id);
+  const card = graph.componentDiagram?.cards.find((item) => item.id === id && item.viewId === viewId);
   if (card) return card.title;
-  const boundary = graph.componentDiagram?.boundaries.find((item) => item.id === id);
-  return boundary?.label ?? id;
+  const boundary = graph.componentDiagram?.boundaries.find((item) => item.id === id && item.viewId === viewId);
+  if (boundary) return boundary.label;
+  const container = graph.componentDiagram?.containers.find((item) => item.id === id && item.viewId === viewId);
+  return container?.name ?? id;
 }
 
 function confidenceTextColor(confidence: "exact" | "derived" | "heuristic"): string {
@@ -1641,6 +4045,7 @@ function humanizeRelationshipKind(kind: string): string {
 
 function searchComponentDiagram(
   graph: ArchitectureGraph,
+  viewId: string,
   query: string,
   evidenceLookup: Map<string, { detail: string }>,
 ): { cardId: string; cardTitle: string; label: string; evidenceId?: string }[] {
@@ -1648,7 +4053,7 @@ function searchComponentDiagram(
   if (needle.length === 0) return [];
 
   const results: { cardId: string; cardTitle: string; label: string; evidenceId?: string }[] = [];
-  for (const card of graph.componentDiagram?.cards ?? []) {
+  for (const card of graph.componentDiagram?.cards.filter((item) => item.viewId === viewId) ?? []) {
     const maybePush = (label: string, evidenceId?: string) => {
       if (!label.toLowerCase().includes(needle)) return;
       results.push({ cardId: card.id, cardTitle: card.title, label, evidenceId });
@@ -1657,6 +4062,7 @@ function searchComponentDiagram(
     maybePush(card.title);
     if (card.subtitle) maybePush(card.subtitle);
     if (card.summary) maybePush(card.summary);
+    if (card.fileId) maybePush(card.fileId);
     for (const section of card.sections) {
       maybePush(section.label);
       for (const line of section.lines) {
@@ -1676,6 +4082,18 @@ function searchComponentDiagram(
   }
 
   return results;
+}
+
+function getActiveComponentView(
+  diagram: NonNullable<ArchitectureGraph["componentDiagram"]>,
+  activeViewId: string | null,
+) {
+  return (
+    diagram.views.find((item) => item.id === activeViewId) ??
+    diagram.views.find((item) => item.id === diagram.defaultViewId) ??
+    diagram.views[0] ??
+    null
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2031,7 +4449,7 @@ function EdgeDetail({ edgeId }: { edgeId: string }) {
 // ---------------------------------------------------------------------------
 
 const sidebarStyle: React.CSSProperties = {
-  width: 280,
+  width: 320,
   background: "#0d0d1a",
   borderLeft: "1px solid #1e1e35",
   padding: "16px 14px",

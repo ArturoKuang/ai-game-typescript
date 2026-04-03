@@ -4,6 +4,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  type EdgeTypes,
   type NodeTypes,
   type OnNodeClick,
   type OnEdgeClick,
@@ -15,7 +16,11 @@ import "@xyflow/react/dist/style.css";
 import { useStore } from "./store";
 import { buildFlowGraph } from "./graphLoader";
 import { BoundaryNode } from "./nodes/BoundaryNode";
+import { ContainerCardNode } from "./nodes/ContainerCardNode";
+import { ContainerRelationshipEdge } from "./edges/ContainerRelationshipEdge";
+import { DataModelRelationEdge } from "./edges/DataModelRelationEdge";
 import { ComponentNode } from "./nodes/ComponentNode";
+import { ComponentContextContainerNode } from "./nodes/ComponentContextContainerNode";
 import { DetailedComponentCardNode } from "./nodes/DetailedComponentCardNode";
 import { FileNode } from "./nodes/FileNode";
 import { ClassNode } from "./nodes/ClassNode";
@@ -23,12 +28,15 @@ import { SwimLaneNode } from "./nodes/SwimLaneNode";
 import { FlowStepNode } from "./nodes/FlowStepNode";
 import { StateMachineStateNode } from "./nodes/StateMachineStateNode";
 import { LegendNode } from "./nodes/LegendNode";
+import { DataStructureNode } from "./nodes/DataStructureNode";
 import { Sidebar } from "./Sidebar";
 import type { ArchitectureGraph } from "./types";
 
 const nodeTypes: NodeTypes = {
   boundary: BoundaryNode,
+  containerCard: ContainerCardNode,
   component: ComponentNode,
+  componentContextContainer: ComponentContextContainerNode,
   detailedComponentCard: DetailedComponentCardNode,
   file: FileNode,
   classNode: ClassNode,
@@ -36,6 +44,12 @@ const nodeTypes: NodeTypes = {
   flowStep: FlowStepNode,
   stateMachineState: StateMachineStateNode,
   legend: LegendNode,
+  dataStructure: DataStructureNode,
+};
+
+const edgeTypes: EdgeTypes = {
+  containerRelationship: ContainerRelationshipEdge,
+  dataModelRelation: DataModelRelationEdge,
 };
 
 export function App() {
@@ -50,6 +64,12 @@ export function App() {
   const selectedFlow = useStore((s) => s.selectedFlow);
   const selectedStateMachine = useStore((s) => s.selectedStateMachine);
   const activeLegendKeys = useStore((s) => s.activeLegendKeys);
+  const containerFocusEnabled = useStore((s) => s.containerFocusEnabled);
+  const dataModelFocusEnabled = useStore((s) => s.dataModelFocusEnabled);
+  const dataModelShowRuntimeStores = useStore((s) => s.dataModelShowRuntimeStores);
+  const dataModelShowDebugStructures = useStore((s) => s.dataModelShowDebugStructures);
+  const dataModelExpandMirrors = useStore((s) => s.dataModelExpandMirrors);
+  const activeComponentViewId = useStore((s) => s.activeComponentViewId);
   const componentFocusEnabled = useStore((s) => s.componentFocusEnabled);
   const componentFocusDirection = useStore((s) => s.componentFocusDirection);
   const selectedFlowGroup = useStore((s) => s.selectedFlowGroup);
@@ -58,6 +78,8 @@ export function App() {
   const selectEdge = useStore((s) => s.selectEdge);
   const setHoveredNode = useStore((s) => s.setHoveredNode);
   const setHoveredEdge = useStore((s) => s.setHoveredEdge);
+  const setContainerInspectorTab = useStore((s) => s.setContainerInspectorTab);
+  const setDataModelInspectorTab = useStore((s) => s.setDataModelInspectorTab);
   const setComponentInspectorTab = useStore((s) => s.setComponentInspectorTab);
 
   useEffect(() => {
@@ -78,6 +100,12 @@ export function App() {
       hoveredEdgeId,
       selectedNodeId,
       selectedEdgeId,
+      containerFocusEnabled,
+      dataModelFocusEnabled,
+      dataModelShowRuntimeStores,
+      dataModelShowDebugStructures,
+      dataModelExpandMirrors,
+      activeComponentViewId,
       componentFocusEnabled,
       componentFocusDirection,
       selectedFlow,
@@ -94,6 +122,12 @@ export function App() {
     hoveredEdgeId,
     selectedNodeId,
     selectedEdgeId,
+    containerFocusEnabled,
+    dataModelFocusEnabled,
+    dataModelShowRuntimeStores,
+    dataModelShowDebugStructures,
+    dataModelExpandMirrors,
+    activeComponentViewId,
     componentFocusEnabled,
     componentFocusDirection,
     selectedFlow,
@@ -107,6 +141,12 @@ export function App() {
     if (zoomLevel === "flow" && selectedFlow) {
       return { padding: 0.12, minZoom: 0.5 };
     }
+    if (zoomLevel === "container" && graph?.containerDiagram) {
+      return { padding: 0.08, minZoom: 0.25 };
+    }
+    if (zoomLevel === "dataModel") {
+      return { padding: 0.08, minZoom: 0.22 };
+    }
     if (zoomLevel === "component" && graph?.componentDiagram) {
       return { padding: 0.1, minZoom: 0.3 };
     }
@@ -116,18 +156,32 @@ export function App() {
   const onNodeClick: OnNodeClick = useCallback(
     (_e, node) => {
       selectNode(node.id);
-      if (node.type === "detailedComponentCard" || node.type === "boundary") {
+      if (node.type === "containerCard") {
+        setContainerInspectorTab("overview");
+      }
+      if (node.type === "dataStructure") {
+        setDataModelInspectorTab("overview");
+      }
+      if (node.type === "detailedComponentCard" || node.type === "boundary" || node.type === "componentContextContainer") {
         setComponentInspectorTab("overview");
       }
     },
-    [selectNode, setComponentInspectorTab],
+    [selectNode, setComponentInspectorTab, setContainerInspectorTab, setDataModelInspectorTab],
   );
   const onEdgeClick: OnEdgeClick = useCallback(
     (_e, edge) => {
       selectEdge(edge.id);
+      if (zoomLevel === "container") {
+        setContainerInspectorTab("relationships");
+        return;
+      }
+      if (zoomLevel === "dataModel") {
+        setDataModelInspectorTab("access");
+        return;
+      }
       setComponentInspectorTab("contract");
     },
-    [selectEdge, setComponentInspectorTab],
+    [selectEdge, setComponentInspectorTab, setContainerInspectorTab, setDataModelInspectorTab, zoomLevel],
   );
   const onPaneClick = useCallback(() => { selectNode(null); selectEdge(null); }, [selectNode, selectEdge]);
 
@@ -173,6 +227,7 @@ export function App() {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodeClick={onNodeClick}
           onEdgeClick={onEdgeClick}
           onPaneClick={onPaneClick}

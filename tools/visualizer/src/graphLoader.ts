@@ -14,6 +14,14 @@ import type { ArchitectureGraph, ZoomLevel, BoundaryEdge } from "./types";
 import type { ComponentFocusDirection, CouplingFilter } from "./store";
 import { computeLayout, computeSplitLayout } from "./layout";
 import { buildFlowLevel } from "./flowLayout";
+import {
+  compareStructureOrder,
+  DATA_MODEL_CATEGORY_META,
+  DATA_MODEL_CATEGORY_ORDER,
+  getFamilyLeaderId,
+  getVisibleDataStructures,
+  type DataModelVisibilityOptions,
+} from "./dataModel";
 
 /** Deuteranopia/protanopia safe: blue (dashed), gold (solid), magenta (dotted) */
 const COUPLING = {
@@ -30,6 +38,22 @@ const COMPONENT_EDGE_STYLE = {
   direct_call: { stroke: "#e5e7eb", dash: undefined, width: 2 },
   persistence_io: { stroke: "#FFB000", dash: "2 5", width: 2.4 },
   mixed: { stroke: "#cbd5e1", dash: "12 5 3 5", width: 2.4 },
+} as const;
+
+const CONTAINER_EDGE_STYLE = {
+  stroke: "#cbd5e1",
+  dash: undefined,
+  width: 2.3,
+};
+
+const DATA_MODEL_RELATION_STYLE = {
+  contains: { stroke: "#94a3b8", dash: undefined, width: 2 },
+  mirrors: { stroke: "#f59e0b", dash: "7 4", width: 2.2 },
+  serialized_as: { stroke: "#22c55e", dash: "8 4", width: 2.2 },
+  persisted_as: { stroke: "#f59e0b", dash: "2 5", width: 2.4 },
+  loaded_from: { stroke: "#38bdf8", dash: "10 5", width: 2.2 },
+  stored_in: { stroke: "#a855f7", dash: "6 4", width: 2.2 },
+  indexed_by: { stroke: "#ec4899", dash: "2 4", width: 2.4 },
 } as const;
 
 const DIM_OPACITY = 0.12;
@@ -351,6 +375,63 @@ function applyComponentFocus(
   return { nodes: focusedNodes, edges: focusedEdges };
 }
 
+function applyContainerFocus(
+  nodes: Node[],
+  edges: Edge[],
+  selectedNodeId: string | null,
+  selectedEdgeId: string | null,
+  enabled: boolean,
+): { nodes: Node[]; edges: Edge[] } {
+  if (!enabled) return { nodes, edges };
+
+  const highlightedNodeIds = new Set<string>();
+  const highlightedEdgeIds = new Set<string>();
+
+  if (selectedEdgeId) {
+    const edge = edges.find((candidate) => candidate.id === selectedEdgeId);
+    if (!edge) return { nodes, edges };
+    highlightedNodeIds.add(edge.source);
+    highlightedNodeIds.add(edge.target);
+    highlightedEdgeIds.add(edge.id);
+  } else if (selectedNodeId) {
+    highlightedNodeIds.add(selectedNodeId);
+    for (const edge of edges) {
+      if (edge.source !== selectedNodeId && edge.target !== selectedNodeId) continue;
+      highlightedNodeIds.add(edge.source);
+      highlightedNodeIds.add(edge.target);
+      highlightedEdgeIds.add(edge.id);
+    }
+  } else {
+    return { nodes, edges };
+  }
+
+  return {
+    nodes: nodes.map((node) => {
+      if (node.type === "boundary") return node;
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          opacity: highlightedNodeIds.has(node.id) ? HIGHLIGHT_OPACITY : 0.08,
+          transition: "opacity 0.2s ease",
+        },
+      };
+    }),
+    edges: edges.map((edge) => ({
+      ...edge,
+      style: {
+        ...edge.style,
+        opacity: highlightedEdgeIds.has(edge.id) ? HIGHLIGHT_OPACITY : 0.08,
+        transition: "opacity 0.2s ease",
+      },
+      labelStyle: {
+        ...(edge.labelStyle as Record<string, unknown> ?? {}),
+        opacity: highlightedEdgeIds.has(edge.id) ? 1 : 0.08,
+      },
+    })),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Bidirectional edge merging
 // ---------------------------------------------------------------------------
@@ -398,6 +479,12 @@ export function buildFlowGraph(
   hoveredEdgeId: string | null,
   selectedNodeId: string | null,
   selectedEdgeId: string | null,
+  containerFocusEnabled: boolean,
+  dataModelFocusEnabled: boolean,
+  dataModelShowRuntimeStores: boolean,
+  dataModelShowDebugStructures: boolean,
+  dataModelExpandMirrors: boolean,
+  activeComponentViewId: string | null,
   componentFocusEnabled: boolean,
   componentFocusDirection: ComponentFocusDirection,
   selectedFlow?: string | null,
@@ -408,9 +495,25 @@ export function buildFlowGraph(
   let result: { nodes: Node[]; edges: Edge[] };
 
   switch (zoomLevel) {
+    case "container":
+      result = graph.containerDiagram ? buildContainerLevel(graph) : buildComponentLevel(graph, expandedComponents, visibleCouplingTypes);
+      break;
+    case "dataModel":
+      result = buildDataModelLevel(
+        graph,
+        {
+          showRuntimeStores: dataModelShowRuntimeStores,
+          showDebugStructures: dataModelShowDebugStructures,
+          expandMirrors: dataModelExpandMirrors,
+        },
+        selectedNodeId,
+        selectedEdgeId,
+        hoveredEdgeId,
+      );
+      break;
     case "component":
       result = graph.componentDiagram
-        ? buildDetailedComponentLevel(graph)
+        ? buildDetailedComponentLevel(graph, activeComponentViewId)
         : buildComponentLevel(graph, expandedComponents, visibleCouplingTypes);
       break;
     case "file":
@@ -429,6 +532,26 @@ export function buildFlowGraph(
     return applyLegendHighlight(result.nodes, result.edges, activeLegendKeys);
   }
 
+  if (zoomLevel === "container" && graph.containerDiagram) {
+    result = applyContainerFocus(
+      result.nodes,
+      result.edges,
+      selectedNodeId,
+      selectedEdgeId,
+      containerFocusEnabled,
+    );
+  }
+
+  if (zoomLevel === "dataModel") {
+    result = applyContainerFocus(
+      result.nodes,
+      result.edges,
+      selectedNodeId,
+      selectedEdgeId,
+      dataModelFocusEnabled,
+    );
+  }
+
   if (zoomLevel === "component" && graph.componentDiagram) {
     result = applyComponentFocus(
       result.nodes,
@@ -444,43 +567,474 @@ export function buildFlowGraph(
   return applyHighlight(result.nodes, result.edges, ctx);
 }
 
+function buildContainerLevel(
+  graph: ArchitectureGraph,
+): { nodes: Node[]; edges: Edge[] } {
+  const diagram = graph.containerDiagram;
+  if (!diagram) return { nodes: [], edges: [] };
+
+  const nodes: Node[] = [
+    {
+      id: diagram.system.id,
+      type: "boundary",
+      position: diagram.system.position,
+      data: {
+        label: diagram.system.label,
+        technology: "Software system boundary",
+        description: diagram.system.description,
+        borderColor: "#8b5cf6",
+        componentCount: diagram.containers.length,
+      },
+      width: diagram.system.size.width,
+      height: diagram.system.size.height,
+      measured: diagram.system.size,
+      style: {
+        width: diagram.system.size.width,
+        height: diagram.system.size.height,
+        zIndex: -1,
+      },
+      selectable: false,
+      draggable: false,
+    },
+  ];
+
+  const edges: Edge[] = [];
+
+  for (const container of diagram.containers) {
+    nodes.push({
+      id: container.id,
+      type: "containerCard",
+      parentId: diagram.system.id,
+      extent: "parent",
+      position: container.position,
+      data: {
+        containerId: container.id,
+        name: container.name,
+        technology: container.technology,
+        description: container.description,
+        responsibilities: container.responsibilities,
+        summary: container.summary,
+        kind: container.kind,
+        color: container.color,
+        codePaths: container.codePaths,
+        badges: container.badges,
+      },
+      width: container.size.width,
+      height: container.size.height,
+      measured: container.size,
+      style: {
+        width: container.size.width,
+        height: container.size.height,
+      },
+      draggable: false,
+    });
+  }
+
+  for (const relationship of diagram.relationships) {
+    edges.push({
+      id: relationship.id,
+      source: relationship.source,
+      target: relationship.target,
+      type: "containerRelationship",
+      style: {
+        stroke: CONTAINER_EDGE_STYLE.stroke,
+        strokeWidth: CONTAINER_EDGE_STYLE.width,
+        strokeDasharray: relationship.optional ? "6 5" : CONTAINER_EDGE_STYLE.dash,
+        opacity: NORMAL_OPACITY,
+      },
+      data: {
+        containerRelationship: true,
+        description: relationship.description,
+        technology: relationship.technology,
+        optional: relationship.optional,
+        synchronous: relationship.synchronous,
+      },
+      markerEnd: { type: "arrowclosed" as MarkerType, color: CONTAINER_EDGE_STYLE.stroke, width: 16, height: 12 },
+    });
+  }
+
+  return { nodes, edges };
+}
+
+function buildDataModelLevel(
+  graph: ArchitectureGraph,
+  visibility: DataModelVisibilityOptions,
+  selectedNodeId: string | null,
+  selectedEdgeId: string | null,
+  hoveredEdgeId: string | null,
+): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const structures = getVisibleDataStructures(graph, visibility);
+  const visibleStructureIds = new Set(structures.map((structure) => structure.id));
+  const familyLeaderIdByStructure = new Map(
+    graph.dataStructures.map((structure) => [
+      structure.id,
+      visibility.expandMirrors ? structure.id : getFamilyLeaderId(graph, structure) ?? structure.id,
+    ]),
+  );
+  const accessCountByStructure = new Map<string, number>();
+  for (const access of graph.dataStructureAccesses ?? []) {
+    const displayStructureId = familyLeaderIdByStructure.get(access.structureId) ?? access.structureId;
+    if (!visibleStructureIds.has(displayStructureId)) continue;
+    accessCountByStructure.set(displayStructureId, (accessCountByStructure.get(displayStructureId) ?? 0) + 1);
+  }
+
+  const grouped = DATA_MODEL_CATEGORY_ORDER.map((category) => ({
+    category,
+    items: structures
+      .filter((structure) => structure.category === category)
+      .sort(compareStructureOrder),
+  }));
+
+  let x = 0;
+  for (const group of grouped) {
+    if (group.items.length === 0) continue;
+
+    const boundaryId = `data-boundary-${group.category}`;
+    const columnCount = computeDataModelColumnCount(group.items.length);
+    const cardWidth = 250;
+    const horizontalGap = 24;
+    const verticalGap = 22;
+    const boundaryPaddingX = 28;
+    const boundaryPaddingTop = 92;
+    const boundaryPaddingBottom = 26;
+    const boundaryWidth = boundaryPaddingX * 2 + columnCount * cardWidth + (columnCount - 1) * horizontalGap;
+    const cardHeights = group.items.map((structure) => estimateDataModelNodeHeight(structure));
+    const rowHeights: number[] = [];
+    for (let index = 0; index < cardHeights.length; index++) {
+      const row = Math.floor(index / columnCount);
+      rowHeights[row] = Math.max(rowHeights[row] ?? 0, cardHeights[index]);
+    }
+    const rowTops: number[] = [];
+    let yCursor = boundaryPaddingTop;
+    for (const rowHeight of rowHeights) {
+      rowTops.push(yCursor);
+      yCursor += rowHeight + verticalGap;
+    }
+    const boundaryHeight = Math.max(
+      236,
+      yCursor - verticalGap + boundaryPaddingBottom,
+    );
+
+    nodes.push({
+      id: boundaryId,
+      type: "boundary",
+      position: { x, y: 0 },
+      data: {
+        label: DATA_MODEL_CATEGORY_META[group.category].label,
+        technology: "Data Category",
+        description: DATA_MODEL_CATEGORY_META[group.category].description,
+        borderColor: DATA_MODEL_CATEGORY_META[group.category].color,
+        componentCount: group.items.length,
+      },
+      width: boundaryWidth,
+      height: boundaryHeight,
+      measured: { width: boundaryWidth, height: boundaryHeight },
+      style: {
+        width: boundaryWidth,
+        height: boundaryHeight,
+        zIndex: -1,
+      },
+      selectable: false,
+      draggable: false,
+    });
+
+    for (let index = 0; index < group.items.length; index++) {
+      const structure = group.items[index];
+      const height = cardHeights[index];
+      const row = Math.floor(index / columnCount);
+      const column = index % columnCount;
+      nodes.push({
+        id: structure.id,
+        type: "dataStructure",
+        parentId: boundaryId,
+        extent: "parent",
+        position: {
+          x: boundaryPaddingX + column * (cardWidth + horizontalGap),
+          y: rowTops[row],
+        },
+        data: {
+          label: structure.name,
+          categoryLabel: DATA_MODEL_CATEGORY_META[group.category].label,
+          conceptLabel: structure.conceptGroup,
+          kindLabel: humanizeDataStructureKind(structure.kind),
+          accentColor: DATA_MODEL_CATEGORY_META[group.category].color,
+          summary: compactDataModelSummary(structure.summary ?? structure.purpose),
+          previewLines: buildDataModelPreviewLines(structure),
+          badges: structure.badges,
+          sourceFile: structure.fileId,
+          statItems: buildDataModelStatItems(structure, accessCountByStructure.get(structure.id) ?? 0),
+        },
+        width: cardWidth,
+        height,
+        measured: { width: cardWidth, height },
+        style: {
+          width: cardWidth,
+          height,
+        },
+        draggable: false,
+      });
+    }
+
+    x += boundaryWidth + 44;
+  }
+
+  const collapsedRelations = new Map<string, ArchitectureGraph["dataStructureRelations"][number]>();
+  for (const relation of graph.dataStructureRelations ?? []) {
+    if (relation.kind === "mirrors" && !visibility.expandMirrors) continue;
+    const collapsedSourceId = familyLeaderIdByStructure.get(relation.sourceId) ?? relation.sourceId;
+    const collapsedTargetId = familyLeaderIdByStructure.get(relation.targetId) ?? relation.targetId;
+    if (collapsedSourceId === collapsedTargetId) continue;
+    if (!visibleStructureIds.has(collapsedSourceId) || !visibleStructureIds.has(collapsedTargetId)) continue;
+    const key = `${relation.kind}:${collapsedSourceId}:${collapsedTargetId}`;
+    const current = collapsedRelations.get(key);
+    if (!current || preferredDataModelRelation(relation) > preferredDataModelRelation(current)) {
+      collapsedRelations.set(key, {
+        ...relation,
+        sourceId: collapsedSourceId,
+        targetId: collapsedTargetId,
+      });
+    }
+  }
+
+  for (const relation of collapsedRelations.values()) {
+    const style = DATA_MODEL_RELATION_STYLE[relation.kind];
+    const touchesSelection = selectedNodeId === relation.sourceId || selectedNodeId === relation.targetId;
+    const showLabel = relation.id === selectedEdgeId || relation.id === hoveredEdgeId || touchesSelection;
+    edges.push({
+      id: relation.id,
+      source: relation.sourceId,
+      target: relation.targetId,
+      type: "dataModelRelation",
+      style: {
+        stroke: style.stroke,
+        strokeWidth: style.width,
+        strokeDasharray: style.dash,
+        opacity: relation.kind === "contains" ? 0.28 : 0.7,
+      },
+      markerEnd: { type: "arrowclosed" as MarkerType, color: style.stroke, width: 16, height: 12 },
+      data: {
+        dataModelRelation: true,
+        relationKind: relation.kind,
+        relationLabel: relation.label,
+        reason: relation.reason,
+        showLabel,
+        stroke: style.stroke,
+      },
+      interactionWidth: 16,
+    });
+  }
+
+  return { nodes, edges };
+}
+
+function computeDataModelColumnCount(itemCount: number): number {
+  if (itemCount >= 30) return 4;
+  if (itemCount >= 12) return 3;
+  if (itemCount >= 6) return 2;
+  return 1;
+}
+
+function compactDataModelSummary(summary?: string): string | undefined {
+  if (!summary) return undefined;
+  return summary.length > 110 ? `${summary.slice(0, 107).trimEnd()}...` : summary;
+}
+
+function buildDataModelStatItems(
+  structure: ArchitectureGraph["dataStructures"][number],
+  accessCount: number,
+): string[] {
+  const items = [`${structure.fields.length} field${structure.fields.length === 1 ? "" : "s"}`];
+  if (structure.variants.length > 0) {
+    items.push(`${structure.variants.length} variant${structure.variants.length === 1 ? "" : "s"}`);
+  }
+  if (accessCount > 0) {
+    items.push(`${accessCount} access${accessCount === 1 ? "" : "es"}`);
+  }
+  if (structure.mirrorIds.length > 0 && structure.canonical) {
+    items.push(`${structure.mirrorIds.length + 1} defs`);
+  }
+  return items.slice(0, 3);
+}
+
+function humanizeDataStructureKind(kind: string): string {
+  switch (kind) {
+    case "type_alias":
+      return "Type Alias";
+    default:
+      return kind.replaceAll("_", " ").replace(/\b\w/g, (value) => value.toUpperCase());
+  }
+}
+
+function buildDataModelPreviewLines(
+  structure: ArchitectureGraph["dataStructures"][number],
+): string[] {
+  if (structure.fields.length > 0) {
+    return [...structure.fields]
+      .sort((left, right) => scorePreviewField(right) - scorePreviewField(left))
+      .slice(0, 3)
+      .map((field) => `${field.name}${field.optional ? "?" : ""}: ${field.typeText}`);
+  }
+  if (structure.variants.length > 0) {
+    return [...structure.variants]
+      .sort((left, right) => scorePreviewVariant(right) - scorePreviewVariant(left))
+      .slice(0, 3)
+      .map((variant) => variant.discriminatorValue ?? variant.label);
+  }
+  return ["No shape preview available."];
+}
+
+function estimateDataModelNodeHeight(
+  structure: ArchitectureGraph["dataStructures"][number],
+): number {
+  const previewCount = Math.min(3, structure.fields.length > 0 ? structure.fields.length : structure.variants.length);
+  const summaryRows = structure.summary || structure.purpose ? 2 : 0;
+  return 112 + previewCount * 18 + summaryRows * 13;
+}
+
+function scorePreviewField(
+  field: ArchitectureGraph["dataStructures"][number]["fields"][number],
+): number {
+  let score = 0;
+  const lowerName = field.name.toLowerCase();
+  if (lowerName === "id") score += 25;
+  if (lowerName === "type" || lowerName === "state") score += 22;
+  if (lowerName === "content" || lowerName === "messages" || lowerName === "players") score += 18;
+  if (lowerName === "x" || lowerName === "y" || lowerName === "path" || lowerName === "tick") score += 16;
+  if (lowerName === "container") score += 18;
+  if (field.referencedStructureId) score += 14;
+  if (!field.optional) score += 6;
+  if (field.description) score += 4;
+  return score;
+}
+
+function scorePreviewVariant(
+  variant: ArchitectureGraph["dataStructures"][number]["variants"][number],
+): number {
+  let score = 0;
+  if (variant.discriminatorValue) score += 10;
+  score += Math.max(0, 10 - variant.label.length / 4);
+  return score;
+}
+
+function preferredDataModelRelation(
+  relation: ArchitectureGraph["dataStructureRelations"][number],
+): number {
+  let score = 0;
+  if (relation.confidence === "exact") score += 10;
+  if (relation.kind === "loaded_from" || relation.kind === "persisted_as" || relation.kind === "serialized_as") score += 8;
+  if (relation.kind === "indexed_by") score += 6;
+  if (relation.kind === "stored_in") score += 4;
+  if (relation.reason) score += Math.min(10, relation.reason.length / 12);
+  return score;
+}
+
 function buildDetailedComponentLevel(
   graph: ArchitectureGraph,
+  activeComponentViewId: string | null,
 ): { nodes: Node[]; edges: Edge[] } {
   const diagram = graph.componentDiagram;
   if (!diagram) {
     return { nodes: [], edges: [] };
   }
 
+  const activeView =
+    diagram.views.find((item) => item.id === activeComponentViewId) ??
+    diagram.views.find((item) => item.id === diagram.defaultViewId) ??
+    diagram.views[0];
+  if (!activeView) {
+    return { nodes: [], edges: [] };
+  }
+
+  const system = diagram.systems.find((item) => item.id === activeView.systemId);
+  const boundary = diagram.boundaries.find((item) => item.id === activeView.boundaryId);
+  if (!system || !boundary) {
+    return { nodes: [], edges: [] };
+  }
+
+  const cards = diagram.cards.filter((item) => item.viewId === activeView.id);
+  const containers = diagram.containers.filter((item) => item.viewId === activeView.id);
+  const edgesForView = diagram.edges.filter((item) => item.viewId === activeView.id);
+
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  for (const boundary of diagram.boundaries) {
-    nodes.push({
-      id: boundary.id,
-      type: "boundary",
-      position: boundary.position,
-      data: {
-        label: boundary.label,
-        technology: boundary.technology,
-        description: boundary.description,
-        borderColor: boundary.color,
-        componentCount: diagram.cards.filter((card) => card.boundaryId === boundary.id).length,
-      },
+  nodes.push({
+    id: system.id,
+    type: "boundary",
+    position: system.position,
+    data: {
+      label: system.label,
+      technology: "Software system boundary",
+      description: system.description,
+      borderColor: system.color,
+      componentCount: cards.length + containers.length,
+    },
+    width: system.size.width,
+    height: system.size.height,
+    measured: system.size,
+    style: {
+      width: system.size.width,
+      height: system.size.height,
+      zIndex: -2,
+    },
+    selectable: false,
+    draggable: false,
+  });
+
+  nodes.push({
+    id: boundary.id,
+    type: "boundary",
+    parentId: system.id,
+    extent: "parent",
+    position: boundary.position,
+    data: {
+      label: boundary.label,
+      technology: boundary.technology,
+      description: boundary.description,
+      borderColor: boundary.color,
+      componentCount: cards.length,
+    },
+    width: boundary.size.width,
+    height: boundary.size.height,
+    measured: boundary.size,
+    style: {
       width: boundary.size.width,
       height: boundary.size.height,
-      measured: boundary.size,
-      style: {
-        width: boundary.size.width,
-        height: boundary.size.height,
-        zIndex: -1,
+      zIndex: -1,
+    },
+    selectable: false,
+    draggable: false,
+  });
+
+  for (const container of containers) {
+    nodes.push({
+      id: container.id,
+      type: "componentContextContainer",
+      parentId: system.id,
+      extent: "parent",
+      position: container.position,
+      data: {
+        containerId: container.containerId,
+        name: container.name,
+        technology: container.technology,
+        description: container.description,
+        color: container.color,
+        kind: container.kind,
       },
-      selectable: false,
+      width: container.size.width,
+      height: container.size.height,
+      measured: container.size,
+      style: {
+        width: container.size.width,
+        height: container.size.height,
+      },
       draggable: false,
     });
   }
 
-  for (const card of diagram.cards) {
+  for (const card of cards) {
     nodes.push({
       id: card.id,
       type: "detailedComponentCard",
@@ -511,10 +1065,12 @@ function buildDetailedComponentLevel(
     });
   }
 
-  for (const edge of diagram.edges) {
+  for (const edge of edgesForView) {
     const edgeStyle = COMPONENT_EDGE_STYLE[edge.relationshipKind];
+    const stroke = edge.color || edgeStyle.stroke;
+    const displayLabel = edge.technology ? `${edge.label}\n${edge.technology}` : edge.label;
     const style = {
-      stroke: edge.color || edgeStyle.stroke,
+      stroke,
       strokeWidth: edgeStyle.width,
       strokeDasharray: edge.dash ?? edgeStyle.dash,
       opacity: NORMAL_OPACITY,
@@ -529,11 +1085,17 @@ function buildDetailedComponentLevel(
       type: "smoothstep",
       style,
       data: {
-        couplingType: edge.relationshipKind === "event_subscription" ? "event" : "call",
+        couplingType:
+          edge.relationshipKind === "event_subscription"
+            ? "event"
+            : edge.relationshipKind === "queued_command"
+              ? "mutation"
+              : "call",
         diagramEdge: true,
         relationshipKind: edge.relationshipKind,
+        technology: edge.technology,
       },
-      label: edge.label,
+      label: displayLabel,
       labelStyle: {
         fill: "#e5e7eb",
         fontSize: edge.relationshipKind === "transport" ? 12 : 11,
@@ -547,9 +1109,9 @@ function buildDetailedComponentLevel(
         ry: 8,
       },
       labelBgPadding: [10, 6] as [number, number],
-      markerEnd: { type: "arrowclosed" as MarkerType, color: edge.color, width: 16, height: 12 },
+      markerEnd: { type: "arrowclosed" as MarkerType, color: stroke, width: 16, height: 12 },
       markerStart: edge.bidirectional
-        ? { type: "arrowclosed" as MarkerType, color: edge.color, width: 16, height: 12 }
+        ? { type: "arrowclosed" as MarkerType, color: stroke, width: 16, height: 12 }
         : undefined,
     });
   }

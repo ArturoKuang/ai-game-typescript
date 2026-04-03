@@ -4,6 +4,8 @@ import type { ArchitectureGraph, ZoomLevel, BoundaryEdge, Component, FileNode, C
 export type CouplingFilter = "event" | "call" | "mutation";
 export type ComponentInspectorTab = "overview" | "contract" | "internals" | "evidence" | "open_next";
 export type ComponentFocusDirection = "inbound" | "outbound" | "both";
+export type ContainerInspectorTab = "overview" | "relationships" | "ownership" | "changes" | "evidence";
+export type DataModelInspectorTab = "overview" | "shape" | "access" | "evidence" | "open_next";
 
 interface StoreState {
   graph: ArchitectureGraph | null;
@@ -32,8 +34,22 @@ interface StoreState {
   // Flow group selection
   selectedFlowGroup: string | null;
 
+  // Container tab state
+  containerInspectorTab: ContainerInspectorTab;
+  containerFocusEnabled: boolean;
+  containerSearchQuery: string;
+
+  // Data Model tab state
+  dataModelInspectorTab: DataModelInspectorTab;
+  dataModelFocusEnabled: boolean;
+  dataModelSearchQuery: string;
+  dataModelShowRuntimeStores: boolean;
+  dataModelShowDebugStructures: boolean;
+  dataModelExpandMirrors: boolean;
+
   // Component tab state
   componentInspectorTab: ComponentInspectorTab;
+  activeComponentViewId: string | null;
   componentFocusEnabled: boolean;
   componentFocusDirection: ComponentFocusDirection;
   componentSearchQuery: string;
@@ -53,7 +69,17 @@ interface StoreState {
   clearLegendKeys: () => void;
   setSelectedFlowStep: (step: number | null) => void;
   setSelectedFlowGroup: (id: string | null) => void;
+  setContainerInspectorTab: (tab: ContainerInspectorTab) => void;
+  toggleContainerFocus: () => void;
+  setContainerSearchQuery: (query: string) => void;
+  setDataModelInspectorTab: (tab: DataModelInspectorTab) => void;
+  toggleDataModelFocus: () => void;
+  setDataModelSearchQuery: (query: string) => void;
+  toggleDataModelShowRuntimeStores: () => void;
+  toggleDataModelShowDebugStructures: () => void;
+  toggleDataModelExpandMirrors: () => void;
   setComponentInspectorTab: (tab: ComponentInspectorTab) => void;
+  setActiveComponentView: (viewId: string | null) => void;
   toggleComponentFocus: () => void;
   setComponentFocusDirection: (direction: ComponentFocusDirection) => void;
   setComponentSearchQuery: (query: string) => void;
@@ -68,7 +94,7 @@ interface StoreState {
 
 export const useStore = create<StoreState>((set, get) => ({
   graph: null,
-  zoomLevel: "component",
+  zoomLevel: "container",
   expandedComponents: new Set<string>(),
   selectedNodeId: null,
   selectedEdgeId: null,
@@ -80,13 +106,26 @@ export const useStore = create<StoreState>((set, get) => ({
   activeLegendKeys: new Set<string>(),
   selectedFlowStep: null,
   selectedFlowGroup: null,
+  containerInspectorTab: "overview",
+  containerFocusEnabled: true,
+  containerSearchQuery: "",
+  dataModelInspectorTab: "overview",
+  dataModelFocusEnabled: true,
+  dataModelSearchQuery: "",
+  dataModelShowRuntimeStores: false,
+  dataModelShowDebugStructures: false,
+  dataModelExpandMirrors: false,
   componentInspectorTab: "overview",
+  activeComponentViewId: null,
   componentFocusEnabled: true,
   componentFocusDirection: "both",
   componentSearchQuery: "",
   highlightedEvidenceId: null,
 
-  setGraph: (graph) => set({ graph }),
+  setGraph: (graph) => set((state) => ({
+    graph,
+    activeComponentViewId: state.activeComponentViewId ?? graph.componentDiagram?.defaultViewId ?? null,
+  })),
   setZoomLevel: (zoomLevel) =>
     set({
       zoomLevel,
@@ -102,8 +141,18 @@ export const useStore = create<StoreState>((set, get) => ({
       else next.add(componentId);
       return { expandedComponents: next };
     }),
-  selectNode: (id) => set({ selectedNodeId: id, selectedEdgeId: null, highlightedEvidenceId: null }),
-  selectEdge: (id) => set({ selectedEdgeId: id, selectedNodeId: null, highlightedEvidenceId: null }),
+  selectNode: (id) => set((state) => ({
+    selectedNodeId: id,
+    selectedEdgeId: null,
+    highlightedEvidenceId: null,
+    activeComponentViewId: id ? resolveComponentViewId(state.graph, id) ?? state.activeComponentViewId : state.activeComponentViewId,
+  })),
+  selectEdge: (id) => set((state) => ({
+    selectedEdgeId: id,
+    selectedNodeId: null,
+    highlightedEvidenceId: null,
+    activeComponentViewId: id ? resolveComponentViewId(state.graph, id) ?? state.activeComponentViewId : state.activeComponentViewId,
+  })),
   setHoveredNode: (id) => set({ hoveredNodeId: id }),
   setHoveredEdge: (id) => set({ hoveredEdgeId: id }),
   toggleCouplingFilter: (type) =>
@@ -125,7 +174,34 @@ export const useStore = create<StoreState>((set, get) => ({
   clearLegendKeys: () => set({ activeLegendKeys: new Set() }),
   setSelectedFlowStep: (selectedFlowStep) => set({ selectedFlowStep }),
   setSelectedFlowGroup: (selectedFlowGroup) => set({ selectedFlowGroup }),
+  setContainerInspectorTab: (containerInspectorTab) => set({ containerInspectorTab }),
+  toggleContainerFocus: () =>
+    set((state) => ({ containerFocusEnabled: !state.containerFocusEnabled })),
+  setContainerSearchQuery: (containerSearchQuery) => set({ containerSearchQuery }),
+  setDataModelInspectorTab: (dataModelInspectorTab) => set({ dataModelInspectorTab }),
+  toggleDataModelFocus: () =>
+    set((state) => ({ dataModelFocusEnabled: !state.dataModelFocusEnabled })),
+  setDataModelSearchQuery: (dataModelSearchQuery) => set({ dataModelSearchQuery }),
+  toggleDataModelShowRuntimeStores: () =>
+    set((state) => ({ dataModelShowRuntimeStores: !state.dataModelShowRuntimeStores })),
+  toggleDataModelShowDebugStructures: () =>
+    set((state) => ({ dataModelShowDebugStructures: !state.dataModelShowDebugStructures })),
+  toggleDataModelExpandMirrors: () =>
+    set((state) => ({ dataModelExpandMirrors: !state.dataModelExpandMirrors })),
   setComponentInspectorTab: (componentInspectorTab) => set({ componentInspectorTab }),
+  setActiveComponentView: (activeComponentViewId) =>
+    set((state) => ({
+      activeComponentViewId,
+      selectedNodeId:
+        state.selectedNodeId && activeComponentViewId && resolveComponentViewId(state.graph, state.selectedNodeId) === activeComponentViewId
+          ? state.selectedNodeId
+          : null,
+      selectedEdgeId:
+        state.selectedEdgeId && activeComponentViewId && resolveComponentViewId(state.graph, state.selectedEdgeId) === activeComponentViewId
+          ? state.selectedEdgeId
+          : null,
+      highlightedEvidenceId: null,
+    })),
   toggleComponentFocus: () =>
     set((state) => ({ componentFocusEnabled: !state.componentFocusEnabled })),
   setComponentFocusDirection: (componentFocusDirection) => set({ componentFocusDirection }),
@@ -138,3 +214,24 @@ export const useStore = create<StoreState>((set, get) => ({
   getBoundary: (source, target) =>
     get().graph?.boundaries.find((b) => b.source === source && b.target === target),
 }));
+
+function resolveComponentViewId(graph: ArchitectureGraph | null, nodeOrEdgeId: string): string | null {
+  if (!graph?.componentDiagram) return null;
+
+  const system = graph.componentDiagram.systems.find((item) => item.id === nodeOrEdgeId);
+  if (system) return system.viewId;
+
+  const boundary = graph.componentDiagram.boundaries.find((item) => item.id === nodeOrEdgeId);
+  if (boundary) return boundary.viewId;
+
+  const container = graph.componentDiagram.containers.find((item) => item.id === nodeOrEdgeId);
+  if (container) return container.viewId;
+
+  const card = graph.componentDiagram.cards.find((item) => item.id === nodeOrEdgeId);
+  if (card) return card.viewId;
+
+  const edge = graph.componentDiagram.edges.find((item) => item.id === nodeOrEdgeId);
+  if (edge) return edge.viewId;
+
+  return null;
+}
