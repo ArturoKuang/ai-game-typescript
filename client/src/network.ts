@@ -1,3 +1,10 @@
+/**
+ * Minimal WebSocket client for the game server.
+ *
+ * Auto-reconnects on disconnect (2 s delay). Messages sent while
+ * disconnected are silently dropped—no offline queue.
+ * Defaults to `ws(s)://<current hostname>:3001` (the game server port).
+ */
 import type { ClientMessage, ServerMessage } from "./types.js";
 
 export type MessageHandler = (msg: ServerMessage) => void;

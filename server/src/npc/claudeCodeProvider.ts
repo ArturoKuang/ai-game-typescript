@@ -1,3 +1,11 @@
+/**
+ * NPC model provider that spawns the `claude` CLI as a subprocess.
+ *
+ * Each call runs `claude -p --output-format json` with the constructed
+ * prompt. Multi-turn context is maintained via `--resume <sessionId>`.
+ * The CLI is invoked with `--tools ""` and `--permission-mode dontAsk`
+ * so it generates pure text without tool use or permission prompts.
+ */
 import { spawn } from "node:child_process";
 import type {
   NpcModelProvider,

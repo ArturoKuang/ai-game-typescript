@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -159,9 +159,7 @@ export class ConversationHarnessRuntime {
     ws.send(JSON.stringify({ type: "join", data: { name: label } }));
     const joinMessage = await waitForServerMessage(
       pendingClient,
-      (
-        message,
-      ): message is Extract<ServerMessage, { type: "player_joined" }> =>
+      (message): message is Extract<ServerMessage, { type: "player_joined" }> =>
         message.type === "player_joined" && message.data.name === label,
     );
 
@@ -216,7 +214,9 @@ export class ConversationHarnessRuntime {
   async waitForConversationState(
     client: HarnessClient,
     state: "invited" | "walking" | "active" | "ended",
-    predicate: (message: Extract<ServerMessage, { type: "convo_update" }>) => boolean,
+    predicate: (
+      message: Extract<ServerMessage, { type: "convo_update" }>,
+    ) => boolean,
     timeoutMs = DEFAULT_TIMEOUT_MS,
   ): Promise<Extract<ServerMessage, { type: "convo_update" }>> {
     return waitForServerMessage(
@@ -231,7 +231,9 @@ export class ConversationHarnessRuntime {
 
   async waitForChatMessage(
     client: HarnessClient,
-    predicate: (message: Extract<ServerMessage, { type: "message" }>) => boolean,
+    predicate: (
+      message: Extract<ServerMessage, { type: "message" }>,
+    ) => boolean,
     timeoutMs = DEFAULT_TIMEOUT_MS,
   ): Promise<Extract<ServerMessage, { type: "message" }>> {
     return waitForServerMessage(
@@ -245,16 +247,16 @@ export class ConversationHarnessRuntime {
   async waitForNoConversationUpdates(
     client: HarnessClient,
     durationMs: number,
-    predicate: (message: Extract<ServerMessage, { type: "convo_update" }>) => boolean,
+    predicate: (
+      message: Extract<ServerMessage, { type: "convo_update" }>,
+    ) => boolean,
   ): Promise<number> {
     const before = client.messages.filter(
-      (message) =>
-        message.type === "convo_update" && predicate(message),
+      (message) => message.type === "convo_update" && predicate(message),
     ).length;
     await wait(durationMs);
     const after = client.messages.filter(
-      (message) =>
-        message.type === "convo_update" && predicate(message),
+      (message) => message.type === "convo_update" && predicate(message),
     ).length;
     return after - before;
   }
@@ -264,7 +266,9 @@ export class ConversationHarnessRuntime {
   }
 
   async getPlayer(playerId: string): Promise<DebugPlayer | undefined> {
-    const response = await fetch(`${this.baseUrl}/api/debug/players/${playerId}`);
+    const response = await fetch(
+      `${this.baseUrl}/api/debug/players/${playerId}`,
+    );
     if (response.status === 404) {
       return undefined;
     }
@@ -307,14 +311,17 @@ const CONVERSATION_HARNESS_SCENARIOS: Record<
       const active = await runtime.waitForConversationState(
         human,
         "active",
-        (message) => message.data.player1Id === human.playerId || message.data.player2Id === human.playerId,
+        (message) =>
+          message.data.player1Id === human.playerId ||
+          message.data.player2Id === human.playerId,
       );
 
       runtime.send(human, { type: "say", data: { content: "Hello there." } });
       const npcReply = await runtime.waitForChatMessage(
         human,
         (message) =>
-          message.data.convoId === active.data.id && message.data.playerId === "npc_alice",
+          message.data.convoId === active.data.id &&
+          message.data.playerId === "npc_alice",
       );
 
       return {
@@ -339,13 +346,15 @@ const CONVERSATION_HARNESS_SCENARIOS: Record<
         human,
         "active",
         (message) =>
-          message.data.player1Id === "npc_alice" || message.data.player2Id === "npc_alice",
+          message.data.player1Id === "npc_alice" ||
+          message.data.player2Id === "npc_alice",
         12_000,
       );
       const firstNpcMessage = await runtime.waitForChatMessage(
         human,
         (message) =>
-          message.data.convoId === active.data.id && message.data.playerId === "npc_alice",
+          message.data.convoId === active.data.id &&
+          message.data.playerId === "npc_alice",
         12_000,
       );
 
@@ -417,7 +426,8 @@ const CONVERSATION_HARNESS_SCENARIOS: Record<
           convoId: active.data.id,
           accepted: true,
           endedReason: ended.data.endedReason ?? null,
-          transcriptMessages: collectTranscript(active.data.id, [alice, bob]).length,
+          transcriptMessages: collectTranscript(active.data.id, [alice, bob])
+            .length,
         },
         transcript: collectTranscript(active.data.id, [alice, bob]),
       };
@@ -447,7 +457,9 @@ const CONVERSATION_HARNESS_SCENARIOS: Record<
       const ended = await runtime.waitForConversationState(
         alice,
         "ended",
-        (message) => message.data.id === invite.data.id && message.data.endedReason === "declined",
+        (message) =>
+          message.data.id === invite.data.id &&
+          message.data.endedReason === "declined",
       );
 
       return {
@@ -678,7 +690,9 @@ function collectTranscript(
     }
   }
 
-  return Array.from(entries.values()).sort((left, right) => left.tick - right.tick);
+  return Array.from(entries.values()).sort(
+    (left, right) => left.tick - right.tick,
+  );
 }
 
 async function findFreePort(): Promise<number> {

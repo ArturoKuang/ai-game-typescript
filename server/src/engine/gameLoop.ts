@@ -1,12 +1,39 @@
+/**
+ * Central game simulation loop.
+ *
+ * GameLoop owns all mutable gameplay state (players, conversations, events)
+ * and advances the simulation one tick at a time. It supports two modes:
+ *
+ * - **stepped** — call `tick()` manually (used by tests and the debug API).
+ * - **realtime** — auto-ticks at `tickRate` Hz via `setInterval`.
+ *
+ * ## Tick pipeline
+ * 1. Drain command queue (spawn, move, say, …)
+ * 2. Assert world invariants (optional)
+ * 3. Process input-driven movement (WASD velocity + collision)
+ * 4. Process path-following movement (A* waypoints)
+ * 5. Broadcast player_update events for moving players
+ * 6. Advance conversation state machine
+ * 7. Sync player.state / currentConvoId with ConversationManager
+ * 8. Assert world invariants again
+ * 9. Emit tick_complete; invoke afterTick callbacks
+ *
+ * ## Movement subsystems
+ * Input movement and path movement are **mutually exclusive per player**:
+ * pressing a key cancels any active A* path, and setting a path clears
+ * held input. This prevents the two systems from fighting over position.
+ *
+ * @see docs/server-engine.md for diagrams and constant tables
+ */
 import {
   PLAYER_RADIUS,
   findBlockedTileOverlap,
   moveWithCollision,
 } from "./collision.js";
 import {
+  type Conversation,
   ConversationManager,
   snapshotConversation,
-  type Conversation,
 } from "./conversation.js";
 import { GameLogger } from "./logger.js";
 import { findPath } from "./pathfinding.js";
@@ -26,6 +53,7 @@ import { World } from "./world.js";
 export type GameMode = "stepped" | "realtime";
 
 type EventHandler = (event: GameEvent) => void;
+/** Tolerance when comparing player-to-player distance (avoids false positives from float rounding). */
 const PLAYER_COLLISION_EPSILON = 1e-6;
 type InputDirection = "up" | "down" | "left" | "right";
 
@@ -215,7 +243,12 @@ export class GameLoop {
     const newY = Math.round(player.y) + dy;
 
     if (!this.world.isWalkable(newX, newY)) return false;
-    const blocker = this.findBlockingPlayer(player.id, newX, newY, player.radius);
+    const blocker = this.findBlockingPlayer(
+      player.id,
+      newX,
+      newY,
+      player.radius,
+    );
     if (blocker) {
       this.emit({
         tick: this.tick_,
@@ -247,7 +280,14 @@ export class GameLoop {
     return true;
   }
 
-  /** Set input direction for a player (from input_start/input_stop messages). */
+  /**
+   * Toggle a directional key for a player (from input_start/input_stop messages).
+   *
+   * This is the entry point for WASD / arrow key movement. When any key becomes
+   * active, any in-progress A* path is cancelled. The held-key state is converted
+   * into `inputX`/`inputY` on the player, which `processInputMovement` picks up
+   * on the next tick.
+   */
   setPlayerInput(
     playerId: string,
     direction: InputDirection,
@@ -397,7 +437,10 @@ export class GameLoop {
         }
         case "end_convo": {
           const convo = this.convoManager_.getConversation(cmd.data.convoId);
-          if (!convo || !this.convoManager_.isParticipant(convo, cmd.playerId)) {
+          if (
+            !convo ||
+            !this.convoManager_.isParticipant(convo, cmd.playerId)
+          ) {
             break;
           }
           try {
@@ -493,11 +536,7 @@ export class GameLoop {
 
     // 4. Emit player_update for moving players (for broadcasting)
     for (const player of this.players_.values()) {
-      if (
-        player.state === "walking" ||
-        player.vx !== 0 ||
-        player.vy !== 0
-      ) {
+      if (player.state === "walking" || player.vx !== 0 || player.vy !== 0) {
         const evt: GameEvent = {
           tick: this.tick_,
           type: "player_update",
@@ -544,7 +583,16 @@ export class GameLoop {
     this.afterTickCallbacks.push(callback);
   }
 
-  /** Process velocity-based input movement for a player */
+  /**
+   * Process velocity-based input movement for a single player.
+   *
+   * 1. Normalize diagonal input so diagonal speed equals cardinal speed.
+   * 2. Compute velocity = normalized input * inputSpeed.
+   * 3. Compute displacement = velocity * dt.
+   * 4. Resolve tile collision via {@link moveWithCollision}.
+   * 5. Resolve player-to-player collision via {@link resolveInputPlayerCollision}.
+   * 6. Update orientation based on dominant input axis.
+   */
   private processInputMovement(player: Player, dt: number): GameEvent[] {
     const events: GameEvent[] = [];
     const startX = player.x;
@@ -575,7 +623,11 @@ export class GameLoop {
       this.world,
     );
 
-    const resolved = this.resolveInputPlayerCollision(player, result.x, result.y);
+    const resolved = this.resolveInputPlayerCollision(
+      player,
+      result.x,
+      result.y,
+    );
     player.x = resolved.x;
     player.y = resolved.y;
     player.state = "walking";
@@ -613,6 +665,14 @@ export class GameLoop {
     return events;
   }
 
+  /**
+   * Advance a player along their A* path by up to `pathSpeed` tiles this tick.
+   *
+   * The player consumes waypoints until either the budget is exhausted or
+   * a blocking player is encountered. Partial moves toward the next waypoint
+   * are supported (the player can stop mid-tile). When the final waypoint
+   * is reached, the path is cleared and state returns to idle.
+   */
   private processMovement(player: Player): GameEvent[] {
     const events: GameEvent[] = [];
     if (!player.path || player.pathIndex === undefined) return events;
@@ -786,6 +846,15 @@ export class GameLoop {
     player.inputY = (held.up ? -1 : 0) + (held.down ? 1 : 0);
   }
 
+  /**
+   * Validate world-level invariants (only when `validateInvariants` is true).
+   *
+   * Checks:
+   * - No player overlaps a blocked tile
+   * - Velocity is zero when input is zero
+   * - All paths use cardinal (non-diagonal) steps on walkable tiles
+   * - No two players overlap (radii within epsilon)
+   */
   private assertWorldInvariants(): void {
     if (!this.validateInvariants_) return;
 
@@ -802,7 +871,8 @@ export class GameLoop {
       for (let j = i + 1; j < players.length; j++) {
         const left = players[i];
         const right = players[j];
-        const minDistance = left.radius + right.radius - PLAYER_COLLISION_EPSILON;
+        const minDistance =
+          left.radius + right.radius - PLAYER_COLLISION_EPSILON;
         const dx = left.x - right.x;
         const dy = left.y - right.y;
         if (dx * dx + dy * dy < minDistance * minDistance) {
@@ -866,12 +936,20 @@ export class GameLoop {
     startY: number,
   ): void {
     if (!this.validateInvariants_) return;
-    if (player.inputX !== 0 && player.inputY === 0 && Math.abs(player.y - startY) > 1e-6) {
+    if (
+      player.inputX !== 0 &&
+      player.inputY === 0 &&
+      Math.abs(player.y - startY) > 1e-6
+    ) {
       throw new Error(
         `Invariant failed: player ${player.id} drifted on Y during horizontal input`,
       );
     }
-    if (player.inputY !== 0 && player.inputX === 0 && Math.abs(player.x - startX) > 1e-6) {
+    if (
+      player.inputY !== 0 &&
+      player.inputX === 0 &&
+      Math.abs(player.x - startX) > 1e-6
+    ) {
       throw new Error(
         `Invariant failed: player ${player.id} drifted on X during vertical input`,
       );
@@ -896,12 +974,25 @@ export class GameLoop {
     return undefined;
   }
 
+  /**
+   * Resolve player-to-player collision after input movement.
+   *
+   * Strategy: try the full (nextX, nextY). If blocked, try each axis
+   * independently. If both single-axis moves are clear, pick the axis
+   * with more progress. If both are blocked, stay put.
+   * This lets the player "slide" along another player during diagonal input.
+   */
   private resolveInputPlayerCollision(
     player: Player,
     nextX: number,
     nextY: number,
   ): { x: number; y: number; blocker?: Player } {
-    const blocker = this.findBlockingPlayer(player.id, nextX, nextY, player.radius);
+    const blocker = this.findBlockingPlayer(
+      player.id,
+      nextX,
+      nextY,
+      player.radius,
+    );
     if (!blocker) return { x: nextX, y: nextY };
 
     const xOnlyBlocker = this.findBlockingPlayer(

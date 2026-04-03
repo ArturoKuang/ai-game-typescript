@@ -1,3 +1,10 @@
+/**
+ * WebSocket message types exchanged between server and browser client.
+ *
+ * Both ServerMessage and ClientMessage are discriminated unions keyed on `type`.
+ * The server sends a full `state` snapshot on connect, then streams incremental
+ * updates (`player_update`, `convo_update`, `message`, etc.) in real time.
+ */
 import type { Conversation, Message } from "../engine/conversation.js";
 import type { Activity, Player } from "../engine/types.js";
 
@@ -13,6 +20,7 @@ export type ServerMessage =
   | { type: "message"; data: Message }
   | { type: "error"; data: { message: string } };
 
+/** Snapshot sent to a newly connected client. */
 export interface FullGameState {
   tick: number;
   world: { width: number; height: number };

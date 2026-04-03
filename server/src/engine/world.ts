@@ -1,3 +1,10 @@
+/**
+ * Immutable tile grid built from `data/map.json`.
+ *
+ * The World provides spatial queries (walkability, neighbors, activities)
+ * used by pathfinding, collision, and the game loop. It never mutates
+ * after construction—all dynamic state lives in {@link GameLoop}.
+ */
 import type { Activity, MapData, Position, Tile, TileType } from "./types.js";
 
 export class World {
@@ -26,11 +33,13 @@ export class World {
     }
   }
 
+  /** Returns the tile at (x, y), or null if out of bounds. */
   getTile(x: number, y: number): Tile | null {
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) return null;
     return this.tiles[y][x];
   }
 
+  /** True if (x, y) is in bounds and is a floor tile. */
   isWalkable(x: number, y: number): boolean {
     const tile = this.getTile(x, y);
     return tile !== null && tile.type === "floor";

@@ -1,3 +1,26 @@
+/**
+ * Client entry point — orchestrates rendering, networking, input, and prediction.
+ *
+ * ## Startup
+ * 1. Initialize PixiJS renderer.
+ * 2. Fetch the tile map from `/data/map.json` (fallback to blank bordered map).
+ * 3. Connect WebSocket to the game server.
+ * 4. Register input handlers (WASD, click-to-move, chat, conversation actions).
+ * 5. Start the render loop with client-side prediction.
+ *
+ * ## Server reconciliation
+ * The local player is predicted client-side for instant responsiveness.
+ * When `player_update` arrives from the server, drift is corrected using
+ * one of three modes based on distance:
+ *
+ * | Condition               | Mode   | Behavior                    |
+ * |-------------------------|--------|-----------------------------|
+ * | dist > 4                | snap   | Teleport to server position |
+ * | moving && dist > 1.0    | snap   | Teleport (large divergence) |
+ * | moving && dist > 0.35   | lerp   | Blend 50% toward server     |
+ * | stopped && dist > 0.3   | settle | Blend 30% toward server     |
+ * | otherwise               | ignore | Trust client prediction      |
+ */
 import { logClientDebugEvent } from "./debugLog.js";
 import { GameClient } from "./network.js";
 import {
@@ -114,13 +137,17 @@ async function start() {
   }
 
   function getPlayerName(playerId: string): string {
-    return gameState?.players.find((player) => player.id === playerId)?.name ?? playerId;
+    return (
+      gameState?.players.find((player) => player.id === playerId)?.name ??
+      playerId
+    );
   }
 
   function getPlayer(playerId: string): Player | undefined {
     return gameState?.players.find((player) => player.id === playerId);
   }
 
+  /** Generate system chat messages describing a conversation state change. */
   function describeConversationUpdate(
     previous: Conversation | undefined,
     next: Conversation,
@@ -164,9 +191,14 @@ async function start() {
     return messages;
   }
 
-  function upsertConversation(conversation: Conversation): Conversation | undefined {
+  /** Insert or update a conversation in local state; returns the previous version if it existed. */
+  function upsertConversation(
+    conversation: Conversation,
+  ): Conversation | undefined {
     if (!gameState) return undefined;
-    const index = gameState.conversations.findIndex((item) => item.id === conversation.id);
+    const index = gameState.conversations.findIndex(
+      (item) => item.id === conversation.id,
+    );
     const previous = index >= 0 ? gameState.conversations[index] : undefined;
     if (index >= 0) {
       gameState.conversations[index] = conversation;
@@ -176,6 +208,13 @@ async function start() {
     return previous;
   }
 
+  /**
+   * Recalculate the conversation panel and player list UI.
+   *
+   * Determines which players are "talkable" (idle, not in a conversation,
+   * and the local player is also free), then renders the appropriate panel
+   * state: no conversation, incoming invite, walking to meet, or active chat.
+   */
   function refreshConversationUi(): void {
     if (!gameState) return;
 
@@ -388,7 +427,10 @@ async function start() {
       case "convo_update": {
         if (!gameState) break;
         const previous = upsertConversation(msg.data);
-        for (const systemMessage of describeConversationUpdate(previous, msg.data)) {
+        for (const systemMessage of describeConversationUpdate(
+          previous,
+          msg.data,
+        )) {
           ui.addChatMessage("", systemMessage, true);
         }
         if (msg.data.state === "ended") {
@@ -521,6 +563,10 @@ async function start() {
   });
 
   // --- Render loop with client-side prediction ---
+  // Runs every frame via requestAnimationFrame. Applies the same physics
+  // as the server to the local player so movement feels instant. The
+  // server remains authoritative — see reconciliation in the player_update
+  // handler above.
   let lastFrameTime = performance.now();
 
   function renderLoop(now: number) {

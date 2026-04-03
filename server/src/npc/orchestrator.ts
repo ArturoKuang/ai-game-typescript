@@ -1,11 +1,30 @@
+/**
+ * NPC behavior orchestrator — bridges the game engine to the LLM provider.
+ *
+ * Listens to conversation events and autonomously:
+ * - Generates NPC replies (one in-flight request per conversation).
+ * - Stores conversation memories and triggers reflections when importance
+ *   accumulates past a threshold.
+ * - Scans for nearby idle players and initiates new conversations on a
+ *   cooldown timer.
+ *
+ * Each NPC × conversation pair has a {@link ModelRuntime} that tracks the
+ * current LLM session ID (for multi-turn context) and prevents duplicate
+ * requests.
+ */
 import type { NpcPersistenceStore } from "../db/npcStore.js";
 import type { Memory } from "../db/repository.js";
 import type { Conversation, Message } from "../engine/conversation.js";
-import type { GameEvent, Player } from "../engine/types.js";
 import type { GameLoop } from "../engine/gameLoop.js";
-import { MemoryManager } from "./memory.js";
+import type { GameEvent, Player } from "../engine/types.js";
+import type { MemoryManager } from "./memory.js";
 import type { NpcModelProvider } from "./provider.js";
 
+/**
+ * Per-NPC-per-conversation state for the LLM provider.
+ * Prevents duplicate in-flight requests and tracks the session ID
+ * for multi-turn context reuse.
+ */
 interface ModelRuntime {
   sessionId?: string;
   inFlight: boolean;
@@ -60,13 +79,16 @@ export class NpcOrchestrator {
       options.initiationCooldownTicks ?? DEFAULT_INITIATION_COOLDOWN;
     this.initiationScanIntervalTicks =
       options.initiationScanIntervalTicks ?? DEFAULT_INITIATION_INTERVAL;
-    this.initiationRadius = options.initiationRadius ?? DEFAULT_INITIATION_RADIUS;
+    this.initiationRadius =
+      options.initiationRadius ?? DEFAULT_INITIATION_RADIUS;
     this.joinGraceTicks = options.joinGraceTicks ?? DEFAULT_JOIN_GRACE_TICKS;
     this.enableInitiation = options.enableInitiation ?? true;
     this.enableReflections = options.enableReflections ?? true;
 
     this.game.on("spawn", (event) => {
-      const player = event.playerId ? this.game.getPlayer(event.playerId) : undefined;
+      const player = event.playerId
+        ? this.game.getPlayer(event.playerId)
+        : undefined;
       if (player && !player.isNpc) {
         this.humanJoinTicks.set(player.id, event.tick);
       }
@@ -145,14 +167,24 @@ export class NpcOrchestrator {
       : undefined;
   }
 
+  /**
+   * Schedule an NPC reply if one is needed and not already in-flight.
+   *
+   * The next speaker is the NPC who hasn't spoken last (turn-taking).
+   * If the conversation is empty, the first NPC participant speaks.
+   * Human-only conversations are skipped (no NPC to reply).
+   */
   private scheduleReply(conversationId: number): void {
-    const conversation = this.game.conversations.getConversation(conversationId);
+    const conversation =
+      this.game.conversations.getConversation(conversationId);
     if (!conversation || conversation.state !== "active") return;
 
     const npc = this.chooseNextNpcSpeaker(conversation);
     if (!npc) return;
 
-    const runtime = this.getRuntime(this.replyRuntimeKey(conversation.id, npc.id));
+    const runtime = this.getRuntime(
+      this.replyRuntimeKey(conversation.id, npc.id),
+    );
     const currentMessageCount = conversation.messages.length;
     if (
       runtime.inFlight ||
@@ -276,7 +308,9 @@ export class NpcOrchestrator {
     query: string,
   ): Promise<Memory[]> {
     if (!query.trim()) {
-      return this.memoryManager.getMemories(playerId, { limit: RETRIEVAL_LIMIT });
+      return this.memoryManager.getMemories(playerId, {
+        limit: RETRIEVAL_LIMIT,
+      });
     }
     const scored = await this.memoryManager.retrieveMemories({
       playerId,
@@ -287,7 +321,9 @@ export class NpcOrchestrator {
     return scored.map((memory) => memory);
   }
 
-  private async rememberConversation(conversation: Conversation): Promise<void> {
+  private async rememberConversation(
+    conversation: Conversation,
+  ): Promise<void> {
     await this.persistConversationPlayers(conversation);
     for (const playerId of [conversation.player1Id, conversation.player2Id]) {
       const partnerId =
@@ -329,11 +365,12 @@ export class NpcOrchestrator {
     if (this.reflectionInFlight.has(npcId)) return;
     this.reflectionInFlight.add(npcId);
     try {
-      const recentMemories = await this.memoryManager.getRecentMemoriesForReflection({
-        playerId: npcId,
-        lastReflectionId: this.lastReflectionIds.get(npcId),
-        limit: 100,
-      });
+      const recentMemories =
+        await this.memoryManager.getRecentMemoriesForReflection({
+          playerId: npcId,
+          lastReflectionId: this.lastReflectionIds.get(npcId),
+          limit: 100,
+        });
 
       const importanceSum = recentMemories.reduce(
         (sum, memory) => sum + memory.importance,
@@ -372,7 +409,12 @@ export class NpcOrchestrator {
         playerId: npcId,
         content: response.content,
         tick: this.game.currentTick,
-        relatedIds: [lastConversationMemoryId, ...recentMemories.slice(0, MAX_RELATED_MEMORIES).map((memory) => memory.id)],
+        relatedIds: [
+          lastConversationMemoryId,
+          ...recentMemories
+            .slice(0, MAX_RELATED_MEMORIES)
+            .map((memory) => memory.id),
+        ],
       });
       this.lastReflectionIds.set(npcId, reflection.id);
     } finally {
@@ -380,6 +422,15 @@ export class NpcOrchestrator {
     }
   }
 
+  /**
+   * Periodically scan for idle NPCs that can start a new conversation.
+   *
+   * Runs every `initiationScanIntervalTicks` ticks. For each idle NPC
+   * (not on cooldown, not already conversing), find the closest eligible
+   * target within `initiationRadius` Manhattan distance. Humans are
+   * preferred over other NPCs, and a grace period prevents NPCs from
+   * immediately talking to newly joined humans.
+   */
   private maybeInitiateConversations(): void {
     if (this.game.currentTick % this.initiationScanIntervalTicks !== 0) {
       return;
@@ -396,8 +447,12 @@ export class NpcOrchestrator {
       if (reserved.has(npc.id)) continue;
       if (npc.state !== "idle") continue;
       if (this.game.conversations.getPlayerConversation(npc.id)) continue;
-      const lastInitiatedAt = this.lastInitiatedAt.get(npc.id) ?? -Infinity;
-      if (this.game.currentTick - lastInitiatedAt < this.initiationCooldownTicks) {
+      const lastInitiatedAt =
+        this.lastInitiatedAt.get(npc.id) ?? Number.NEGATIVE_INFINITY;
+      if (
+        this.game.currentTick - lastInitiatedAt <
+        this.initiationCooldownTicks
+      ) {
         continue;
       }
 
@@ -415,6 +470,13 @@ export class NpcOrchestrator {
     }
   }
 
+  /**
+   * Find the best conversation target for an NPC.
+   *
+   * Candidates must be idle, not reserved, not already conversing, and
+   * within initiation radius. Sort order: closest first, then prefer
+   * humans over NPCs, then by ID for determinism.
+   */
   private findInitiationTarget(
     npc: Player,
     reserved: Set<string>,
@@ -425,10 +487,12 @@ export class NpcOrchestrator {
         if (player.id === npc.id) return false;
         if (reserved.has(player.id)) return false;
         if (player.state !== "idle") return false;
-        if (this.game.conversations.getPlayerConversation(player.id)) return false;
+        if (this.game.conversations.getPlayerConversation(player.id))
+          return false;
         if (
           !player.isNpc &&
-          this.game.currentTick - (this.humanJoinTicks.get(player.id) ?? -Infinity) <
+          this.game.currentTick -
+            (this.humanJoinTicks.get(player.id) ?? Number.NEGATIVE_INFINITY) <
             this.joinGraceTicks
         ) {
           return false;

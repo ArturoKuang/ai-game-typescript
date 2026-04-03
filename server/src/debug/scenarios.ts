@@ -1,5 +1,12 @@
-import type { GameLoop } from "../engine/gameLoop.js";
 import { CHARACTERS } from "../data/characters.js";
+/**
+ * Pre-built test scenarios for the debug API.
+ *
+ * Each scenario loads a known player configuration into the game loop,
+ * useful for reproducible debugging and automated movement harness runs.
+ * Available via `POST /api/debug/scenario { "name": "..." }`.
+ */
+import type { GameLoop } from "../engine/gameLoop.js";
 
 interface Scenario {
   description: string;

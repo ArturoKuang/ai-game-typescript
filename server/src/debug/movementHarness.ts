@@ -437,18 +437,17 @@ export function listMovementHarnessScenarios(): Array<{
   name: MovementHarnessScenarioName;
   description: string;
 }> {
-  return Object.entries(MOVEMENT_HARNESS_SCENARIOS).map(
-    ([name, scenario]) => ({
-      name: name as MovementHarnessScenarioName,
-      description: scenario.description,
-    }),
-  );
+  return Object.entries(MOVEMENT_HARNESS_SCENARIOS).map(([name, scenario]) => ({
+    name: name as MovementHarnessScenarioName,
+    description: scenario.description,
+  }));
 }
 
 export function runMovementHarnessScenario(
   scenarioName: MovementHarnessScenarioName,
 ): MovementHarnessResult {
-  const scenario: MovementHarnessScenario = MOVEMENT_HARNESS_SCENARIOS[scenarioName];
+  const scenario: MovementHarnessScenario =
+    MOVEMENT_HARNESS_SCENARIOS[scenarioName];
   const game = new GameLoop({
     seed: 42,
     mode: "stepped",
@@ -752,7 +751,10 @@ function matchesExpectedTraceEvent(
   traceEntry: MovementHarnessEventTraceEntry,
   expected: MovementHarnessExpectedEvent,
 ): boolean {
-  if (expected.snapshotLabel && traceEntry.snapshotLabel !== expected.snapshotLabel) {
+  if (
+    expected.snapshotLabel &&
+    traceEntry.snapshotLabel !== expected.snapshotLabel
+  ) {
     return false;
   }
   if (expected.tick !== undefined && traceEntry.event.tick !== expected.tick) {
@@ -781,7 +783,9 @@ function matchesPartial(actual: unknown, expected: unknown): boolean {
     if (!Array.isArray(actual) || actual.length !== expected.length) {
       return false;
     }
-    return expected.every((value, index) => matchesPartial(actual[index], value));
+    return expected.every((value, index) =>
+      matchesPartial(actual[index], value),
+    );
   }
 
   const expectedObject = expected as Record<string, unknown>;

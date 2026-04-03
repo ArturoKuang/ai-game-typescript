@@ -1,3 +1,9 @@
+/**
+ * Schema migration runner — applies `schema.sql` to the database at startup.
+ *
+ * Currently runs the full DDL on every boot (all statements use `IF NOT EXISTS`
+ * or `CREATE OR REPLACE`). There is no incremental migration history yet.
+ */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

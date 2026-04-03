@@ -1,3 +1,10 @@
+/**
+ * Scripted (no-LLM) NPC provider used as a fallback when the primary
+ * provider is unavailable and in tests.
+ *
+ * Generates deterministic replies based on personality keywords
+ * (warm, history, art, technology) and simple greeting templates.
+ */
 import type {
   NpcModelProvider,
   NpcModelResponse,
@@ -25,7 +32,8 @@ export class ScriptedNpcProvider implements NpcModelProvider {
   async generateReflection(
     request: NpcReflectionRequest,
   ): Promise<NpcModelResponse> {
-    const mostRecent = request.memories[0]?.content ?? "I need more experiences.";
+    const mostRecent =
+      request.memories[0]?.content ?? "I need more experiences.";
     return {
       content: `I'm noticing a pattern in town life: ${mostRecent}`,
       prompt: buildReflectionPrompt(request),

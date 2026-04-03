@@ -1,5 +1,19 @@
+/**
+ * DOM-based UI manager for the game sidebar.
+ *
+ * Manages the player list, chat log, conversation panel (invite/active/end
+ * actions), and status bar. All DOM elements are looked up by ID in the
+ * constructor — see `client/index.html` for the expected markup.
+ *
+ * Expected DOM element IDs:
+ * - player-list, chat-messages, chat-input, chat-btn, chat-helper
+ * - status-bar, conversation-title, conversation-status
+ * - invite-actions, active-actions
+ * - accept-convo-btn, decline-convo-btn, end-convo-btn
+ */
 import type { Player } from "./types.js";
 
+/** Describes what the conversation panel should display. */
 export interface ConversationPanelView {
   title: string;
   status: string;
@@ -40,7 +54,9 @@ export class UI {
       "chat-input",
     ) as HTMLInputElement;
     this.chatBtnEl = document.getElementById("chat-btn") as HTMLButtonElement;
-    this.chatHelperEl = document.getElementById("chat-helper") as HTMLDivElement;
+    this.chatHelperEl = document.getElementById(
+      "chat-helper",
+    ) as HTMLDivElement;
     this.statusEl = document.getElementById("status-bar") as HTMLDivElement;
     this.conversationTitleEl = document.getElementById(
       "conversation-title",
@@ -64,8 +80,12 @@ export class UI {
       "end-convo-btn",
     ) as HTMLButtonElement;
 
-    this.acceptConvoBtnEl.addEventListener("click", () => this.acceptHandler?.());
-    this.declineConvoBtnEl.addEventListener("click", () => this.declineHandler?.());
+    this.acceptConvoBtnEl.addEventListener("click", () =>
+      this.acceptHandler?.(),
+    );
+    this.declineConvoBtnEl.addEventListener("click", () =>
+      this.declineHandler?.(),
+    );
     this.endConvoBtnEl.addEventListener("click", () => this.endHandler?.());
   }
 
@@ -77,7 +97,10 @@ export class UI {
     this.statusEl.textContent = text;
   }
 
-  updatePlayerList(players: Player[], talkablePlayerIds: ReadonlySet<string>): void {
+  updatePlayerList(
+    players: Player[],
+    talkablePlayerIds: ReadonlySet<string>,
+  ): void {
     this.playerListEl.innerHTML = "";
     for (const player of players) {
       const li = document.createElement("li");
@@ -162,6 +185,7 @@ export class UI {
     this.endHandler = callback;
   }
 
+  /** Map player state to a suffix icon for the player list. */
   private stateIcon(player: Player): string {
     if (player.isWaitingForResponse) return " ...";
     if (player.state === "conversing") return " 💬";
@@ -170,6 +194,7 @@ export class UI {
     return "";
   }
 
+  /** Escape HTML to prevent XSS when inserting user-provided text into the DOM. */
   private escapeHtml(text: string): string {
     const div = document.createElement("div");
     div.textContent = text;

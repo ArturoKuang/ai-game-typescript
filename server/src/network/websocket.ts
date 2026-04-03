@@ -1,19 +1,34 @@
+/**
+ * WebSocket server bridging the game engine to browser clients.
+ *
+ * Responsibilities:
+ * - Accept client connections and send an initial full-state snapshot.
+ * - Translate incoming {@link ClientMessage}s into engine commands/inputs.
+ * - Translate outgoing {@link GameEvent}s into {@link ServerMessage}s and
+ *   broadcast or unicast them to the appropriate clients.
+ * - Scrub internal fields (inputX/inputY) before sending player data.
+ * - Clean up player state when a WebSocket disconnects.
+ *
+ * The server is wired to the engine via `game.on("*", broadcastGameEvent)`.
+ */
 import type { Server } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import type { Conversation, Message } from "../engine/conversation.js";
-import type { GameEvent, Player } from "../engine/types.js";
 import type { GameLoop } from "../engine/gameLoop.js";
+import type { GameEvent, Player } from "../engine/types.js";
 import type {
   ClientMessage,
   FullGameState,
   ServerMessage,
 } from "./protocol.js";
 
+/** Per-connection metadata tracking which player (if any) this socket controls. */
 interface ClientInfo {
   playerId: string | null;
   ws: WebSocket;
 }
 
+/** Monotonic counter for assigning human player IDs (human_1, human_2, …). */
 let humanCounter = 0;
 
 export class GameWebSocketServer {
@@ -60,10 +75,19 @@ export class GameWebSocketServer {
     }
   }
 
+  /**
+   * Translate a game engine event into one or more WebSocket messages.
+   *
+   * Movement events are broadcast to all clients as `player_update`.
+   * Conversation events are sent only to the two participants.
+   * `tick_complete` becomes a lightweight `tick` broadcast.
+   */
   broadcastGameEvent(event: GameEvent): void {
     switch (event.type) {
       case "spawn": {
-        const player = event.playerId ? this.game.getPlayer(event.playerId) : undefined;
+        const player = event.playerId
+          ? this.game.getPlayer(event.playerId)
+          : undefined;
         if (player) {
           this.broadcast({
             type: "player_joined",
@@ -149,7 +173,9 @@ export class GameWebSocketServer {
 
     ws.on("close", () => {
       if (info.playerId) {
-        const convo = this.game.conversations.getPlayerConversation(info.playerId);
+        const convo = this.game.conversations.getPlayerConversation(
+          info.playerId,
+        );
         if (convo) {
           this.game.enqueue({
             type: "end_convo",
@@ -166,11 +192,7 @@ export class GameWebSocketServer {
     });
   }
 
-  private onMessage(
-    ws: WebSocket,
-    info: ClientInfo,
-    msg: ClientMessage,
-  ): void {
+  private onMessage(ws: WebSocket, info: ClientInfo, msg: ClientMessage): void {
     switch (msg.type) {
       case "join": {
         if (info.playerId) {
@@ -254,7 +276,9 @@ export class GameWebSocketServer {
 
       case "say": {
         if (!info.playerId) return;
-        const convo = this.game.conversations.getPlayerConversation(info.playerId);
+        const convo = this.game.conversations.getPlayerConversation(
+          info.playerId,
+        );
         if (!convo || convo.state !== "active") {
           this.sendError(ws, "Not in an active conversation");
           return;
@@ -302,7 +326,10 @@ export class GameWebSocketServer {
           return;
         }
         if (convo.player2Id !== info.playerId) {
-          this.sendError(ws, "Only the invited player can accept this conversation");
+          this.sendError(
+            ws,
+            "Only the invited player can accept this conversation",
+          );
           return;
         }
         this.game.enqueue({
@@ -321,7 +348,10 @@ export class GameWebSocketServer {
           return;
         }
         if (convo.player2Id !== info.playerId) {
-          this.sendError(ws, "Only the invited player can decline this conversation");
+          this.sendError(
+            ws,
+            "Only the invited player can decline this conversation",
+          );
           return;
         }
         this.game.enqueue({
@@ -334,7 +364,9 @@ export class GameWebSocketServer {
 
       case "end_convo": {
         if (!info.playerId) return;
-        const convo = this.game.conversations.getPlayerConversation(info.playerId);
+        const convo = this.game.conversations.getPlayerConversation(
+          info.playerId,
+        );
         if (!convo) {
           this.sendError(ws, "Not currently in a conversation");
           return;
@@ -355,19 +387,21 @@ export class GameWebSocketServer {
 
   private buildFullState(playerId: string | null): FullGameState {
     const conversations = playerId
-      ? this.game
-          .conversations
+      ? this.game.conversations
           .getActiveConversations()
           .filter(
             (conversation) =>
-              conversation.player1Id === playerId || conversation.player2Id === playerId,
+              conversation.player1Id === playerId ||
+              conversation.player2Id === playerId,
           )
       : [];
 
     return {
       tick: this.game.currentTick,
       world: { width: this.game.world.width, height: this.game.world.height },
-      players: this.game.getPlayers().map((player) => this.toPublicPlayer(player)),
+      players: this.game
+        .getPlayers()
+        .map((player) => this.toPublicPlayer(player)),
       conversations,
       activities: this.game.world.getActivities(),
     };
@@ -399,6 +433,7 @@ export class GameWebSocketServer {
     return [conversation.player1Id, conversation.player2Id];
   }
 
+  /** Strip internal input state before sending player data to clients. */
   private toPublicPlayer(player: Player): Player {
     const { inputX: _ix, inputY: _iy, ...rest } = player;
     return rest as Player;

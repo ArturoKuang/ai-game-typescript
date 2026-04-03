@@ -1,6 +1,18 @@
+/**
+ * Memory persistence layer — Postgres (with pgvector) and in-memory fallback.
+ *
+ * Two implementations of {@link MemoryStore}:
+ * - {@link Repository} — writes to Postgres, uses `<=>` (cosine distance)
+ *   for vector similarity search, backed by an IVFFlat index.
+ * - {@link InMemoryRepository} — array-based, computes cosine similarity
+ *   in JS. Used when Postgres is unavailable and in tests.
+ *
+ * The game log (separate from memories) is also persisted here.
+ */
 import type { Pool } from "pg";
 import { cosineSimilarity } from "../npc/embedding.js";
 
+/** Raw database row shape for the `memories` table. */
 export interface MemoryRow {
   id: number;
   player_id: string;
@@ -14,6 +26,7 @@ export interface MemoryRow {
   created_at: Date;
 }
 
+/** Application-level memory (converted from {@link MemoryRow}). */
 export interface Memory {
   id: number;
   playerId: string;
@@ -26,6 +39,7 @@ export interface Memory {
   lastAccessedTick?: number;
 }
 
+/** Memory with composite retrieval score for ranking. */
 export interface ScoredMemory extends Memory {
   score: number;
   recencyScore: number;
@@ -33,6 +47,7 @@ export interface ScoredMemory extends Memory {
   relevanceScore: number;
 }
 
+/** Abstract memory storage interface — implemented by both Postgres and in-memory backends. */
 export interface MemoryStore {
   addMemory(params: {
     playerId: string;
@@ -62,6 +77,7 @@ export interface MemoryStore {
   deleteOldMemories(maxAgeTicks: number, currentTick: number): Promise<number>;
 }
 
+/** Postgres-backed memory store using pgvector for similarity search. */
 export class Repository implements MemoryStore {
   constructor(private pool: Pool) {}
 
@@ -267,6 +283,7 @@ export class Repository implements MemoryStore {
   }
 }
 
+/** Array-backed memory store for tests and when Postgres is unavailable. */
 export class InMemoryRepository implements MemoryStore {
   private memories: Memory[] = [];
   private nextId = 1;
@@ -298,7 +315,9 @@ export class InMemoryRepository implements MemoryStore {
     playerId: string,
     options?: { limit?: number; type?: string },
   ): Promise<Memory[]> {
-    let memories = this.memories.filter((memory) => memory.playerId === playerId);
+    let memories = this.memories.filter(
+      (memory) => memory.playerId === playerId,
+    );
     if (options?.type) {
       memories = memories.filter((memory) => memory.type === options.type);
     }
@@ -332,10 +351,15 @@ export class InMemoryRepository implements MemoryStore {
       )
       .slice(0, k);
 
-    return matches.map(({ memory, similarity }: { memory: Memory; similarity: number }) => ({
-      memory: { ...memory, embedding: memory.embedding ? [...memory.embedding] : undefined },
-      similarity,
-    }));
+    return matches.map(
+      ({ memory, similarity }: { memory: Memory; similarity: number }) => ({
+        memory: {
+          ...memory,
+          embedding: memory.embedding ? [...memory.embedding] : undefined,
+        },
+        similarity,
+      }),
+    );
   }
 
   async updateMemoryAccess(id: number, tick: number): Promise<void> {
@@ -379,4 +403,3 @@ export class InMemoryRepository implements MemoryStore {
     return before - this.memories.length;
   }
 }
-

@@ -1,9 +1,22 @@
+/**
+ * Server entry point — wires Express, WebSocket, game engine, and NPC stack.
+ *
+ * Boot sequence:
+ * 1. Create Express app + HTTP server.
+ * 2. Resolve database pool (Postgres or in-memory fallback).
+ * 3. Initialize NPC components (embedder, memory manager, model provider, orchestrator).
+ * 4. Load the tile map and spawn NPC characters.
+ * 5. Start the WebSocket server and wire the event bridge.
+ * 6. Start the realtime game loop (20 ticks/sec).
+ * 7. Mount HTTP routes (/health, /api/debug/*, /data/map.json).
+ */
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import type { Pool } from "pg";
+import { CHARACTERS } from "./data/characters.js";
 import { checkConnection, getPool } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { InMemoryNpcStore, PostgresNpcStore } from "./db/npcStore.js";
@@ -11,7 +24,6 @@ import { InMemoryRepository, Repository } from "./db/repository.js";
 import { createDebugRouter } from "./debug/router.js";
 import { GameLoop } from "./engine/gameLoop.js";
 import type { MapData } from "./engine/types.js";
-import { CHARACTERS } from "./data/characters.js";
 import { GameWebSocketServer } from "./network/websocket.js";
 import { ClaudeCodeProvider } from "./npc/claudeCodeProvider.js";
 import { PlaceholderEmbedder } from "./npc/embedding.js";
@@ -62,7 +74,9 @@ for (const char of CHARACTERS) {
       description: char.description,
       personality: char.personality,
     });
-    console.log(`Spawned NPC: ${char.name} at (${char.spawnPoint.x}, ${char.spawnPoint.y})`);
+    console.log(
+      `Spawned NPC: ${char.name} at (${char.spawnPoint.x}, ${char.spawnPoint.y})`,
+    );
   } catch (err) {
     console.error(`Failed to spawn ${char.name}:`, err);
   }
@@ -114,6 +128,7 @@ async function start() {
 
 start();
 
+/** Try to connect to Postgres; fall back to in-memory persistence if unavailable. */
 async function resolvePool(): Promise<Pool | undefined> {
   if (!process.env.DATABASE_URL) {
     console.log("DATABASE_URL not set; using in-memory NPC persistence");
@@ -132,6 +147,7 @@ async function resolvePool(): Promise<Pool | undefined> {
   return candidatePool;
 }
 
+/** Search several candidate paths for data/map.json (handles Docker volumes and host mode). */
 function resolveMapPath(): string {
   const candidates = [
     join(process.cwd(), "..", "data", "map.json"),

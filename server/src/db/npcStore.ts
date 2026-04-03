@@ -1,7 +1,16 @@
+/**
+ * NPC persistence layer — stores players, conversations, messages,
+ * and LLM generation metadata.
+ *
+ * Two implementations:
+ * - {@link PostgresNpcStore} — writes to Postgres with `ON CONFLICT` upserts.
+ * - {@link InMemoryNpcStore} — Map/array-based for tests and fallback mode.
+ */
 import type { Pool } from "pg";
 import type { Conversation, Message } from "../engine/conversation.js";
 import type { Player } from "../engine/types.js";
 
+/** Metadata recorded for each LLM generation (reply or reflection). */
 export interface GenerationRecord {
   conversationId?: number;
   playerId: string;
@@ -15,6 +24,7 @@ export interface GenerationRecord {
   tick: number;
 }
 
+/** Abstract persistence interface for NPC-related data. */
 export interface NpcPersistenceStore {
   upsertPlayer(player: Player): Promise<void>;
   upsertConversation(conversation: Conversation): Promise<void>;

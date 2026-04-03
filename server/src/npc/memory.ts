@@ -1,7 +1,19 @@
+/**
+ * NPC memory manager — stores, retrieves, and reflects on memories.
+ *
+ * Memories are embedded as vectors and stored in the {@link MemoryStore}
+ * (Postgres + pgvector, or in-memory fallback). Retrieval uses a composite
+ * score combining recency, importance, and vector relevance:
+ *
+ *   score = 0.99^ticksAgo  +  importance/10  +  cosineSimilarity(query, memory)
+ *
+ * When cumulative importance of recent memories exceeds a threshold,
+ * a reflection is generated (either template-based or via the LLM provider).
+ */
 import type { Memory, MemoryStore, ScoredMemory } from "../db/repository.js";
 import type { Embedder } from "./embedding.js";
 
-/** Exponential decay factor per tick for memory recency scoring */
+/** Exponential decay factor per tick for memory recency scoring. */
 const RECENCY_DECAY = 0.99;
 /** Cumulative importance sum that triggers a reflection generation */
 const REFLECTION_THRESHOLD = 50;

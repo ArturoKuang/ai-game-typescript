@@ -1,4 +1,10 @@
-// Mirrors server types
+/**
+ * Client-side type definitions mirroring the server's protocol and engine types.
+ *
+ * These are manually kept in sync with `server/src/engine/types.ts` and
+ * `server/src/network/protocol.ts`. When the server types change, update
+ * this file to match.
+ */
 
 export interface Position {
   x: number;

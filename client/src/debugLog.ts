@@ -1,3 +1,13 @@
+/**
+ * Client-side debug event ring buffer.
+ *
+ * Records reconciliation corrections and other debug events in a fixed-size
+ * circular buffer. Exposed on `window.__AI_TOWN_CLIENT_DEBUG__` so developers
+ * can inspect events from the browser console:
+ *
+ *   window.__AI_TOWN_CLIENT_DEBUG__?.getEvents()
+ */
+
 export interface ClientDebugEvent {
   time: number;
   type: string;

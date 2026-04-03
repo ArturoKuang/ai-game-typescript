@@ -1,6 +1,21 @@
+/**
+ * PixiJS game renderer — draws the tile map, player sprites, and overlays.
+ *
+ * Rendering layers (bottom to top):
+ * 1. **Tiles** — colored rectangles per tile type with subtle grid lines.
+ * 2. **Activities** — emoji labels at activity positions.
+ * 3. **Conversation lines** — red lines connecting conversing player pairs.
+ * 4. **Players** — colored circles with name labels, chat bubbles, and
+ *    "..." waiting indicators.
+ *
+ * The local player's sprite snaps instantly to its position (already
+ * predicted by the client). Remote players are smoothed with a lerp
+ * factor of 0.3 to hide network jitter.
+ */
 import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
 import type { Activity, Player, TileType } from "./types.js";
 
+/** Pixels per tile edge. */
 const TILE_SIZE = 32;
 
 const TILE_COLORS: Record<TileType, number> = {
@@ -91,6 +106,7 @@ export class GameRenderer {
     }
   }
 
+  /** Update player sprites each frame — create, move, recolor, and draw conversation lines. */
   updatePlayers(players: Player[]): void {
     const currentIds = new Set(players.map((p) => p.id));
 
@@ -175,6 +191,7 @@ export class GameRenderer {
     }
   }
 
+  /** Show a temporary chat bubble above a player (auto-removes after 5 s). */
   showChatBubble(playerId: string, content: string): void {
     const sprite = this.playerSprites.get(playerId);
     if (!sprite) return;

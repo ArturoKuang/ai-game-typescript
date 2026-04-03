@@ -2,9 +2,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
+  type MovementHarnessScenarioName,
   formatMovementHarnessResult,
   listMovementHarnessScenarios,
-  type MovementHarnessScenarioName,
   runMovementHarnessScenario,
 } from "./movementHarness.js";
 

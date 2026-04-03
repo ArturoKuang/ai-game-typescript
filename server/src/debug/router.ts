@@ -1,3 +1,13 @@
+/**
+ * Express debug API — inspect and control the game simulation via HTTP.
+ *
+ * Routes are grouped into three categories:
+ * - **Read** — `/state`, `/map`, `/players`, `/log`, `/conversations`, `/memories`
+ * - **Engine-integrated** — `/tick`, `/spawn`, `/move`, `/input`, `/mode`, `/scenario`
+ * - **Direct mutation** — `/start-convo`, `/say`, `/end-convo` (bypass normal event path)
+ *
+ * @see docs/debug-api.md for full request/response examples
+ */
 import { Router } from "express";
 import type { Pool } from "pg";
 import type { GameLoop } from "../engine/gameLoop.js";
@@ -83,12 +93,13 @@ export function createDebugRouter(
       ? Number.parseInt(req.query.limit as string, 10)
       : 50;
     const playerId = req.query.playerId as string | undefined;
-    const types = typeof req.query.type === "string"
-      ? req.query.type
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean)
-      : undefined;
+    const types =
+      typeof req.query.type === "string"
+        ? req.query.type
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean)
+        : undefined;
     res.json(game.logger.getEvents({ since, limit, playerId, types }));
   });
 

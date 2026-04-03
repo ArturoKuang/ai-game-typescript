@@ -1,5 +1,30 @@
+/**
+ * Conversation lifecycle manager.
+ *
+ * Conversations follow a state machine:
+ *
+ *   invited ──▶ walking ──▶ active ──▶ ended
+ *       │                              ▲
+ *       └──────── declined ────────────┘
+ *
+ * - **invited**: initiator has requested; target has not yet responded.
+ *   NPCs auto-accept (they have no client UI for manual acceptance).
+ * - **walking**: both players are navigating toward a rendezvous point
+ *   near the midpoint. Once within `CONVERSATION_DISTANCE` tiles, the
+ *   conversation activates.
+ * - **active**: messages can be exchanged. Ends when either player
+ *   leaves, a timeout fires, or message/duration limits are hit.
+ * - **ended**: terminal state; players are freed to start new conversations.
+ *
+ * The manager tracks a `playerToConvo` index for O(1) lookups of a
+ * player's current conversation.
+ */
 import type { GameEvent, Player, Position } from "./types.js";
 
+/**
+ * Conversation state machine states.
+ * @see module docs for the transition diagram.
+ */
 export type ConvoState = "invited" | "walking" | "active" | "ended";
 export type ConversationEndReason =
   | "declined"
@@ -54,7 +79,10 @@ export class ConversationManager {
     }
 
     // Check neither player is already in a conversation (O(1))
-    if (this.playerToConvo.has(player1Id) || this.playerToConvo.has(player2Id)) {
+    if (
+      this.playerToConvo.has(player1Id) ||
+      this.playerToConvo.has(player2Id)
+    ) {
       throw new Error("One or both players are already in a conversation");
     }
 
@@ -315,6 +343,14 @@ function distance(
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
+/**
+ * Generate candidate meeting points for two players.
+ *
+ * Starts with the rounded midpoint, then offsets by ±1 tile in each
+ * cardinal direction, and finally each player's own rounded position.
+ * This gives pathfinding several options if the midpoint lands on a
+ * blocked tile.
+ */
 function buildRendezvousCandidates(
   left: Position,
   right: Position,
@@ -340,6 +376,7 @@ function buildRendezvousCandidates(
   });
 }
 
+/** Set a player's movement target to the first reachable rendezvous candidate. */
 function ensureConversationTarget(
   player: Player,
   candidates: Position[],
@@ -365,6 +402,7 @@ function ensureConversationTarget(
   }
 }
 
+/** Deep-clone a conversation (including its messages) for safe event payloads. */
 export function snapshotConversation(conversation: Conversation): Conversation {
   return {
     ...conversation,

@@ -1,3 +1,10 @@
+/**
+ * Resilient wrapper around a primary + fallback NPC model provider.
+ *
+ * On primary failure, marks it as unavailable and uses the fallback.
+ * The primary is re-tried after `recoveryMs` (default 30 s). A single
+ * successful primary call clears the failure state.
+ */
 import type {
   NpcModelProvider,
   NpcModelResponse,
@@ -5,6 +12,7 @@ import type {
   NpcReplyRequest,
 } from "./provider.js";
 
+/** How long to wait before retrying the primary provider after a failure. */
 const DEFAULT_RECOVERY_MS = 30_000;
 
 export class ResilientNpcProvider implements NpcModelProvider {

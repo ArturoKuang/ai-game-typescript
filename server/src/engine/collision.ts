@@ -1,8 +1,31 @@
+/**
+ * AABB tile collision for continuous player movement.
+ *
+ * ## Coordinate system
+ * Runtime player coordinates are **centered on integer tiles**: tile (2, 3) has
+ * its center at world-space (2, 3) and its bounds span [1.5, 2.5] x [2.5, 3.5].
+ *
+ * Internally, the collision helpers work on a **unit grid** where tile (tx, ty)
+ * spans [tx, tx+1] x [ty, ty+1]. The public functions translate by +0.5 before
+ * resolving and -0.5 afterward so callers always use centered coordinates.
+ *
+ * ## Resolution strategy
+ * 1. Movement is subdivided into steps no larger than `radius` to prevent
+ *    tunneling through thin walls at high speed.
+ * 2. Each step resolves X first, then Y (axis-separated).
+ * 3. The X pass only resolves tiles where X penetration is strictly shallower
+ *    than Y penetration. This prevents the player from getting "stuck" at
+ *    diagonal corners—corner-touching overlaps are left for the Y (catch-all) pass.
+ *
+ * @see docs/server-engine.md – "Collision" section
+ */
 import type { Position } from "./types.js";
 import type { World } from "./world.js";
 
+/** Default collision half-extent for all players. */
 export const PLAYER_RADIUS = 0.4;
 
+/** Tiny offset to avoid false boundary overlaps from float rounding. */
 const EPSILON = 1e-6;
 
 /**
@@ -35,6 +58,7 @@ export function moveWithCollision(
   return { x: shifted.x - 0.5, y: shifted.y - 0.5 };
 }
 
+/** Returns the first blocked tile that overlaps the player's AABB, or null. */
 export function findBlockedTileOverlap(
   x: number,
   y: number,
@@ -44,6 +68,7 @@ export function findBlockedTileOverlap(
   return findBlockedTileOverlapOnUnitGrid(x + 0.5, y + 0.5, radius, world);
 }
 
+/** Core collision loop operating on unit-grid coordinates (tile [tx, tx+1]). */
 function moveWithCollisionOnUnitGrid(
   x: number,
   y: number,
@@ -92,14 +117,8 @@ function findBlockedTileOverlapOnUnitGrid(
     for (let tx = minTX; tx <= maxTX; tx++) {
       if (world.isWalkable(tx, ty)) continue;
 
-      const overlapX = Math.min(
-        cx + radius - tx,
-        tx + 1 - (cx - radius),
-      );
-      const overlapY = Math.min(
-        cy + radius - ty,
-        ty + 1 - (cy - radius),
-      );
+      const overlapX = Math.min(cx + radius - tx, tx + 1 - (cx - radius));
+      const overlapY = Math.min(cy + radius - ty, ty + 1 - (cy - radius));
 
       if (overlapX > 0 && overlapY > 0) {
         return { x: tx, y: ty };
@@ -134,14 +153,8 @@ function resolveX(
       if (world.isWalkable(tx, ty)) continue;
 
       // Compute overlap depth on each axis
-      const overlapX = Math.min(
-        cx + radius - tx,
-        tx + 1 - (cx - radius),
-      );
-      const overlapY = Math.min(
-        cy + radius - ty,
-        ty + 1 - (cy - radius),
-      );
+      const overlapX = Math.min(cx + radius - tx, tx + 1 - (cx - radius));
+      const overlapY = Math.min(cy + radius - ty, ty + 1 - (cy - radius));
 
       if (overlapX <= 0 || overlapY <= 0) continue;
 
@@ -188,14 +201,8 @@ function resolveY(
     for (let tx = minTX; tx <= maxTX; tx++) {
       if (world.isWalkable(tx, ty)) continue;
 
-      const overlapX = Math.min(
-        cx + radius - tx,
-        tx + 1 - (cx - radius),
-      );
-      const overlapY = Math.min(
-        cy + radius - ty,
-        ty + 1 - (cy - radius),
-      );
+      const overlapX = Math.min(cx + radius - tx, tx + 1 - (cx - radius));
+      const overlapY = Math.min(cy + radius - ty, ty + 1 - (cy - radius));
 
       if (overlapX <= 0 || overlapY <= 0) continue;
 

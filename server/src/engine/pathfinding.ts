@@ -1,12 +1,20 @@
+/**
+ * A* pathfinding on a 4-directional tile grid.
+ *
+ * Uses a binary min-heap for O(log n) open-set extraction and integer
+ * position keys to avoid string allocation. The heuristic is Manhattan
+ * distance (admissible for 4-directional movement with unit cost).
+ */
 import type { Position } from "./types.js";
 import type { World } from "./world.js";
 
+/** Internal A* search node. */
 interface Node {
   x: number;
   y: number;
   g: number; // cost from start
   h: number; // heuristic to goal
-  f: number; // g + h
+  f: number; // g + h (total estimated cost)
   parent: Node | null;
 }
 
@@ -86,9 +94,10 @@ export function findPath(
   if (start.x === goal.x && start.y === goal.y) return [start];
 
   const height = world.height;
-  // The open heap orders candidates by f-score for O(log n) extraction.
-  // bestG tracks the lowest g-score seen per position so we can skip
-  // nodes that were re-added to the heap with a worse path.
+  // open  — min-heap ordered by f-score for O(log n) extraction.
+  // closed — positions already expanded (skip if re-encountered).
+  // bestG — lowest g-score seen per position; nodes re-added with a worse
+  //         g are skipped, avoiding redundant expansion.
   const open = new MinHeap();
   const closed = new Set<number>();
 

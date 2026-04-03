@@ -1,3 +1,10 @@
+/**
+ * PostgreSQL connection pool singleton.
+ *
+ * Uses `DATABASE_URL` from the environment, defaulting to the Docker
+ * Compose dev credentials. The pool is created lazily on first call to
+ * {@link getPool} and shared for the lifetime of the process.
+ */
 import pg from "pg";
 
 const { Pool } = pg;
