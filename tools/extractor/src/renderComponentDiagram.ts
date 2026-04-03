@@ -5,6 +5,8 @@ import type {
   ComponentDiagram,
   ComponentDiagramBoundary,
   ComponentDiagramCard,
+  ComponentDiagramContainer,
+  ComponentDiagramView,
 } from "./types.js";
 
 const GRAPH_PATH = resolve(import.meta.dirname, "..", "graph.json");
@@ -17,7 +19,13 @@ function main(): void {
     throw new Error("graph.json does not contain componentDiagram");
   }
 
-  const mermaid = renderMermaid(graph.componentDiagram);
+  const defaultView = graph.componentDiagram.views.find((view) => view.id === graph.componentDiagram!.defaultViewId)
+    ?? graph.componentDiagram.views[0];
+  if (!defaultView) {
+    throw new Error("componentDiagram does not contain any views");
+  }
+
+  const mermaid = renderMermaid(graph.componentDiagram, defaultView);
   writeFileSync(MERMAID_PATH, `${mermaid}\n`);
   writeFileSync(
     MARKDOWN_PATH,
@@ -26,10 +34,14 @@ function main(): void {
       "",
       "_Generated from `tools/extractor/graph.json`._",
       "",
-      "```mermaid",
-      mermaid,
-      "```",
-      "",
+      ...graph.componentDiagram.views.flatMap((view) => [
+        `## ${view.name}`,
+        "",
+        "```mermaid",
+        renderMermaid(graph.componentDiagram!, view),
+        "```",
+        "",
+      ]),
     ].join("\n"),
   );
 
@@ -37,10 +49,22 @@ function main(): void {
   console.log(`Wrote ${MARKDOWN_PATH}`);
 }
 
-function renderMermaid(diagram: ComponentDiagram): string {
+function renderMermaid(diagram: ComponentDiagram, view: ComponentDiagramView): string {
+  const system = diagram.systems.find((item) => item.id === view.systemId);
+  const boundary = diagram.boundaries.find((item) => item.id === view.boundaryId);
+  if (!system || !boundary) {
+    throw new Error(`Component diagram view ${view.id} is missing its system or boundary`);
+  }
+
+  const cards = diagram.cards.filter((item) => item.viewId === view.id);
+  const containers = diagram.containers.filter((item) => item.viewId === view.id);
+  const edges = diagram.edges.filter((item) => item.viewId === view.id);
+
   const lines: string[] = [
     "flowchart TB",
     "  classDef boundary fill:#0f172a,stroke:#475569,stroke-width:2px,color:#e5e7eb;",
+    "  classDef application fill:#111827,stroke:#94a3b8,stroke-width:1.5px,color:#f8fafc;",
+    "  classDef datastore fill:#07121f,stroke:#14b8a6,stroke-width:1.5px,color:#f8fafc;",
     "  classDef client fill:#2d1400,stroke:#FE6100,stroke-width:1.5px,color:#f8fafc;",
     "  classDef server fill:#111827,stroke:#648FFF,stroke-width:1.5px,color:#f8fafc;",
     "  classDef network fill:#0a2230,stroke:#22D3EE,stroke-width:1.5px,color:#f8fafc;",
@@ -51,27 +75,35 @@ function renderMermaid(diagram: ComponentDiagram): string {
     "",
   ];
 
-  for (const boundary of diagram.boundaries) {
-    lines.push(`  subgraph ${toMermaidId(boundary.id)}["${escapeLabel(boundary.label)}"]`);
-    lines.push(`    direction TB`);
-    for (const card of diagram.cards.filter((item) => item.boundaryId === boundary.id)) {
-      lines.push(`    ${toMermaidId(card.id)}["${renderCardLabel(card)}"]`);
-    }
-    lines.push("  end");
-    lines.push(`  class ${toMermaidId(boundary.id)} boundary;`);
-    lines.push("");
+  lines.push(`  subgraph ${toMermaidId(system.id)}["${escapeLabel(system.label)}"]`);
+  lines.push("    direction LR");
+  for (const container of containers) {
+    lines.push(`    ${toMermaidId(container.id)}["${renderContainerLabel(container)}"]`);
   }
+  lines.push(`    subgraph ${toMermaidId(boundary.id)}["${escapeLabel(boundary.label)}"]`);
+  lines.push("      direction TB");
+  for (const card of cards) {
+    lines.push(`      ${toMermaidId(card.id)}["${renderCardLabel(card)}"]`);
+  }
+  lines.push("    end");
+  lines.push("  end");
+  lines.push(`  class ${toMermaidId(system.id)} boundary;`);
+  lines.push(`  class ${toMermaidId(boundary.id)} boundary;`);
+  lines.push("");
 
-  for (const card of diagram.cards) {
-    lines.push(`  class ${toMermaidId(card.id)} ${cardClass(card, diagram.boundaries)};`);
+  for (const container of containers) {
+    lines.push(`  class ${toMermaidId(container.id)} ${container.kind === "datastore" ? "datastore" : "application"};`);
+  }
+  for (const card of cards) {
+    lines.push(`  class ${toMermaidId(card.id)} ${cardClass(card, boundary)};`);
   }
   lines.push("");
 
-  for (const edge of diagram.edges) {
+  for (const edge of edges) {
     const arrow = edge.bidirectional ? "<-->" : "-->";
     const source = toMermaidId(edge.source);
     const target = toMermaidId(edge.target);
-    const label = escapeLabel(edge.label).replaceAll("\n", "<br/>");
+    const label = escapeLabel(edge.technology ? `${edge.label}\n${edge.technology}` : edge.label).replaceAll("\n", "<br/>");
     lines.push(`  ${source} ${arrow}|"${label}"| ${target}`);
   }
 
@@ -104,22 +136,25 @@ function renderCardLabel(card: ComponentDiagramCard): string {
   return parts.join("<br/>");
 }
 
+function renderContainerLabel(container: ComponentDiagramContainer): string {
+  return [escapeLabel(container.name), escapeLabel(container.technology), escapeLabel(container.description)].join("<br/>");
+}
+
 function cardClass(
   card: ComponentDiagramCard,
-  boundaries: ComponentDiagramBoundary[],
+  boundary: ComponentDiagramBoundary,
 ): string {
-  const boundary = boundaries.find((item) => item.id === card.boundaryId);
-  if (boundary?.id === "diagram-boundary-client") return "client";
+  if (boundary.id.includes("browser-client")) return "client";
   switch (card.id) {
-    case "diagram-server-network":
+    case "component-view-game-server-websocket-gateway":
       return "network";
-    case "diagram-server-engine":
+    case "component-view-game-server-simulation-core":
       return "engine";
-    case "diagram-server-npc":
+    case "component-view-game-server-npc-orchestration":
       return "npc";
-    case "diagram-server-persistence":
+    case "component-view-game-server-persistence-adapters":
       return "persistence";
-    case "diagram-server-debug":
+    case "component-view-game-server-debug-api":
       return "debug";
     default:
       return "server";

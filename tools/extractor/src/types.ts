@@ -22,9 +22,19 @@ export interface ArchitectureGraph {
   commands: CommandInfo[];
   boundaries: BoundaryEdge[];
   internals: ComponentInternal[];
+  httpRoutes: HttpRouteFact[];
+  httpRequests: HttpRequestFact[];
+  transportMessages: TransportMessageFact[];
+  fileAccesses: FileAccessFact[];
+  sqlOperations: SqlOperationFact[];
   messageFlows: MessageFlow[];
   messageFlowGroups: MessageFlowGroup[];
   stateMachines: StateMachine[];
+  dataStructures: DataStructure[];
+  dataStructureRelations: DataStructureRelation[];
+  dataStructureAccesses: DataStructureAccess[];
+  dataModelEvidence: DataModelEvidence[];
+  containerDiagram?: ContainerDiagram;
   componentDiagram?: ComponentDiagram;
 }
 
@@ -96,6 +106,48 @@ export interface ModuleFact {
   sqlFlags: string[];
 }
 
+export interface HttpRouteFact {
+  method: "GET" | "POST";
+  path: string;
+  fileId: string;
+  line: number;
+  ownerSymbol?: string;
+}
+
+export interface HttpRequestFact {
+  method: "GET" | "POST";
+  path: string;
+  fileId: string;
+  line: number;
+  caller?: string;
+}
+
+export interface TransportMessageFact {
+  channel: "websocket";
+  direction: "client_to_server" | "server_to_client";
+  messageType: string;
+  fileId: string;
+  line: number;
+  symbol?: string;
+}
+
+export interface FileAccessFact {
+  kind: "read" | "exists_check" | "static_serve" | "import";
+  fileId: string;
+  line: number;
+  targetPath: string;
+  detail: string;
+}
+
+export interface SqlOperationFact {
+  operation: "select" | "insert" | "update" | "delete";
+  tables: string[];
+  fileId: string;
+  line: number;
+  symbol?: string;
+  detail: string;
+}
+
 /** File-to-file import edge */
 export interface ImportEdge {
   source: string;
@@ -151,6 +203,142 @@ export interface ComponentInternal {
   }[];
   /** Functions/classes imported and used but not stored as fields */
   usedUtilities: { name: string; source: string; purpose: string }[];
+}
+
+// ---------------------------------------------------------------------------
+// Data Model
+// ---------------------------------------------------------------------------
+
+export type DataStructureCategory =
+  | "domain"
+  | "transport"
+  | "database"
+  | "disk_file"
+  | "in_memory"
+  | "debug_test"
+  | "ui_view";
+
+export type DataStructureKind =
+  | "interface"
+  | "type_alias"
+  | "union"
+  | "table"
+  | "asset"
+  | "store";
+
+export type DataStructureSourceKind = "ts" | "sql" | "json";
+
+export interface DataStructure {
+  id: string;
+  name: string;
+  category: DataStructureCategory;
+  conceptGroup?: string;
+  kind: DataStructureKind;
+  sourceKind: DataStructureSourceKind;
+  fileId: string;
+  exported: boolean;
+  canonical: boolean;
+  componentIds: string[];
+  summary?: string;
+  purpose?: string;
+  fieldCount: number;
+  fields: DataStructureField[];
+  variants: DataStructureVariant[];
+  mirrorIds: string[];
+  badges: string[];
+  evidenceIds: string[];
+}
+
+export interface DataStructureField {
+  id: string;
+  name: string;
+  typeText: string;
+  optional: boolean;
+  readonly: boolean;
+  description?: string;
+  referencedStructureId?: string;
+  evidenceIds: string[];
+}
+
+export interface DataStructureVariant {
+  id: string;
+  label: string;
+  discriminatorField?: string;
+  discriminatorValue?: string;
+  summary?: string;
+  fields: DataStructureField[];
+  evidenceIds: string[];
+}
+
+export type DataStructureRelationKind =
+  | "contains"
+  | "mirrors"
+  | "serialized_as"
+  | "persisted_as"
+  | "loaded_from"
+  | "stored_in"
+  | "indexed_by";
+
+export interface DataStructureRelation {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  kind: DataStructureRelationKind;
+  label: string;
+  reason?: string;
+  confidence: ComponentDiagramConfidence;
+  evidenceIds: string[];
+}
+
+export type DataAccessKind =
+  | "create"
+  | "read"
+  | "lookup"
+  | "index_lookup"
+  | "iterate"
+  | "write"
+  | "append"
+  | "remove"
+  | "serialize"
+  | "deserialize"
+  | "persist_read"
+  | "persist_write"
+  | "clone"
+  | "mirror";
+
+export type DataAccessLifecycle =
+  | "startup"
+  | "tick_path"
+  | "event_driven"
+  | "request_path"
+  | "debug_only"
+  | "test_only"
+  | "unknown";
+
+export interface DataStructureAccess {
+  id: string;
+  structureId: string;
+  accessKind: DataAccessKind;
+  actorName?: string;
+  actorKind?: "function" | "method" | "class" | "module" | "sql_query" | "runtime_store";
+  actorFileId: string;
+  componentId?: string;
+  accessPath?: string;
+  lifecycle: DataAccessLifecycle;
+  reason?: string;
+  line?: number;
+  confidence: ComponentDiagramConfidence;
+  evidenceIds: string[];
+}
+
+export interface DataModelEvidence {
+  id: string;
+  kind: string;
+  confidence: ComponentDiagramConfidence;
+  fileId: string;
+  line?: number;
+  symbol?: string;
+  detail: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -246,14 +434,130 @@ export interface StateMachineTransition {
 }
 
 // ---------------------------------------------------------------------------
+// Container Diagram
+// ---------------------------------------------------------------------------
+
+export interface ContainerDiagram {
+  system: ContainerDiagramSystem;
+  people?: ContainerDiagramPerson[];
+  externalSystems?: ContainerDiagramExternalSystem[];
+  containers: ContainerDiagramContainer[];
+  relationships: ContainerDiagramRelationship[];
+  evidence: ContainerDiagramEvidence[];
+}
+
+export interface ContainerDiagramSystem {
+  id: string;
+  label: string;
+  description: string;
+  position: DiagramPoint;
+  size: DiagramSize;
+}
+
+export interface ContainerDiagramPerson {
+  id: string;
+  name: string;
+  description: string;
+  position: DiagramPoint;
+}
+
+export interface ContainerDiagramExternalSystem {
+  id: string;
+  name: string;
+  technology?: string;
+  description: string;
+  position: DiagramPoint;
+}
+
+export interface ContainerDiagramContainer {
+  id: string;
+  kind: "application" | "datastore";
+  name: string;
+  technology: string;
+  description: string;
+  responsibilities: string[];
+  color: string;
+  position: DiagramPoint;
+  size: DiagramSize;
+  codePaths: string[];
+  componentTargets?: ContainerDiagramComponentTarget[];
+  fileIds?: string[];
+  badges?: string[];
+  summary?: string;
+  evidenceIds: string[];
+  openNext?: ContainerDiagramOpenTarget[];
+}
+
+export interface ContainerDiagramComponentTarget {
+  kind: "boundary" | "card";
+  id: string;
+  reason: string;
+}
+
+export interface ContainerDiagramRelationship {
+  id: string;
+  source: string;
+  target: string;
+  description: string;
+  technology: string;
+  confidence: "exact" | "derived" | "declared";
+  optional?: boolean;
+  synchronous?: boolean;
+  evidenceIds: string[];
+}
+
+export interface ContainerDiagramEvidence {
+  id: string;
+  kind: string;
+  confidence: "exact" | "derived" | "declared";
+  fileId?: string;
+  line?: number;
+  symbol?: string;
+  detail: string;
+}
+
+export interface ContainerDiagramOpenTarget {
+  label: string;
+  target:
+    | { kind: "component_boundary"; boundaryId: string }
+    | { kind: "component_card"; cardId: string }
+    | { kind: "file"; fileId: string }
+    | { kind: "flow"; flowId: string };
+  reason: string;
+}
+
+// ---------------------------------------------------------------------------
 // Detailed Component Diagram
 // ---------------------------------------------------------------------------
 
 export interface ComponentDiagram {
+  defaultViewId: string;
+  views: ComponentDiagramView[];
+  systems: ComponentDiagramSystem[];
   boundaries: ComponentDiagramBoundary[];
+  containers: ComponentDiagramContainer[];
   cards: ComponentDiagramCard[];
   edges: ComponentDiagramEdge[];
   evidence: ComponentDiagramEvidence[];
+}
+
+export interface ComponentDiagramView {
+  id: string;
+  containerId: string;
+  name: string;
+  description: string;
+  systemId: string;
+  boundaryId: string;
+}
+
+export interface ComponentDiagramSystem {
+  id: string;
+  viewId: string;
+  label: string;
+  description: string;
+  color: string;
+  position: DiagramPoint;
+  size: DiagramSize;
 }
 
 export interface DiagramPoint {
@@ -268,6 +572,7 @@ export interface DiagramSize {
 
 export interface ComponentDiagramBoundary {
   id: string;
+  viewId: string;
   label: string;
   technology: string;
   description: string;
@@ -276,8 +581,22 @@ export interface ComponentDiagramBoundary {
   size: DiagramSize;
 }
 
+export interface ComponentDiagramContainer {
+  id: string;
+  viewId: string;
+  containerId: string;
+  name: string;
+  technology: string;
+  description: string;
+  color: string;
+  kind: "application" | "datastore";
+  position: DiagramPoint;
+  size: DiagramSize;
+}
+
 export interface ComponentDiagramCard {
   id: string;
+  viewId: string;
   boundaryId: string;
   title: string;
   subtitle?: string;
@@ -349,12 +668,14 @@ export interface ComponentDiagramOpenTarget {
 
 export interface ComponentDiagramEdge {
   id: string;
+  viewId: string;
   source: string;
   target: string;
   label: string;
   color: string;
   relationshipKind: ComponentDiagramRelationshipKind;
   evidenceIds: string[];
+  technology?: string;
   counts?: Partial<Record<ComponentDiagramConfidence, number>>;
   dash?: string;
   bidirectional?: boolean;
