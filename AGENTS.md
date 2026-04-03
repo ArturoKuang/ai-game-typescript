@@ -1,217 +1,416 @@
-# AI Town — Agent Instructions
+# AI Town -- Codex Agent Instructions
 
-> Instructions for AI coding agents (Codex, Claude Code, Cursor, etc.)
+> Tuned for OpenAI Codex running autonomously in a sandboxed environment.
+> For interactive Claude Code sessions, see `CLAUDE.md`.
 
-## Quick Start
+## Overview
+
+AI Town is a multiplayer social simulation game where human players and AI-driven NPCs inhabit a tile-based town, move around, and have conversations. The server is a Node.js/TypeScript application with a WebSocket interface for real-time clients and a REST debug API. A browser client renders the world with PixiJS.
+
+## Sandbox Constraints
+
+Codex runs in an isolated sandbox. These constraints shape what you can and cannot verify:
+
+- **No Docker.** You cannot run `docker compose` commands. All work must use the host-mode path.
+- **No external network.** You cannot `curl localhost:3001` or connect a WebSocket. E2E verification against a live server is not available.
+- **No browser.** You cannot open a browser or run Playwright.
+- **No persistent processes.** You can run `npm test` and one-shot scripts, but not long-running servers.
+- **npm install works.** Dependencies are already installed. If you need to reinstall: `cd server && npm install`.
+
+**What this means for workflow:** Your verification loop is `edit -> npm test -> read output -> fix -> repeat`. When the CLAUDE.md workflow says "verify live end-to-end," you must substitute with a test that exercises the same runtime path. If you cannot write such a test, state that E2E verification was not possible and explain what a human should check.
+
+## Project Structure
+
+```
+server/              # Game server (Docker in prod, host-mode for dev/test)
+  src/
+    index.ts         # Entry point -- Express + WebSocket bootstrap
+    engine/          # Core simulation (NO I/O -- fully testable in isolation)
+      gameLoop.ts    # Tick-based game loop (stepped or realtime mode)
+      world.ts       # Immutable tile grid, walkability, spawn points
+      collision.ts   # AABB tile collision for continuous movement
+      pathfinding.ts # A* pathfinding (4-directional, Manhattan heuristic)
+      conversation.ts# Conversation lifecycle state machine
+      types.ts       # ALL shared data models (Player, Activity, Position, etc.)
+      logger.ts      # In-memory ring-buffer event log (1000 events)
+      rng.ts         # Seeded xorshift128 PRNG -- deterministic sequences
+    network/
+      websocket.ts   # WebSocket server -- translates events <-> messages
+      protocol.ts    # Client/server message discriminated unions
+    db/
+      client.ts      # PostgreSQL connection pool (pg)
+      migrate.ts     # Schema migration runner
+      repository.ts  # Persistence layer (memories + game log)
+      schema.sql     # Full DDL (pgvector enabled)
+    npc/
+      embedding.ts   # Placeholder embedder + cosine similarity
+      memory.ts      # Memory manager (scoring, retrieval, reflection)
+    debug/
+      router.ts      # Express debug API routes
+      asciiMap.ts    # Terminal map renderer
+      scenarios.ts   # Pre-built test scenarios
+  test/              # Vitest test files
+    helpers/
+      testGame.ts    # Shared test fixtures (mini 5x5 map, default 20x20 map)
+client/              # Browser client (runs on host, NOT in Docker)
+  src/
+    main.ts          # Entry point -- wires PixiJS, WebSocket, UI
+    renderer.ts      # PixiJS tile map + player sprites
+    network.ts       # WebSocket client (connects to :3001)
+    ui.ts            # Chat panel, player list, status bar
+    types.ts         # Mirrors server protocol types (manually synced)
+data/
+  map.json           # 20x20 town map (tiles, activities, spawn points)
+  characters.ts      # NPC personality definitions
+docs/
+  architecture.md    # System diagrams, tick lifecycle, state machines
+  debug-api.md       # Full API reference with curl examples
+  getting-started.md # Setup and first-run guide
+```
+
+## Commands
 
 ```bash
-cd server
-npm install
-npm test          # Verify everything passes before making changes
+cd server && npm test                # Run all tests (Vitest) -- this is your primary feedback loop
+cd server && npx vitest run          # Same thing, explicit
+cd server && npx vitest run test/conversation.test.ts   # Run a single test file
+cd server && npx tsc --noEmit        # Type-check without emitting (fast)
 ```
 
-No database or Docker required for development — tests run fully in-memory.
-
-## Repository Layout
-
-```
-server/src/engine/    # Core game simulation (gameLoop, world, pathfinding, conversation)
-server/src/network/   # WebSocket server and protocol types
-server/src/db/        # PostgreSQL persistence layer (pgvector)
-server/src/npc/       # NPC intelligence (embeddings)
-server/src/debug/     # REST debug API and test scenarios
-server/test/          # Vitest test suite
-data/map.json         # 20x20 tile-based town map
+You do NOT have access to these (they require Docker or a running server):
+```bash
+# docker compose up --build -d       # NOT AVAILABLE in sandbox
+# curl localhost:3001/api/debug/...  # NOT AVAILABLE in sandbox
+# npm run dev                        # NOT USEFUL without a client to connect
 ```
 
-## Development Workflow
+## Tech Stack
 
-When implementing features or fixing bugs, follow this workflow:
+- **Runtime**: Node.js 20, ES modules (`"type": "module"`)
+- **Language**: TypeScript 5.7 (strict mode, ES2022 target, NodeNext module resolution)
+- **Server**: Express 4
+- **WebSocket**: ws 8
+- **Database**: PostgreSQL 16 + pgvector (1536-dim embeddings) -- NOT available in sandbox
+- **Testing**: Vitest 3
+- **Runner**: tsx (dev and production)
+- **Client**: PixiJS 8, Vite 6
+- **Infrastructure**: Docker Compose (db + game-server) -- NOT available in sandbox
 
-1. **Read state** — understand the current game state and relevant code before changing anything
-2. **Reproduce** — prefer `npm run debug:movement -- --scenario ...` or the debug API before editing
-3. **Write a failing runtime contract** — assert the gameplay behavior, not just helper math
-4. **Implement** — write the code changes
-5. **Add parity or invariant coverage when relevant** — use client/server parity tests and `validateInvariants` for movement bugs
-6. **Run tests** — `cd server && npm test` — fix until green
-7. **Verify live end-to-end** — always run at least one E2E check of the finished feature against a running server using the real surface area involved (WebSocket, debug API, movement harness, or browser flow)
-8. **Inspect live state** — confirm the result via debug API (`GET /api/debug/map`, `GET /api/debug/state`, logs, or conversation endpoints)
-9. **Report** — show test results, the harness or debug log used, and an ASCII map snapshot. If E2E verification was blocked, say exactly why instead of claiming completion.
+## Hard Rules
 
-Before committing, always run tests and verify via the debug API.
+These are architectural invariants. Violating any of them will introduce bugs that tests may not catch.
 
-## Making Changes
+### 1. The engine/ directory has ZERO I/O dependencies
 
-### Before You Start
+`engine/` must never import from `db/`, `network/`, `npc/`, `debug/`, or Node.js I/O modules (`fs`, `net`, `http`). This is what makes the engine fully testable without a database or network. If you need to add behavior that requires I/O, put it outside `engine/` and pass data in via function arguments or callbacks.
 
-1. Read the relevant source files before editing.
-2. Run `npm test` from `server/` to confirm a green baseline.
+**How to check:** `grep -r "from.*db/" server/src/engine/` should return nothing. Same for `network/`, `npc/`, `debug/`, `node:fs`, `node:net`, `node:http`.
 
-### After You Finish
+### 2. All game state mutations go through the command queue
 
-1. Run `npm test` from `server/` and ensure all tests pass.
-2. Run at least one end-to-end verification of the completed feature against a live server path before declaring the work done.
-3. If the feature touches runtime gameplay, WebSocket flows, NPC behavior, or persistence, prefer a real server exercise over a unit-only check.
-4. If the feature touches Docker, startup/bootstrap code, filesystem paths, environment wiring, or the normal `npm run dev` path, the E2E verification must include the Docker path (`docker compose ...` or `npm run dev`), not just host-mode startup.
-5. If you added new game logic, add a test in `server/test/`.
-6. If you added a new module, use ES module syntax with `.js` import extensions.
+WebSocket handlers and the debug API do NOT mutate game state directly. They call `game.enqueue(command)`. Commands are drained at the start of each tick in FIFO order. This ensures:
+- Deterministic replay (same commands in same order = same result)
+- Stepped mode works correctly (commands accumulate between manual ticks)
+- No race conditions between WebSocket handlers and the tick loop
 
-## Code Rules
+**The one exception:** `setPlayerInput()` for WASD held-key state is applied immediately (not queued) because it represents continuous input, not a discrete command.
 
-- **TypeScript strict mode** — do not use `any`. Define types in `engine/types.ts` or `network/protocol.ts`.
-- **ES modules** — all imports must use `.js` extensions (e.g., `import { World } from './world.js'`). The project uses `"type": "module"` with NodeNext resolution.
-- **No `Math.random()` in game logic** — use the seeded PRNG from `engine/rng.ts` for reproducibility.
-- **Tick-based time** — game state advances via `GameLoop.tick()`. Do not use `setTimeout`/`setInterval` in game logic (only in the realtime loop wrapper).
-- **Plain objects** — game state uses TypeScript interfaces, not classes. Do not introduce classes for game entities.
-- **Tests are self-contained** — use `TestGame` from `test/helpers/testGame.ts` or construct a stepped `GameLoop` directly. Tests must not require a database or network.
+**If you are adding a new player action:** Add a new variant to the `Command` union in `engine/types.ts`, handle it in the `processCommands` method of `gameLoop.ts`, and enqueue it from the WebSocket handler in `websocket.ts`. Do NOT call `game.spawnPlayer()`, `game.setPlayerTarget()`, etc. directly from network handlers.
 
-## Key Interfaces
+### 3. Two movement systems -- mutually exclusive per player
+
+Players move via exactly one of these systems at a time:
+
+| System | Trigger | State written | Speed unit |
+|--------|---------|---------------|------------|
+| **Input (WASD)** | `input_start` / `input_stop` messages | `vx`, `vy`, `inputX`, `inputY` | tiles/second (`inputSpeed`) |
+| **Path (A*)** | `move_to` command or conversation rendezvous | `path`, `pathIndex`, `targetX`, `targetY` | tiles/tick (`pathSpeed`) |
+
+**Pressing a key cancels any active A* path. Setting a path clears held input.**
+
+Both systems write to the shared fields `x`, `y`, `state`, and `orientation`. If you are editing movement code, you must understand which system is active for the player you are modifying. Check `player.path` (path system) and `player.inputX`/`player.inputY` (input system).
+
+The tick pipeline processes input movement BEFORE path movement. This order matters.
+
+### 4. Conversation state machine is strict
+
+```
+invited --> walking --> active --> ended
+    |                              ^
+    +-------- declined ------------+
+```
+
+- `invited`: initiator requested; target has not responded. NPCs auto-accept (no client UI).
+- `walking`: both players navigating toward a rendezvous midpoint. Activates when within 2 tiles (Manhattan).
+- `active`: messages can be exchanged. Auto-ends on timeout (600 ticks), max messages (20), or max duration (1200 ticks).
+- `ended`: terminal. Players freed for new conversations.
+
+`ConversationManager` maintains a `playerToConvo` reverse index (player ID -> conversation ID) for O(1) lookups. Entries are removed when a conversation ends.
+
+**Players in the `conversing` state cannot move.** Movement methods check `player.state === "conversing"` and return early.
+
+### 5. No Math.random() in game logic
+
+Use the seeded PRNG from `engine/rng.ts`. This ensures deterministic test replay with a fixed seed (default: 42 in tests).
+
+### 6. ES module imports require .js extensions
 
 ```typescript
-// engine/types.ts
-interface Player {
-  id: string; name: string; x: number; y: number;
-  state: 'idle' | 'walking' | 'conversing' | 'doing_activity';
-  path?: Position[]; isNpc: boolean; orientation: Orientation;
-}
+// CORRECT
+import { World } from './world.js';
+import type { Player } from './types.js';
 
-interface Position { x: number; y: number }
-interface Activity { id: number; name: string; x: number; y: number; capacity: number }
-interface GameEvent { tick: number; type: string; playerId?: string; data?: Record<string, unknown> }
-interface TickResult { tick: number; events: GameEvent[] }
+// WRONG -- will fail at runtime
+import { World } from './world';
+import type { Player } from './types';
 ```
 
-## Architecture Constraints
+This is required by TypeScript's NodeNext module resolution with `"type": "module"`.
 
-- **GameLoop is the single source of truth** for all runtime state (players, world, conversations, events).
-- **Conversations** follow a strict state machine: `invited → walking → active → ended`. Transitions are managed by `ConversationManager`.
-- **A* pathfinding** is 4-directional (no diagonals). Walls and water block movement.
-- **WebSocket messages** are discriminated unions defined in `network/protocol.ts`. Add new message types there.
-- **Event logger** is a ring buffer (1000 events). Events are emitted by the game loop, not by individual systems.
+### 7. Types go in specific files
+
+- Game entity types (Player, Position, Activity, etc.): `engine/types.ts`
+- Wire protocol types (ClientMessage, ServerMessage): `network/protocol.ts`
+- Conversation types (Conversation, Message, ConvoState): `engine/conversation.ts`
+- Memory types (Memory, ScoredMemory, MemoryStore): `db/repository.ts`
+
+Do not scatter type definitions across implementation files.
+
+### 8. No `any` in TypeScript
+
+Strict mode is enabled. Use proper types. If you truly cannot avoid it, use `unknown` with a type guard.
+
+## Tick Pipeline (execution order matters)
+
+```
+1. Drain command queue (spawn, move, say, start_convo, ...)
+2. Assert world invariants (if validateInvariants is on)
+3. Process input movement (WASD: velocity + AABB collision)
+4. Process path movement (A*: follow waypoints)
+5. Broadcast player_update events for moving players
+6. Advance conversation state machine (ConversationManager.processTick)
+7. Sync player.state / currentConvoId with conversation state
+8. Assert world invariants again
+9. Emit tick_complete event; invoke afterTick callbacks
+```
+
+If you are debugging a movement bug: the issue is likely in steps 3-4.
+If you are debugging a conversation bug: the issue is likely in steps 1, 6-7.
+If events arrive in the wrong order: check which step emits them.
+
+## File Coupling Map
+
+These files are tightly coupled. Changing one often requires understanding (and sometimes changing) the others:
+
+```
+gameLoop.ts  <-->  conversation.ts   (tick pipeline calls processTick; sync player state)
+gameLoop.ts  <-->  collision.ts      (input movement calls moveWithCollision)
+gameLoop.ts  <-->  pathfinding.ts    (setPlayerTarget calls findPath)
+gameLoop.ts  <-->  world.ts          (all spatial queries go through World)
+gameLoop.ts  <-->  types.ts          (Player, Command, GameEvent, TickResult)
+websocket.ts <-->  protocol.ts       (message type definitions)
+websocket.ts <-->  gameLoop.ts       (enqueues commands, reads state for snapshots)
+memory.ts    <-->  repository.ts     (MemoryStore interface)
+memory.ts    <-->  embedding.ts      (Embedder interface)
+client/types.ts <-> server types     (manually synced -- update both sides)
+```
+
+**When you edit `engine/types.ts`:** Check if `client/src/types.ts` needs a matching update.
 
 ## Testing
 
-```bash
-cd server
-npm test              # Run once
-npm run test:watch    # Watch mode
-npm run debug:movement -- --list
-```
+### Your edit-run-test loop
 
-Test files: `server/test/*.test.ts`
+Since you cannot run a live server, your workflow is:
 
-For live playthroughs or multiplayer verification, a host-only runtime is enough when you do not need Docker-specific wiring:
+1. Read the relevant source files.
+2. Run `cd server && npm test` to confirm green baseline.
+3. Write a failing test (or modify an existing one) that captures the desired behavior.
+4. Implement the change.
+5. Run `cd server && npm test` until green.
+6. Run `cd server && npx tsc --noEmit` to catch any type errors tests might miss.
+7. If the change affects behavior that would normally need E2E verification, state explicitly: "E2E verification required: [describe what to check against a live server]."
 
-```bash
-# Terminal 1
-cd server
-npm run dev
+### Test fixtures
 
-# Terminal 2
-cd client
-npm run dev -- --host 0.0.0.0
-```
-
-This path uses in-memory NPC persistence when `DATABASE_URL` is unset, which is sufficient for browser playthroughs, WebSocket probes, and debug API inspection.
-
-For movement and collision work, write tests at three levels:
-
-- Runtime contract tests: held-key ordering, integer-centered positions, path cancellation, collision ownership.
-- Client/server parity tests: run the same input script through `GameLoop` and the pure client prediction helpers.
-- Debug invariant tests: use `validateInvariants` to fail loudly on overlap, blocked-tile penetration, invalid paths, or stale state.
-
-Avoid tests that are too granular. A test that only checks speed magnitude or a helper function in isolation can pass while the game is still broken.
-
-For conversation, chat, and multiplayer behavior, prefer these live surfaces over unit-only checks:
-
-- **Browser flow** — use the real client for join, click-to-move, chat availability, and visible conversation UX.
-- **Raw WebSocket clients** — use real `join`, `move`, `start_convo`, `say`, and `end_convo` messages when validating state transitions, multiplayer coordination, or message broadcast scope.
-- **Debug API inspection** — use `/players`, `/conversations`, `/log`, and `/map` to confirm what happened after the live interaction.
-
-Do not rely on the debug conversation mutation routes alone for E2E verification. `POST /start-convo`, `POST /say`, and `POST /end-convo` mutate `ConversationManager` directly and can bypass the queued command flow, WebSocket broadcast path, and NPC orchestrator side effects that live gameplay depends on.
-
-If you need browser automation and the repo does not already depend on Playwright, install it in a temporary directory such as `/tmp` rather than modifying this repo's `package.json` just to run an ad hoc playthrough.
-
-Test fixtures provide pre-configured game loops with mini (5x5) or default (20x20) maps. Example:
+Use `TestGame` from `test/helpers/testGame.ts`:
 
 ```typescript
 import { TestGame } from './helpers/testGame.js';
 
-test('player moves', () => {
-  const tg = new TestGame();
+test('player follows A* path', () => {
+  const tg = new TestGame();           // 5x5 mini map, stepped mode, seed=42
   tg.spawn('p1', 1, 1);
-  tg.move('p1', 3, 1);
-  tg.tick();
-  expect(tg.getPlayer('p1').state).toBe('walking');
+  tg.move('p1', 3, 1);                // Set A* target
+  const results = tg.tick(3);          // Advance 3 ticks
+  const p = tg.getPlayer('p1');
+  expect(p.x).toBe(3);                // Arrived
+  expect(p.state).toBe('idle');
 });
 ```
 
-## Debug API
+**TestGame methods:**
+- `spawn(id, x, y, isNpc?)` -- create a player at position
+- `tick(count?)` -- advance N ticks (default 1), returns `TickResult[]`
+- `move(id, x, y)` -- set A* movement target
+- `getPlayer(id)` -- get player state (throws if not found)
+- `spawnNearby(id1, id2, distance?)` -- spawn two players close together
+- `destroy()` -- reset game state
 
-Available at `http://localhost:3001/api/debug/` when the server is running:
+**TestGame options:**
+- `new TestGame({ seed: 123 })` -- custom RNG seed
+- `new TestGame({ map: 'default' })` -- use the full 20x20 map from `data/map.json`
+- `new TestGame({ validateInvariants: true })` -- fail loudly on state violations
 
-| Method | Endpoint        | Purpose                    |
-|--------|----------------|----------------------------|
-| GET    | /state         | Current tick, mode, counts |
-| GET    | /map           | ASCII or JSON map          |
-| GET    | /players       | All player state           |
-| GET    | /conversations | Active conversations       |
-| GET    | /log           | Filtered event log         |
-| POST   | /tick          | Advance simulation         |
-| POST   | /spawn         | Add a player               |
-| POST   | /move          | Set movement target        |
-| POST   | /reset         | Clear all state            |
-| POST   | /scenario      | Load a test preset         |
+### What to assert
 
-Useful movement log filters:
-
-```bash
-curl 'localhost:3001/api/debug/log?playerId=human_1&type=input_state,input_move,player_collision,move_cancelled&limit=50'
+**Good:** Runtime behavior contracts.
+```typescript
+// Player in conversation cannot move
+test('conversing player rejects move', () => {
+  const tg = new TestGame();
+  const [p1, p2] = tg.spawnNearby('p1', 'p2');
+  // ... start and activate conversation ...
+  const path = tg.move('p1', 3, 3);
+  expect(path).toBeNull();              // Movement rejected
+  expect(tg.getPlayer('p1').state).toBe('conversing');
+});
 ```
 
-Movement harness usage:
-
-```bash
-cd server
-npm run debug:movement -- --scenario simultaneous_input_release
-npm run debug:movement -- --scenario simultaneous_input_release --bundle /tmp/w-a.json
+**Bad:** Isolated helper math that doesn't catch runtime bugs.
+```typescript
+// This can pass while the game is broken
+test('manhattan distance', () => {
+  expect(manhattan({x:0,y:0}, {x:3,y:4})).toBe(7);
+});
 ```
 
-The `--bundle` output should be treated as the canonical repro artifact for future agents.
+### Test levels for movement/collision
 
-End-to-end verification examples:
+1. **Runtime contract tests** -- held-key ordering, integer positions after path, collision ownership.
+2. **Client/server parity tests** -- run the same input through `GameLoop` and the client prediction helpers.
+3. **Debug invariant tests** -- use `validateInvariants: true` to catch overlap, wall penetration, invalid paths.
 
-```bash
-# Host-only live runtime for browser or WebSocket playthroughs
-cd server && npm run dev
-cd client && npm run dev -- --host 0.0.0.0
+## Common Pitfalls (things Codex agents get wrong)
 
-# Live debug API verification
-curl localhost:3001/api/debug/state
-curl localhost:3001/api/debug/players
-curl localhost:3001/api/debug/conversations
-curl 'localhost:3001/api/debug/log?type=convo_started,convo_accepted,convo_active,convo_message,convo_ended&limit=50'
-curl 'localhost:3001/api/debug/map?format=ascii'
+### 1. Bypassing the command queue
+**Wrong:** Calling `game.spawnPlayer()` from a WebSocket handler.
+**Right:** Calling `game.enqueue({ type: 'spawn', playerId: id, data: { ... } })`.
 
-# Live websocket verification should be used for chat and NPC behavior changes
-# when the feature depends on queued commands or event-driven orchestration.
+### 2. Importing I/O into engine/
+**Wrong:** `import { Pool } from 'pg'` inside `engine/gameLoop.ts`.
+**Right:** Keep `engine/` pure. Pass database results in via function arguments.
 
-# For multiplayer or privacy-style checks, keep an unrelated observer socket
-# connected while two active participants interact, and confirm exactly which
-# events the observer receives.
+### 3. Forgetting .js extensions
+**Wrong:** `import { World } from './world'`
+**Right:** `import { World } from './world.js'`
 
-# If startup, Docker wiring, files, or env config changed, verify the Docker path too.
-docker compose up --build -d
-docker compose logs game-server --tail=100
-curl localhost:3001/api/debug/state
-docker compose down
+### 4. Using Math.random()
+**Wrong:** `const target = activities[Math.floor(Math.random() * activities.length)]`
+**Right:** `const target = rng.pick(activities)`
+
+### 5. Mutating player state outside the tick
+**Wrong:** `player.x = newX` in a WebSocket handler.
+**Right:** Enqueue a command; let the tick pipeline apply it.
+
+### 6. Adding types in the wrong file
+**Wrong:** Defining a new interface in `gameLoop.ts`.
+**Right:** Add it to `engine/types.ts` (for game entities) or `network/protocol.ts` (for wire types).
+
+### 7. Writing tests that need a database
+**Wrong:** `const pool = new Pool(...)` in a test file.
+**Right:** Use `TestGame` or `InMemoryRepository` from `db/repository.ts`.
+
+### 8. Editing collision without understanding the coordinate system
+Runtime coordinates are **centered on integer tiles**: tile (2, 3) has center at world-space (2, 3). The internal collision helpers use a **unit grid** where tile (tx, ty) spans [tx, tx+1]. Public functions in `collision.ts` translate by +0.5 before resolving and -0.5 afterward. If you get confused about why positions are off by 0.5, this is why.
+
+### 9. Mixing up the two movement systems
+If a player has `path` set, they are using A* movement. If they have `inputX`/`inputY` non-zero, they are using WASD movement. These are mutually exclusive. Do not set both.
+
+### 10. Forgetting to update client types
+`client/src/types.ts` is manually synced with the server. If you add a field to `Player` in `engine/types.ts`, add it to `client/src/types.ts` too.
+
+## Architecture Notes
+
+- **GameLoop** is the central coordinator. It owns all mutable state: players (`Map<string, Player>`), the world, conversations (`ConversationManager`), and the event logger.
+- **World** is immutable after construction. All spatial queries (walkability, neighbors, activities) go through it.
+- **ConversationManager** owns the conversation state machine and a `playerToConvo` reverse index for O(1) "is this player in a conversation?" checks.
+- **GameLogger** is a fixed-size ring buffer (1000 events). Events older than the buffer size are silently dropped.
+- **Two modes**: `stepped` (tests, debug API) and `realtime` (production, 20 ticks/sec). Tests always use stepped mode.
+- **WebSocket protocol** uses discriminated unions (`ClientMessage`, `ServerMessage`) defined in `network/protocol.ts`. The server sends a full `FullGameState` snapshot on connect, then streams incremental updates.
+- **Memory system**: NPC memories stored in PostgreSQL with pgvector embeddings. Retrieval uses a composite score: `0.99^ticksAgo + importance/10 + cosineSimilarity`. `InMemoryRepository` provides a test-friendly fallback.
+
+## Debug API Reference
+
+You cannot call these from the sandbox, but you should know they exist so you can:
+1. Write code that serves these endpoints correctly.
+2. Tell the human what to check after your changes.
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | /api/debug/state | Current tick, mode, player count, world dimensions |
+| GET | /api/debug/map | ASCII map visualization (?format=json for structured) |
+| GET | /api/debug/players | All players with full state |
+| GET | /api/debug/players/:id | Single player detail |
+| GET | /api/debug/conversations | All conversations with messages |
+| GET | /api/debug/conversations/:id | Single conversation |
+| GET | /api/debug/activities | Activity locations |
+| GET | /api/debug/log | Filtered event log (?since=N&limit=N&playerId=X&type=X) |
+| GET | /api/debug/scenarios | List available scenarios |
+| GET | /api/debug/memories/:playerId | NPC memories (?type=X&limit=N) |
+| GET | /api/debug/memories/:playerId/search | Vector search (?q=text&k=N) |
+| POST | /api/debug/tick | Advance N ticks ({ "count": N }) |
+| POST | /api/debug/spawn | Add a player ({ "id", "name", "x", "y", "isNpc" }) |
+| POST | /api/debug/move | Set movement target ({ "playerId", "x", "y" }) |
+| POST | /api/debug/start-convo | Start conversation ({ "player1Id", "player2Id" }) |
+| POST | /api/debug/say | Send message ({ "playerId", "convoId", "content" }) |
+| POST | /api/debug/end-convo | End conversation ({ "convoId" }) |
+| POST | /api/debug/reset | Clear all game state |
+| POST | /api/debug/scenario | Load preset ({ "name": "crowded_town" }) |
+| POST | /api/debug/mode | Switch mode ({ "mode": "realtime" or "stepped" }) |
+| POST | /api/debug/memories | Create a memory directly |
+| POST | /api/debug/remember-convo | Generate memories for conversation participants |
+
+## Task Sizing Guidance
+
+Tasks that are a good fit for Codex (autonomous, formulaic, testable):
+- Add a new debug API endpoint following the existing pattern in `debug/router.ts`
+- Add a new Command variant and handle it in the tick pipeline
+- Write tests for an existing but uncovered behavior
+- Rename a field or type across the codebase
+- Add a new message type to the WebSocket protocol
+- Fix a failing test by reading the error and adjusting the implementation
+
+Tasks that are risky for Codex (deep coupling, subtle invariants):
+- Changing collision resolution logic (coordinate system gotchas)
+- Modifying the tick pipeline order (execution order matters)
+- Changing how the two movement systems interact (mutual exclusion invariant)
+- Conversation state machine transitions (affects movement, NPC AI, WebSocket)
+- Anything that requires E2E verification you cannot perform in the sandbox
+
+For risky tasks: make the change, write thorough tests, but explicitly flag what needs human review and live verification.
+
+## Environment
+
+Tests run in-memory without a database. No environment variables needed.
+
+The server runs in Docker with these defaults (for reference, not usable in sandbox):
+```
+DATABASE_URL=postgres://aitown:aitown_dev@db:5432/aitown
+PORT=3001
 ```
 
-## Environment Setup (Optional)
+When `DATABASE_URL` is unset, the server falls back to `InMemoryRepository` for NPC memory persistence.
 
-Only needed if working on database features:
+## Checklist Before Submitting
 
-```bash
-cp .env.example .env
-docker-compose up -d   # Starts PostgreSQL with pgvector on :5432
-```
+- [ ] `cd server && npm test` passes
+- [ ] `cd server && npx tsc --noEmit` passes
+- [ ] No `any` types introduced
+- [ ] All imports use `.js` extensions
+- [ ] No I/O imports in `engine/`
+- [ ] No `Math.random()` in game logic
+- [ ] New types added to the correct file (`types.ts`, `protocol.ts`, `conversation.ts`, or `repository.ts`)
+- [ ] If `engine/types.ts` changed, `client/src/types.ts` updated to match
+- [ ] If behavior needs live verification, stated explicitly what to check
+- [ ] New game actions use the command queue, not direct mutation
