@@ -34,39 +34,54 @@ export type ConversationEndReason =
   | "timeout"
   | "missing_player";
 
+/** A single chat message within a conversation. Stored in Conversation.messages in send order. */
 export interface Message {
   id: number;
+  /** The conversation this message belongs to. */
   convoId: number;
+  /** The player who sent this message. */
   playerId: string;
   content: string;
+  /** Game tick when the message was sent; used for conversation timeout calculation. */
   tick: number;
 }
 
 export interface Conversation {
   id: number;
+  /** The player who initiated the conversation. */
   player1Id: string;
+  /** The player who was invited (and must accept/decline). */
   player2Id: string;
   state: ConvoState;
+  /** Ordered list of messages exchanged during the conversation. */
   messages: Message[];
+  /** Tick when the conversation was created (invited state). */
   startedTick: number;
+  /** Tick when the conversation entered the ended state (undefined while active). */
   endedTick?: number;
   endedReason?: ConversationEndReason;
+  /** LLM-generated summary stored after the conversation ends, used for NPC memory. */
   summary?: string;
 }
 
-/** Tiles apart before conversation activates */
+/** Manhattan distance (tiles) at which two walking players transition to "active". */
 const CONVERSATION_DISTANCE = 2;
-/** Ticks with no messages before auto-end (30s at 20 ticks/sec) */
+/** Ticks of silence before auto-ending an active conversation (30s at 20 ticks/sec). */
 const CONVERSATION_TIMEOUT = 600;
-/** Maximum messages before conversation auto-ends */
+/** Hard cap on messages per conversation; triggers auto-end when reached. */
 const MAX_MESSAGES = 20;
-/** Maximum conversation duration in ticks (60s at 20 ticks/sec) */
+/** Hard cap on conversation duration in ticks (60s at 20 ticks/sec); triggers auto-end. */
 const MAX_DURATION = 1200;
 
 export class ConversationManager {
+  /** All conversations (active and ended) keyed by conversation ID. */
   private conversations: Map<number, Conversation> = new Map();
+  /** Reverse index: player ID → their current (non-ended) conversation ID.
+   *  Enables O(1) "is this player busy?" checks. Entries are removed when a conversation ends. */
   private playerToConvo: Map<string, number> = new Map();
+  /** Auto-incrementing conversation ID counter. */
   private nextId = 1;
+  /** Auto-incrementing message ID counter (unique across all conversations). */
   private nextMsgId = 1;
 
   startConversation(

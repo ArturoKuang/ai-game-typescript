@@ -8,13 +8,17 @@
 import type { Position } from "./types.js";
 import type { World } from "./world.js";
 
-/** Internal A* search node. */
+/** Internal A* search node. Forms a linked list via `parent` for path reconstruction. */
 interface Node {
   x: number;
   y: number;
-  g: number; // cost from start
-  h: number; // heuristic to goal
-  f: number; // g + h (total estimated cost)
+  /** Cost from start node to this node (number of tiles traversed). */
+  g: number;
+  /** Heuristic estimate from this node to the goal (Manhattan distance). */
+  h: number;
+  /** Total estimated cost: g + h. The min-heap is ordered by this value. */
+  f: number;
+  /** Previous node in the shortest path; null for the start node. Followed to reconstruct the path. */
   parent: Node | null;
 }
 
@@ -27,8 +31,9 @@ function posKey(x: number, y: number, height: number): number {
   return x * height + y;
 }
 
-/** Binary min-heap ordered by f-score. */
+/** Binary min-heap ordered by f-score. Used as the A* open set for O(log n) extraction of the lowest-cost node. */
 class MinHeap {
+  /** Backing array storing heap nodes in level-order (index 0 is the root/minimum). */
   private data: Node[] = [];
 
   get size(): number {

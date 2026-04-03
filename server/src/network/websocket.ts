@@ -22,18 +22,25 @@ import type {
   ServerMessage,
 } from "./protocol.js";
 
-/** Per-connection metadata tracking which player (if any) this socket controls. */
+/** Per-connection metadata tracking which player (if any) this socket controls.
+ *  A client starts with playerId=null and gets assigned one on "join". */
 interface ClientInfo {
+  /** Player ID this socket controls, or null before the "join" message. */
   playerId: string | null;
   ws: WebSocket;
 }
 
-/** Monotonic counter for assigning human player IDs (human_1, human_2, …). */
+/** Monotonic counter for assigning human player IDs (human_1, human_2, …).
+ *  Never resets — ensures unique IDs even across reconnects within the same process. */
 let humanCounter = 0;
 
 export class GameWebSocketServer {
   private wss: WebSocketServer;
+  /** Connected clients keyed by their WebSocket instance.
+   *  Each entry tracks which player (if any) the socket controls,
+   *  enabling targeted message delivery and cleanup on disconnect. */
   private clients: Map<WebSocket, ClientInfo> = new Map();
+  /** Reference to the game engine; used to read state for snapshots and enqueue commands. */
   private game: GameLoop;
 
   constructor(server: Server, game: GameLoop) {

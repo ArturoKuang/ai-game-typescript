@@ -26,7 +26,9 @@ const MAX_RELATED_MEMORIES = 4;
 
 export class MemoryManager {
   constructor(
+    /** Backing store (Postgres or in-memory) for persisting and querying memories. */
     private repo: MemoryStore,
+    /** Converts text to vector embeddings for semantic similarity search. */
     private embedder: Embedder,
   ) {}
 

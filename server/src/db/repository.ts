@@ -26,24 +26,38 @@ export interface MemoryRow {
   created_at: Date;
 }
 
-/** Application-level memory (converted from {@link MemoryRow}). */
+/** Application-level memory (converted from {@link MemoryRow}).
+ *  Represents a single unit of NPC knowledge — an observation, a conversation summary,
+ *  or a higher-level reflection synthesized from other memories. */
 export interface Memory {
   id: number;
+  /** The NPC who owns this memory. */
   playerId: string;
+  /** observation: something the NPC saw; conversation: a chat summary; reflection: a synthesized insight. */
   type: "observation" | "conversation" | "reflection";
   content: string;
+  /** 1–10 scale of how significant this memory is (drives reflection threshold and retrieval ranking). */
   importance: number;
+  /** pgvector embedding for semantic similarity search (1536-dim by default). */
   embedding?: number[];
+  /** IDs of memories this one was derived from (used by reflections to cite source memories). */
   relatedIds: number[];
+  /** Game tick when this memory was created. Used for recency scoring (exponential decay). */
   tick: number;
+  /** Last tick this memory was retrieved; throttled updates avoid write amplification. */
   lastAccessedTick?: number;
 }
 
-/** Memory with composite retrieval score for ranking. */
+/** Memory with composite retrieval score for ranking.
+ *  Produced by MemoryManager.retrieveMemories() after re-ranking vector search candidates. */
 export interface ScoredMemory extends Memory {
+  /** Composite score: recencyScore + importanceScore + relevanceScore. Higher is better. */
   score: number;
+  /** Exponential decay based on ticks since creation: 0.99^ticksAgo. */
   recencyScore: number;
+  /** Normalized importance: importance / 10. */
   importanceScore: number;
+  /** Cosine similarity between the query embedding and this memory's embedding. */
   relevanceScore: number;
 }
 
@@ -285,7 +299,9 @@ export class Repository implements MemoryStore {
 
 /** Array-backed memory store for tests and when Postgres is unavailable. */
 export class InMemoryRepository implements MemoryStore {
+  /** All memories stored in insertion order; filtered/sorted on each query. */
   private memories: Memory[] = [];
+  /** Auto-incrementing ID counter, matching Postgres SERIAL behavior. */
   private nextId = 1;
 
   async addMemory(params: {

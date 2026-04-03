@@ -57,6 +57,8 @@ type EventHandler = (event: GameEvent) => void;
 const PLAYER_COLLISION_EPSILON = 1e-6;
 type InputDirection = "up" | "down" | "left" | "right";
 
+/** Tracks which arrow/WASD keys a player is currently holding down.
+ *  Converted into inputX/inputY (-1/0/+1) each tick to drive velocity. */
 interface HeldInputState {
   up: boolean;
   down: boolean;
@@ -81,19 +83,38 @@ export interface GameLoopOptions {
 }
 
 export class GameLoop {
+  /** Monotonically increasing tick counter; incremented once per tick() call. */
   private tick_ = 0;
+  /** Current simulation mode: "stepped" (manual) or "realtime" (auto-tick via setInterval). */
   private mode_: GameMode;
+  /** Target ticks per second when running in realtime mode. */
   private tickRate_: number;
+  /** Immutable tile grid; null until loadWorld() is called. */
   private world_: World | null = null;
+  /** All live players (human and NPC) keyed by player ID. This is the authoritative player state. */
   private players_: Map<string, Player> = new Map();
+  /** Per-player keyboard state for WASD/arrow input, keyed by player ID.
+   *  Tracks which directional keys are currently held so the tick loop can
+   *  compute inputX/inputY each frame. Created/removed alongside the player. */
   private heldKeys_: Map<string, HeldInputState> = new Map();
+  /** When true, assertWorldInvariants() runs at the start and end of each tick (debug/test aid). */
   private validateInvariants_: boolean;
+  /** Seeded PRNG for deterministic NPC behavior and reproducible tests. */
   private rng_: SeededRNG;
+  /** Handle for the realtime mode setInterval; null when stopped or in stepped mode. */
   private intervalId: ReturnType<typeof setInterval> | null = null;
+  /** Registered event listeners keyed by event type (or "*" for all events).
+   *  The WebSocket server subscribes via on("*", ...) to broadcast game events. */
   private eventHandlers: Map<string, EventHandler[]> = new Map();
+  /** Fixed-size ring buffer of recent GameEvents for the debug API's /log endpoint. */
   private logger_: GameLogger = new GameLogger();
+  /** Manages conversation lifecycle (invite → walk → active → ended) and the player↔convo index. */
   private convoManager_: ConversationManager = new ConversationManager();
+  /** FIFO queue of commands (spawn, move, say, …) drained at the start of each tick.
+   *  Commands are enqueued from WebSocket handlers and the debug API, then processed
+   *  in order so that all mutations happen inside the tick pipeline. */
   private commandQueue_: Command[] = [];
+  /** Callbacks invoked after every tick completes; used by the NPC controller to schedule AI turns. */
   private afterTickCallbacks: ((result: TickResult) => void)[] = [];
 
   constructor(options: GameLoopOptions = {}) {

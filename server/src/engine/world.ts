@@ -10,8 +10,11 @@ import type { Activity, MapData, Position, Tile, TileType } from "./types.js";
 export class World {
   readonly width: number;
   readonly height: number;
+  /** Row-major 2D grid: tiles[y][x]. Each cell holds walkability and an optional activity reference. */
   private tiles: Tile[][];
+  /** Points of interest on the map (e.g. bench, fountain) that players can interact with. */
   private activities: Activity[];
+  /** Predefined positions where new players can be placed on the map. */
   private spawns: Position[];
 
   constructor(mapData: MapData) {

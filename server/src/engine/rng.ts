@@ -3,6 +3,7 @@
  * Produces deterministic sequences for reproducible tests.
  */
 export class SeededRNG {
+  /** 128-bit internal state (four 32-bit words) for the xorshift128 algorithm. */
   private s: Uint32Array;
 
   constructor(seed: number) {
