@@ -71,6 +71,24 @@ Representative scenarios:
 - `runtime_spawn_input`
 - `simultaneous_input_release`
 
+### `conversationHarness.ts`
+
+Provides a live conversation harness that starts a real server process when needed, connects real WebSocket clients, and uses the debug API only for inspection and final verification.
+
+It exists for behavior that unit tests or direct debug mutations cannot verify well:
+
+- queued `join`, `start_convo`, `accept_convo`, `say`, and `end_convo` flows
+- WebSocket broadcast scope and privacy checks
+- NPC initiation and reply behavior through the orchestrator
+- post-run capture of the authoritative debug log and ASCII map
+
+Representative scenarios:
+
+- `human_to_npc_conversation`
+- `npc_to_human_conversation`
+- `private_message_broadcast_isolation`
+- `join_grace_period`
+
 ### `runMovementHarness.ts`
 
 CLI entry point for the harness.
@@ -83,6 +101,20 @@ npm run debug:movement -- --list
 npm run debug:movement -- --scenario simultaneous_input_release
 npm run debug:movement -- --scenario path_handoff --format json
 npm run debug:movement -- --scenario simultaneous_input_release --bundle /tmp/w-a.json
+```
+
+### `runConversationHarness.ts`
+
+CLI entry point for the live conversation harness.
+
+Useful commands:
+
+```bash
+cd server
+npm run debug:conversation -- --list
+npm run debug:conversation -- --scenario human_to_human_accept
+npm run debug:conversation -- --scenario human_to_npc_conversation --format json
+npm run debug:conversation -- --scenario private_message_broadcast_isolation --bundle /tmp/convo.json
 ```
 
 ## Route Semantics

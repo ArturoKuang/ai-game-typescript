@@ -64,7 +64,9 @@ This is the file-level map of the repository’s main systems, subsystems, and c
 | `server/src/debug/router.ts` | `/api/debug` router and operational controls. |
 | `server/src/debug/asciiMap.ts` | ASCII renderer for current map/player state. |
 | `server/src/debug/scenarios.ts` | Named scenario setups used by the debug API. |
+| `server/src/debug/conversationHarness.ts` | Live conversation harness that drives a managed server over WebSocket and the debug API. |
 | `server/src/debug/movementHarness.ts` | Headless scripted movement harness. |
+| `server/src/debug/runConversationHarness.ts` | CLI wrapper for the live conversation harness. |
 | `server/src/debug/runMovementHarness.ts` | CLI wrapper for the movement harness. |
 
 ## NPC System
@@ -132,6 +134,7 @@ This is the file-level map of the repository’s main systems, subsystems, and c
 | Path | Role |
 | --- | --- |
 | `docs/README.md` | Documentation entry point. |
+| `docs/getting-started.md` | Local setup and first-run workflow. |
 | `docs/architecture.md` | High-level architecture and system flows. |
 | `docs/server-engine.md` | Engine subsystem reference. |
 | `docs/networking.md` | Networking subsystem reference. |
@@ -144,5 +147,5 @@ This is the file-level map of the repository’s main systems, subsystems, and c
 | `docs/testing.md` | Test-system reference. |
 | `docs/debug-api.md` | Route-level debug API reference. |
 | `docs/debugging-workflow.md` | Bug reproduction and verification workflow. |
-| `docs/movement-overhaul-plan.md` | Historical movement design note. |
+| `docs/architecture-review.md` | Current architecture risks and refactor candidates. |
 | `docs/chemistry-system-design.md` | Future design note for chemistry/physics. |

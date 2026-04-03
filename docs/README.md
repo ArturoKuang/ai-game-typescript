@@ -2,6 +2,8 @@
 
 This folder is the project reference set for the current AI Town codebase. It is organized by runtime system, subsystem, and component so you can move from the top-level architecture down to individual files without reverse-engineering the repository first.
 
+The pages under `Runtime Systems` and `API And Workflow References` describe the code that exists today. The `Design Notes` section is intentionally separate because those files are exploratory and should not be treated as the runtime source of truth.
+
 ## Start Here
 
 - [Getting started](getting-started.md): local setup, runtime modes, and first commands.
