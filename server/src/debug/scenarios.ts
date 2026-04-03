@@ -1,18 +1,20 @@
-import { CHARACTERS } from "../data/characters.js";
 /**
- * Pre-built test scenarios for the debug API.
+ * Named debug setups for `/api/debug/scenario`.
  *
- * Each scenario loads a known player configuration into the game loop,
- * useful for reproducible debugging and automated movement harness runs.
- * Available via `POST /api/debug/scenario { "name": "..." }`.
+ * Scenarios are lightweight fixtures layered on top of the currently loaded
+ * {@link GameLoop}. They are meant for reproducible manual inspection through
+ * the debug API, not for replacing the more exact harnesses in `server/src/debug/`.
  */
+import { CHARACTERS } from "../data/characters.js";
 import type { GameLoop } from "../engine/gameLoop.js";
 
+/** Debug-router scenario definition. */
 interface Scenario {
   description: string;
   setup: (game: GameLoop) => void;
 }
 
+/** Rehydrate one of the canonical NPC definitions into the current world. */
 function spawnCharacter(
   game: GameLoop,
   charId: string,

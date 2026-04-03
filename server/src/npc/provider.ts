@@ -1,15 +1,17 @@
-import type { Memory } from "../db/repository.js";
 /**
  * NPC model provider interface and prompt builders.
  *
  * Defines the contract ({@link NpcModelProvider}) that all LLM backends
  * must implement, plus helper functions that format game state into
- * prompts suitable for chat-style language models.
+ * prompts suitable for chat-style language models. `NpcOrchestrator` is the
+ * main caller: it assembles the request objects in this file, calls a provider,
+ * then records the returned prompt/response metadata through `NpcPersistenceStore`.
  */
+import type { Memory } from "../db/repository.js";
 import type { Message } from "../engine/conversation.js";
 import type { Player } from "../engine/types.js";
 
-/** Input context for generating an NPC conversation reply. */
+/** Input context assembled by the orchestrator for one NPC conversation turn. */
 export interface NpcReplyRequest {
   conversationId: number;
   npc: Player;
@@ -20,7 +22,7 @@ export interface NpcReplyRequest {
   sessionId?: string;
 }
 
-/** Input context for generating an NPC internal reflection. */
+/** Input context for generating an NPC's private reflection memory. */
 export interface NpcReflectionRequest {
   npc: Player;
   memories: Memory[];
@@ -28,6 +30,7 @@ export interface NpcReflectionRequest {
   sessionId?: string;
 }
 
+/** Provider output plus audit metadata persisted for debugging and replay. */
 export interface NpcModelResponse {
   content: string;
   prompt: string;

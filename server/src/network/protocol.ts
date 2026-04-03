@@ -20,7 +20,12 @@ export type ServerMessage =
   | { type: "message"; data: Message }
   | { type: "error"; data: { message: string } };
 
-/** Snapshot sent to a newly connected client. */
+/**
+ * Snapshot sent to a newly connected client.
+ *
+ * The browser caches this as its local source of truth, then applies the
+ * incremental `player_update`, `convo_update`, and `message` stream on top.
+ */
 export interface FullGameState {
   tick: number;
   world: { width: number; height: number };

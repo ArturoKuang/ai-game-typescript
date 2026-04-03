@@ -1,3 +1,12 @@
+/**
+ * Live conversation harness for end-to-end protocol verification.
+ *
+ * Unlike `movementHarness.ts`, this module exercises the real server surface
+ * area: it can boot `server/src/index.ts`, connect real WebSocket clients,
+ * drive client messages, and inspect the resulting state through `/api/debug`.
+ * That makes it the main verification tool for conversation state changes,
+ * NPC orchestration, and message visibility rules.
+ */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { dirname, resolve } from "node:path";
@@ -36,6 +45,7 @@ interface DebugPlayer {
   isNpc: boolean;
 }
 
+/** One connected harness-controlled WebSocket client plus its observed traffic. */
 interface HarnessClient {
   label: string;
   ws: WebSocket;
@@ -43,6 +53,7 @@ interface HarnessClient {
   playerId: string;
 }
 
+/** Handle for a server process launched by the harness when no external URL is provided. */
 interface ManagedServerHandle {
   process: ChildProcessWithoutNullStreams;
   baseUrl: string;
@@ -52,6 +63,7 @@ interface ManagedServerHandle {
   stderr: string[];
 }
 
+/** Transcript rows are derived from WebSocket `message` events after a scenario finishes. */
 export interface ConversationHarnessTranscriptEntry {
   messageId: number;
   convoId: number;
@@ -61,6 +73,7 @@ export interface ConversationHarnessTranscriptEntry {
   tick: number;
 }
 
+/** Full bundle emitted by the harness for CLI output, saved artifacts, and tests. */
 export interface ConversationHarnessResult {
   scenario: ConversationHarnessScenarioName;
   description: string;
@@ -74,6 +87,7 @@ export interface ConversationHarnessResult {
   asciiMap: string;
 }
 
+/** Scenario contract: drive the runtime and return a compact summary plus optional transcript. */
 export interface ConversationHarnessScenario {
   description: string;
   run: (runtime: ConversationHarnessRuntime) => Promise<{
@@ -82,11 +96,19 @@ export interface ConversationHarnessScenario {
   }>;
 }
 
+/** Optional external endpoints; if omitted the harness boots and manages its own server. */
 export interface ConversationHarnessRunOptions {
   baseUrl?: string;
   wsUrl?: string;
 }
 
+/**
+ * Scenario runtime wrapper around the real HTTP + WebSocket surfaces.
+ *
+ * The harness keeps the control flow intentionally small: scenarios send the
+ * same messages as the browser client, then wait on either socket traffic or
+ * `/api/debug` state until the expected transition happens.
+ */
 export class ConversationHarnessRuntime {
   private readonly managedServer?: ManagedServerHandle;
   private readonly clients: HarnessClient[] = [];

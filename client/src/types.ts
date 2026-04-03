@@ -74,9 +74,13 @@ export interface Conversation {
 
 export interface FullGameState {
   tick: number;
+  /** Static world bounds; the client fetches tiles separately from `/data/map.json`. */
   world: { width: number; height: number };
+  /** Denormalized player cache used by `main.ts`, `renderer.ts`, and `ui.ts`. */
   players: Player[];
+  /** Active and historical conversations streamed from the server. */
   conversations: Conversation[];
+  /** Map activities mirrored from the server snapshot for sidebar/rendering use. */
   activities: Activity[];
 }
 

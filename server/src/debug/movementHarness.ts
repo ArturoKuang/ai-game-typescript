@@ -1,3 +1,11 @@
+/**
+ * Deterministic movement harness for scripted engine-level reproductions.
+ *
+ * This harness stays entirely in-process with a stepped {@link GameLoop}, so
+ * it is ideal for collision, pathfinding, and input-order bugs where we want
+ * reproducible snapshots and event traces without the network stack in the way.
+ * The debug API and test suite both use the same underlying engine behavior.
+ */
 import { GameLoop } from "../engine/gameLoop.js";
 import type {
   GameEvent,
@@ -37,6 +45,7 @@ const DEFAULT_EVENT_TYPES = new Set<string>([
   "input_move",
 ]);
 
+/** Script step that spawns a player directly into the stepped game loop. */
 interface SpawnAction {
   type: "spawn";
   label: string;
@@ -50,6 +59,7 @@ interface SpawnAction {
   };
 }
 
+/** Script step that toggles held input in the same way as `input_start`/`input_stop`. */
 interface InputAction {
   type: "input";
   label: string;
@@ -58,6 +68,7 @@ interface InputAction {
   active: boolean;
 }
 
+/** Script step that issues A* click-to-move style movement. */
 interface MoveToAction {
   type: "move_to";
   label: string;
@@ -66,6 +77,7 @@ interface MoveToAction {
   y: number;
 }
 
+/** Script step that performs one immediate tile-direction move. */
 interface MoveDirectionAction {
   type: "move_direction";
   label: string;
@@ -73,12 +85,14 @@ interface MoveDirectionAction {
   direction: Orientation;
 }
 
+/** Script step that advances the simulation by one or more ticks. */
 interface TickAction {
   type: "tick";
   label: string;
   count?: number;
 }
 
+/** Script step that records state without mutating the engine. */
 interface SnapshotAction {
   type: "snapshot";
   label: string;
@@ -99,6 +113,7 @@ interface MovementHarnessScenario {
   expectedTrace?: MovementHarnessExpectedEvent[];
 }
 
+/** Player projection captured in each snapshot bundle. */
 export interface MovementHarnessPlayerState {
   id: string;
   x: number;
@@ -114,6 +129,7 @@ export interface MovementHarnessPlayerState {
   pathIndex?: number;
 }
 
+/** Snapshot of state, recent events, and ASCII output after one script step. */
 export interface MovementHarnessSnapshot {
   label: string;
   tick: number;
@@ -123,6 +139,7 @@ export interface MovementHarnessSnapshot {
   events: GameEvent[];
 }
 
+/** Normalized script log persisted in harness bundles for replay/debugging. */
 export interface MovementHarnessScriptEntry {
   tick: number;
   label: string;
@@ -130,11 +147,13 @@ export interface MovementHarnessScriptEntry {
   data: Record<string, unknown>;
 }
 
+/** Event trace ties each emitted event back to the snapshot step that observed it. */
 export interface MovementHarnessEventTraceEntry {
   snapshotLabel: string;
   event: GameEvent;
 }
 
+/** Contract-style expectation matched against the event trace after the run. */
 export interface MovementHarnessExpectedEvent {
   snapshotLabel?: string;
   tick?: number;
@@ -143,6 +162,7 @@ export interface MovementHarnessExpectedEvent {
   data?: Record<string, unknown>;
 }
 
+/** Verification summary used by tests and CLI output. */
 export interface MovementHarnessVerification {
   passed: boolean;
   matched: number;
@@ -150,6 +170,7 @@ export interface MovementHarnessVerification {
   failures: string[];
 }
 
+/** Full harness bundle combining script, snapshots, trace, and verification. */
 export interface MovementHarnessResult {
   scenario: MovementHarnessScenarioName;
   description: string;
@@ -160,6 +181,7 @@ export interface MovementHarnessResult {
   verification: MovementHarnessVerification;
 }
 
+/** Built-in regression scenarios for movement and collision bugs. */
 const MOVEMENT_HARNESS_SCENARIOS = {
   path_handoff: {
     description:

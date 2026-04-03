@@ -1,3 +1,9 @@
+/**
+ * CLI wrapper for the stepped movement harness.
+ *
+ * The harness itself is pure and test-friendly; this file is only responsible
+ * for argument parsing, optional bundle emission, and human-readable output.
+ */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";

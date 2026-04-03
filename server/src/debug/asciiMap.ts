@@ -1,15 +1,22 @@
-import type { GameLoop } from "../engine/gameLoop.js";
-import type { Player } from "../engine/types.js";
-
 /**
- * Renders the current game world as an ASCII map with a legend.
+ * ASCII map renderer shared by the debug API and both harnesses.
+ *
+ * This module translates authoritative runtime state from {@link GameLoop}
+ * into a terminal-friendly snapshot. It does not own state; it is a read-only
+ * projection layer used for inspection, bundles, and human-readable test
+ * output.
  */
+import type { GameLoop } from "../engine/gameLoop.js";
+
+/** Renders the current world snapshot plus a legend for players and activities. */
 export function renderAsciiMap(game: GameLoop): {
   ascii: string;
   legend: Record<string, string>;
 } {
   const world = game.world;
   const players = game.getPlayers();
+  // Legend keys match the glyphs rendered into the grid below so harness
+  // bundles can be read without separately inspecting player state JSON.
   const legend: Record<string, string> = {};
 
   // Build grid from tiles
@@ -45,16 +52,13 @@ export function renderAsciiMap(game: GameLoop): {
     }
   }
 
-  // Place players (override tiles)
-  // Build a map of position -> players for conversation linking
-  const playersByPos = new Map<string, Player>();
+  // Place players last so dynamic entities override static tiles/activities.
   for (const p of players) {
     const px = Math.round(p.x);
     const py = Math.round(p.y);
     const initial = p.name.charAt(0).toUpperCase();
     if (py >= 0 && py < world.height && px >= 0 && px < world.width) {
       grid[py][px] = initial;
-      playersByPos.set(`${px},${py}`, p);
     }
     let stateStr: string;
     if (p.state === "idle") {

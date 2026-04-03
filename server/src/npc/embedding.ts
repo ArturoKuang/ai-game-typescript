@@ -1,5 +1,13 @@
+/**
+ * Embedding utilities used by the NPC memory system.
+ *
+ * `MemoryManager` depends on the abstract {@link Embedder} interface so tests
+ * and fallback mode can run without an external embedding service. The current
+ * runtime uses {@link PlaceholderEmbedder}, which gives deterministic vectors
+ * good enough for ranking and reproducible tests.
+ */
 export interface Embedder {
-  /** Returns a vector of the configured dimension */
+  /** Returns a vector of the configured dimension. */
   embed(text: string): Promise<number[]>;
   readonly dimension: number;
 }
@@ -51,7 +59,7 @@ export class PlaceholderEmbedder implements Embedder {
   }
 }
 
-/** Cosine similarity between two vectors */
+/** Cosine similarity helper shared by retrieval code and the in-memory store. */
 export function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
   let normA = 0;

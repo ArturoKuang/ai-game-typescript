@@ -1,3 +1,9 @@
+/**
+ * CLI wrapper for the live conversation harness.
+ *
+ * Keeps bundle writing, scenario selection, and URL overrides outside the
+ * harness runtime so `conversationHarness.ts` stays reusable from tests.
+ */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";

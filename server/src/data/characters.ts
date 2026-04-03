@@ -1,5 +1,15 @@
+/**
+ * Canonical NPC cast used by the server runtime.
+ *
+ * `server/src/index.ts` uses this list during boot to spawn the default town
+ * residents, and `server/src/debug/scenarios.ts` reuses it to build named
+ * debug setups. The root-level `data/characters.ts` file is a parallel copy
+ * for non-server consumers; this server-local file is the one that actually
+ * drives gameplay today.
+ */
 import type { CharacterDef } from "../engine/types.js";
 
+/** Static character definitions consumed by boot and debug tooling. */
 export const CHARACTERS: CharacterDef[] = [
   {
     id: "npc_alice",

@@ -1,15 +1,21 @@
+/**
+ * Fixed-size event log owned by {@link GameLoop}.
+ *
+ * The logger is an in-memory inspection surface, not durable storage. The
+ * debug API reads from it directly, the harnesses use it to build traces, and
+ * the engine writes into it as part of normal event emission.
+ */
 import type { GameEvent } from "./types.js";
 
 const DEFAULT_MAX_SIZE = 1000;
 
-/**
- * In-memory circular buffer for game events.
- * Keeps the last N events for debug API queries.
- * All operations are O(1) for writes, O(n) for filtered reads.
- */
+/** Ring buffer for recent events. O(1) writes, O(n) filtered reads. */
 export class GameLogger {
+  /** Backing storage for the ring buffer; indices wrap via modulo arithmetic. */
   private buffer: (GameEvent | undefined)[];
+  /** Oldest event index currently retained in the ring. */
   private head = 0;
+  /** Number of occupied slots in `buffer`. */
   private count = 0;
   private capacity: number;
 
