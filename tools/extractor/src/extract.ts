@@ -19,6 +19,7 @@ import { buildComponentDiagram } from "./buildComponentDiagram.js";
 import { extractDataModel } from "./extractDataModel.js";
 import { extractMessageFlows, extractMessageFlowGroups } from "./extractMessageFlows.js";
 import { extractStateMachines } from "./extractStateMachines.js";
+import { extractDependencyDiagram } from "./extractDependencies.js";
 import type {
   ArchitectureGraph,
   BoundaryDetail,
@@ -112,13 +113,24 @@ function extractFilesAndImports(sourceFiles: SourceFile[]): {
 
       const targetRel = relative(ROOT, targetAbs);
       const symbols: string[] = [];
+      const typeOnlySymbols: string[] = [];
+      const isWholeTypeOnly = imp.isTypeOnly();
       for (const named of imp.getNamedImports()) {
-        symbols.push(named.getName());
+        const name = named.getName();
+        symbols.push(name);
+        if (isWholeTypeOnly || named.isTypeOnly()) {
+          typeOnlySymbols.push(name);
+        }
       }
       const defaultImport = imp.getDefaultImport();
       if (defaultImport) symbols.push(defaultImport.getText());
 
-      imports.push({ source: relPath, target: targetRel, symbols });
+      imports.push({
+        source: relPath,
+        target: targetRel,
+        symbols,
+        ...(typeOnlySymbols.length > 0 ? { typeOnlySymbols } : {}),
+      });
     }
   }
 
@@ -1182,6 +1194,9 @@ const containerDiagram = buildContainerDiagram({
 });
 console.log(`  Built container diagram with ${containerDiagram.containers.length} containers`);
 
+const dependencyDiagram = await extractDependencyDiagram(ROOT, files);
+console.log(`  Built dependency diagram: ${dependencyDiagram.modules.length} modules, ${dependencyDiagram.fileDeps.length} file deps, ${dependencyDiagram.cycles.length} cycles`);
+
 const graph: ArchitectureGraph = {
   meta: {
     extractedAt: new Date().toISOString(),
@@ -1214,6 +1229,7 @@ const graph: ArchitectureGraph = {
   dataModelEvidence,
   containerDiagram,
   componentDiagram,
+  dependencyDiagram,
 };
 
 writeFileSync(OUTPUT, JSON.stringify(graph, null, 2));

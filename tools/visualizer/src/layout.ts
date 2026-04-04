@@ -16,6 +16,8 @@ const NODE_HEIGHT_FILE = 60;
 const NODE_WIDTH_CLASS = 220;
 const NODE_HEIGHT_CLASS_BASE = 50;
 const NODE_HEIGHT_CLASS_PER_METHOD = 18;
+const NODE_WIDTH_DEP_MODULE = 230;
+const NODE_HEIGHT_DEP_MODULE = 180;
 
 const DAGRE_DEFAULTS = {
   rankdir: "LR" as const,
@@ -29,6 +31,297 @@ const DAGRE_DEFAULTS = {
 /** Single dagre pass — used for file and class level views. */
 export function computeLayout(nodes: Node[], edges: Edge[]): Node[] {
   return runDagre(nodes, edges, DAGRE_DEFAULTS);
+}
+
+/** Dependency-specific layout with tuned spacing per granularity. */
+export function computeDependencyLayout(
+  nodes: Node[],
+  edges: Edge[],
+  granularity: "module" | "file" | "symbol",
+): Node[] {
+  const opts = {
+    ...DAGRE_DEFAULTS,
+    ...(granularity === "module" ? {
+      rankdir: "LR" as const,
+      ranksep: 300,
+      nodesep: 80,
+      edgesep: 50,
+    } : granularity === "file" ? {
+      rankdir: "LR" as const,
+      ranksep: 260,
+      nodesep: 60,
+      edgesep: 40,
+    } : {
+      rankdir: "TB" as const,
+      ranksep: 120,
+      nodesep: 60,
+      edgesep: 40,
+    }),
+  };
+  return runDagre(nodes, edges, opts);
+}
+
+export interface GroupDef {
+  id: string;
+  label: string;
+  color: string;
+  nodeIds: Set<string>;
+  subGroups?: GroupDef[];
+}
+
+/**
+ * Grouped dependency layout — lays out each group independently with dagre,
+ * wraps each in a boundary node, then positions groups vertically.
+ * Returns the full node list (boundaries + repositioned children).
+ */
+export function computeGroupedDependencyLayout(
+  nodes: Node[],
+  edges: Edge[],
+  groups: GroupDef[],
+  granularity: "module" | "file" | "symbol",
+): Node[] {
+  const PADDING = 60;
+  const HEADER = 70; // space for boundary label
+  const GROUP_GAP = 80;
+
+  const dagreOpts = {
+    ...DAGRE_DEFAULTS,
+    ...(granularity === "module" ? {
+      rankdir: "LR" as const,
+      ranksep: 300,
+      nodesep: 80,
+      edgesep: 50,
+    } : granularity === "file" ? {
+      rankdir: "LR" as const,
+      ranksep: 260,
+      nodesep: 60,
+      edgesep: 40,
+    } : {
+      rankdir: "TB" as const,
+      ranksep: 120,
+      nodesep: 60,
+      edgesep: 40,
+    }),
+  };
+
+  const SUB_PADDING = 24;
+  const SUB_HEADER = 40;
+  const SUB_GAP = 30;
+
+  const result: Node[] = [];
+  let offsetY = 0;
+
+  for (const group of groups) {
+    const groupNodes = nodes.filter((n) => group.nodeIds.has(n.id));
+    if (groupNodes.length === 0) continue;
+
+    const groupEdges = edges.filter(
+      (e) => group.nodeIds.has(e.source) && group.nodeIds.has(e.target),
+    );
+
+    // If this group has sub-groups, lay out sub-groups first
+    if (group.subGroups && group.subGroups.length > 0) {
+      const subBoundaryNodes: Node[] = [];
+      const innerNodes: Node[] = []; // all sub-boundary + children
+
+      let subOffsetX = 0;
+      for (const sub of group.subGroups) {
+        const subNodes = groupNodes.filter((n) => sub.nodeIds.has(n.id));
+        if (subNodes.length === 0) continue;
+
+        const subEdges = groupEdges.filter(
+          (e) => sub.nodeIds.has(e.source) && sub.nodeIds.has(e.target),
+        );
+
+        // Sub-group internal layout: tight vertical columns
+        const laid = runDagre(subNodes, subEdges, {
+          rankdir: "TB",
+          ranksep: 50,
+          nodesep: 20,
+          edgesep: 15,
+          marginx: 10,
+          marginy: 10,
+        });
+        const bounds = computeBounds(laid);
+        const subWidth = bounds.maxX - bounds.minX + SUB_PADDING * 2;
+        const subHeight = bounds.maxY - bounds.minY + SUB_PADDING + SUB_HEADER;
+
+        // Create sub-boundary node (position relative to parent group, set later)
+        const subBoundaryId = sub.id;
+        const subBoundary: Node = {
+          id: subBoundaryId,
+          type: "boundary",
+          position: { x: subOffsetX, y: 0 },
+          data: {
+            label: sub.label,
+            technology: "",
+            description: "",
+            borderColor: sub.color,
+            componentCount: subNodes.length,
+          },
+          width: subWidth,
+          height: subHeight,
+          measured: { width: subWidth, height: subHeight },
+          style: { width: subWidth, height: subHeight },
+          zIndex: -1,
+          draggable: false,
+          selectable: false,
+        };
+        subBoundaryNodes.push(subBoundary);
+
+        // Position children relative to sub-boundary
+        for (const child of laid) {
+          innerNodes.push({
+            ...child,
+            parentId: subBoundaryId,
+            extent: "parent" as const,
+            position: {
+              x: child.position.x - bounds.minX + SUB_PADDING,
+              y: child.position.y - bounds.minY + SUB_HEADER,
+            },
+          });
+        }
+
+        subOffsetX += subWidth + SUB_GAP;
+      }
+
+      // Layout sub-boundaries with dagre to arrange them within the parent group
+      const subBoundaryEdges: Edge[] = [];
+      // Create edges between sub-boundaries based on cross-sub-group edges
+      const subGroupMap = new Map<string, string>();
+      for (const sub of group.subGroups) {
+        for (const nid of sub.nodeIds) subGroupMap.set(nid, sub.id);
+      }
+      const subEdgeSeen = new Set<string>();
+      for (const e of groupEdges) {
+        const srcSub = subGroupMap.get(e.source);
+        const tgtSub = subGroupMap.get(e.target);
+        if (srcSub && tgtSub && srcSub !== tgtSub) {
+          const key = `${srcSub}->${tgtSub}`;
+          if (!subEdgeSeen.has(key)) {
+            subEdgeSeen.add(key);
+            subBoundaryEdges.push({ id: key, source: srcSub, target: tgtSub });
+          }
+        }
+      }
+
+      const laidSubBoundaries = runDagre(subBoundaryNodes, subBoundaryEdges, {
+        rankdir: "TB",
+        ranksep: 60,
+        nodesep: 40,
+        edgesep: 30,
+        marginx: 20,
+        marginy: 20,
+      });
+
+      // Compute parent group bounds from laid sub-boundaries
+      const parentBounds = computeBounds(laidSubBoundaries);
+      const groupWidth = parentBounds.maxX - parentBounds.minX + PADDING * 2;
+      const groupHeight = parentBounds.maxY - parentBounds.minY + PADDING + HEADER;
+
+      // Create parent boundary
+      result.push({
+        id: group.id,
+        type: "boundary",
+        position: { x: 0, y: offsetY },
+        data: {
+          label: group.label,
+          technology: "",
+          description: "",
+          borderColor: group.color,
+          componentCount: groupNodes.length,
+        },
+        width: groupWidth,
+        height: groupHeight,
+        measured: { width: groupWidth, height: groupHeight },
+        style: { width: groupWidth, height: groupHeight },
+        zIndex: -2,
+        draggable: false,
+        selectable: false,
+      });
+
+      // Position sub-boundaries relative to parent
+      for (const subBound of laidSubBoundaries) {
+        result.push({
+          ...subBound,
+          parentId: group.id,
+          extent: "parent" as const,
+          zIndex: -1,
+          position: {
+            x: subBound.position.x - parentBounds.minX + PADDING,
+            y: subBound.position.y - parentBounds.minY + HEADER,
+          },
+        });
+      }
+
+      // Add inner nodes (children of sub-boundaries)
+      for (const n of innerNodes) {
+        result.push(n);
+      }
+
+      offsetY += groupHeight + GROUP_GAP;
+    } else {
+      // No sub-groups — flat layout (original behavior)
+      const laid = runDagre(groupNodes, groupEdges, dagreOpts);
+      const bounds = computeBounds(laid);
+      const groupWidth = bounds.maxX - bounds.minX + PADDING * 2;
+      const groupHeight = bounds.maxY - bounds.minY + PADDING + HEADER;
+
+      result.push({
+        id: group.id,
+        type: "boundary",
+        position: { x: 0, y: offsetY },
+        data: {
+          label: group.label,
+          technology: "",
+          description: "",
+          borderColor: group.color,
+          componentCount: groupNodes.length,
+        },
+        width: groupWidth,
+        height: groupHeight,
+        measured: { width: groupWidth, height: groupHeight },
+        style: { width: groupWidth, height: groupHeight },
+        zIndex: -1,
+        draggable: false,
+        selectable: false,
+      });
+
+      for (const child of laid) {
+        result.push({
+          ...child,
+          parentId: group.id,
+          extent: "parent" as const,
+          position: {
+            x: child.position.x - bounds.minX + PADDING,
+            y: child.position.y - bounds.minY + HEADER,
+          },
+        });
+      }
+
+      offsetY += groupHeight + GROUP_GAP;
+    }
+  }
+
+  // Any nodes not in a group get placed below
+  const allGrouped = new Set(groups.flatMap((g) => [...g.nodeIds]));
+  const ungrouped = nodes.filter((n) => !allGrouped.has(n.id));
+  if (ungrouped.length > 0) {
+    const ungroupedEdges = edges.filter(
+      (e) => !allGrouped.has(e.source) || !allGrouped.has(e.target),
+    ).filter(
+      (e) => ungrouped.some((n) => n.id === e.source) && ungrouped.some((n) => n.id === e.target),
+    );
+    const laid = runDagre(ungrouped, ungroupedEdges, dagreOpts);
+    for (const n of laid) {
+      result.push({
+        ...n,
+        position: { x: n.position.x, y: n.position.y + offsetY },
+      });
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -136,6 +429,10 @@ function computeBounds(nodes: Node[]): { minX: number; minY: number; maxX: numbe
 }
 
 function getNodeDimensions(node: Node): { width: number; height: number } {
+  // Nodes with explicit dimensions (boundary containers, etc.) — use them directly
+  if (node.width && node.height) {
+    return { width: node.width, height: node.height };
+  }
   const type = node.type ?? "default";
   if (type === "component") {
     const d = node.data as { expanded?: boolean; files?: unknown[]; internal?: { primaryState?: unknown[]; ownedClasses?: unknown[]; usedUtilities?: unknown[] } };
@@ -158,11 +455,33 @@ function getNodeDimensions(node: Node): { width: number; height: number } {
   if (type === "file") {
     return { width: NODE_WIDTH_FILE, height: NODE_HEIGHT_FILE };
   }
+  if (type === "pillNode") {
+    const nameLen = ((node.data as { label?: string })?.label ?? "").length;
+    return { width: Math.max(130, 60 + nameLen * 7), height: 36 };
+  }
+  if (type === "dependencyModule") {
+    const d = node.data as { fileCount?: number; internalEdgeCount?: number };
+    const isModule = (d.fileCount ?? 0) > 0 && (d.internalEdgeCount ?? -1) >= 0;
+    return { width: NODE_WIDTH_DEP_MODULE, height: isModule ? NODE_HEIGHT_DEP_MODULE : 155 };
+  }
+  if (type === "dataStructure") {
+    const d = node.data as { previewLines?: unknown[] };
+    const previewCount = Math.min((d.previewLines as unknown[])?.length ?? 0, 3);
+    return { width: 256, height: 120 + previewCount * 16 };
+  }
   if (type === "classNode") {
-    const methodCount = (node.data as { methods?: unknown[] })?.methods?.length ?? 0;
+    const d = node.data as { methods?: unknown[]; fields?: unknown[]; fanIn?: number };
+    const methodCount = d.methods?.length ?? 0;
+    const fieldCount = d.fields?.length ?? 0;
+    const hasMetrics = d.fanIn != null;
+    const methodRows = Math.min(methodCount, 8);
+    const fieldRows = Math.min(fieldCount, 5);
     return {
       width: NODE_WIDTH_CLASS,
-      height: NODE_HEIGHT_CLASS_BASE + methodCount * NODE_HEIGHT_CLASS_PER_METHOD,
+      height: NODE_HEIGHT_CLASS_BASE
+        + methodRows * NODE_HEIGHT_CLASS_PER_METHOD
+        + (fieldRows > 0 ? 8 + fieldRows * 16 : 0)
+        + (hasMetrics ? 30 : 0),
     };
   }
   if (type === "swimLane") {
