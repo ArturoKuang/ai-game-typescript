@@ -49,6 +49,8 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 const EXTENDED_IDLE_WAIT = 200;
 /** Social need boost when conversation ends. */
 const SOCIAL_CONVERSATION_BOOST = 40;
+/** How often to broadcast needs to clients (ticks). */
+const NEEDS_BROADCAST_INTERVAL = 40;
 
 export interface NpcAutonomyManagerOptions {
   needConfigs?: Record<NeedType, NeedConfig>;
@@ -67,6 +69,7 @@ export class NpcAutonomyManager {
   private goalSelectionInFlight: Set<string> = new Set();
   /** Track which NPCs are in idle-wander cooldown and when it expires. */
   private idleCooldowns: Map<string, number> = new Map();
+  private needsListeners: Array<(npcId: string, needs: { hunger: number; energy: number; social: number; safety: number; curiosity: number }) => void> = [];
 
   constructor(
     game: GameLoop,
