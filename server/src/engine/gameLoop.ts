@@ -169,6 +169,8 @@ export class GameLoop {
       inputY: 0,
       radius: PLAYER_RADIUS,
       inputSpeed: 5.0,
+      hp: 100,
+      maxHp: 100,
     };
 
     this.players_.set(params.id, player);
@@ -1131,6 +1133,11 @@ export class GameLoop {
     // Also emit to wildcard listeners
     const allHandlers = this.eventHandlers.get("*") ?? [];
     for (const h of allHandlers) h(event);
+  }
+
+  /** Public event emitter for external systems (e.g. BearManager). */
+  emitEvent(event: GameEvent): void {
+    this.emit(event);
   }
 
   // --- State ---

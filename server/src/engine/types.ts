@@ -77,6 +77,12 @@ export interface Player {
   radius: number;
   /** Tiles per second when moving via keyboard input. */
   inputSpeed: number;
+
+  // --- Health ---
+  /** Current hit points. Undefined means full health (backwards-compatible). */
+  hp?: number;
+  /** Maximum hit points. Undefined defaults to PLAYER_DEFAULT_HP (100). */
+  maxHp?: number;
 }
 
 /** A point-of-interest on the map that players can interact with. */
@@ -111,7 +117,16 @@ export type GameEventType =
   | "convo_started"
   | "convo_message"
   | "input_move"
-  | "tick_complete";
+  | "tick_complete"
+  | "bear_spawn"
+  | "bear_death"
+  | "bear_attack"
+  | "player_attack"
+  | "player_damage"
+  | "player_death"
+  | "player_heal"
+  | "item_drop"
+  | "item_pickup";
 
 /** A single event produced during a tick, logged and optionally broadcast. */
 export interface GameEvent {
@@ -185,7 +200,31 @@ export type Command =
       type: "say";
       playerId: string;
       data: { convoId: number; content: string };
+    }
+  | {
+      type: "attack";
+      playerId: string;
+      data: { targetBearId: string };
+    }
+  | {
+      type: "pickup";
+      playerId: string;
+      data: { entityId: string };
+    }
+  | {
+      type: "eat";
+      playerId: string;
+      data: { item: string };
     };
+
+/** Entity definition in map data — spawned by EntityManager at boot. */
+export interface MapEntityDef {
+  type: string;
+  x: number;
+  y: number;
+  properties?: Record<string, boolean | number | string>;
+  emoji?: string;
+}
 
 /** Deserialized form of `data/map.json`. */
 export interface MapData {
@@ -195,6 +234,8 @@ export interface MapData {
   tiles: TileType[][];
   activities: Activity[];
   spawnPoints: Position[];
+  /** Dynamic world entities (berry bushes, benches, etc.) loaded by the autonomy system. */
+  entities?: MapEntityDef[];
 }
 
 /** Static definition of an NPC loaded from `data/characters.ts`. */
