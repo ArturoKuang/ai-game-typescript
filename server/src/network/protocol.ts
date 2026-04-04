@@ -10,6 +10,16 @@ import type { Activity, Player } from "../engine/types.js";
 
 // --- Server -> Client ---
 
+/** Serialized world entity for client rendering. */
+export interface WorldEntityData {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  properties: Record<string, boolean | number | string>;
+  destroyed: boolean;
+}
+
 export type ServerMessage =
   | { type: "state"; data: FullGameState }
   | { type: "tick"; data: { tick: number } }
@@ -18,7 +28,12 @@ export type ServerMessage =
   | { type: "player_left"; data: { id: string } }
   | { type: "convo_update"; data: Conversation }
   | { type: "message"; data: Message }
-  | { type: "error"; data: { message: string } };
+  | { type: "entity_update"; data: WorldEntityData }
+  | { type: "entity_removed"; data: { entityId: string } }
+  | { type: "combat_event"; data: { eventType: string; [key: string]: unknown } }
+  | { type: "inventory_update"; data: { playerId: string; items: Record<string, number>; capacity: number } }
+  | { type: "error"; data: { message: string } }
+  | { type: "capture_screenshot" };
 
 /**
  * Snapshot sent to a newly connected client.
@@ -32,6 +47,7 @@ export interface FullGameState {
   players: Player[];
   conversations: Conversation[];
   activities: Activity[];
+  entities?: WorldEntityData[];
 }
 
 // --- Client -> Server ---
@@ -49,4 +65,9 @@ export type ClientMessage =
   | { type: "accept_convo"; data: { convoId: number } }
   | { type: "decline_convo"; data: { convoId: number } }
   | { type: "end_convo" }
-  | { type: "ping" };
+  | { type: "attack"; data: { targetBearId: string } }
+  | { type: "pickup"; data: { entityId: string } }
+  | { type: "pickup_nearby" }
+  | { type: "eat"; data: { item: string } }
+  | { type: "ping" }
+  | { type: "screenshot_data"; data: { png: string } };
