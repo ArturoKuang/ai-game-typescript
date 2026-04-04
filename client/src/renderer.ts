@@ -13,7 +13,7 @@
  * factor of 0.3 to hide network jitter.
  */
 import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
-import type { Activity, Player, TileType } from "./types.js";
+import type { Activity, Player, TileType, WorldEntity } from "./types.js";
 
 /** Pixels per tile edge. */
 const TILE_SIZE = 32;
@@ -38,13 +38,22 @@ interface PlayerSprite {
   chatTimeout: ReturnType<typeof setTimeout> | null;
 }
 
+/** Map entity types to emoji for rendering. */
+const ENTITY_EMOJI: Record<string, string> = {
+  berry_bush: "\uD83E\uDED0",
+  bench: "\uD83E\uDE91",
+  campfire: "\uD83D\uDD25",
+};
+
 export class GameRenderer {
   private app: Application;
   private tileContainer: Container = new Container();
   private activityContainer: Container = new Container();
+  private entityContainer: Container = new Container();
   private playerContainer: Container = new Container();
   private lineContainer: Container = new Container();
   private playerSprites: Map<string, PlayerSprite> = new Map();
+  private entitySprites: Map<string, Text> = new Map();
   private mapWidth = 0;
   private mapHeight = 0;
   private selfId: string | null = null;
@@ -63,6 +72,7 @@ export class GameRenderer {
     });
     this.app.stage.addChild(this.tileContainer);
     this.app.stage.addChild(this.activityContainer);
+    this.app.stage.addChild(this.entityContainer);
     this.app.stage.addChild(this.lineContainer);
     this.app.stage.addChild(this.playerContainer);
   }
@@ -244,6 +254,87 @@ export class GameRenderer {
         sprite.chatBubble = null;
       }
     }, 5000);
+  }
+
+  /** Render or update world entities (berry bushes, benches, etc.) */
+  updateEntities(entities: WorldEntity[]): void {
+    const currentIds = new Set(entities.map((e) => e.id));
+
+    // Remove sprites for removed entities
+    for (const [id, sprite] of this.entitySprites) {
+      if (!currentIds.has(id)) {
+        this.entityContainer.removeChild(sprite);
+        this.entitySprites.delete(id);
+      }
+    }
+
+    const style = new TextStyle({ fontSize: 16, fill: 0xffffff });
+
+    for (const entity of entities) {
+      if (entity.destroyed) {
+        const existing = this.entitySprites.get(entity.id);
+        if (existing) {
+          this.entityContainer.removeChild(existing);
+          this.entitySprites.delete(entity.id);
+        }
+        continue;
+      }
+
+      let sprite = this.entitySprites.get(entity.id);
+      if (!sprite) {
+        const emoji = ENTITY_EMOJI[entity.type] ?? "\u2753";
+        sprite = new Text({ text: emoji, style });
+        sprite.anchor.set(0.5);
+        this.entityContainer.addChild(sprite);
+        this.entitySprites.set(entity.id, sprite);
+      }
+
+      sprite.x = entity.x * TILE_SIZE + TILE_SIZE / 2;
+      sprite.y = entity.y * TILE_SIZE + TILE_SIZE / 2;
+
+      // Dim depleted berry bushes
+      if (entity.type === "berry_bush" && entity.properties.berries === 0) {
+        sprite.alpha = 0.3;
+      } else {
+        sprite.alpha = 1.0;
+      }
+    }
+  }
+
+  /** Update a single entity (from entity_update message). */
+  updateEntity(entity: WorldEntity): void {
+    if (entity.destroyed) {
+      this.removeEntity(entity.id);
+      return;
+    }
+
+    const style = new TextStyle({ fontSize: 16, fill: 0xffffff });
+    let sprite = this.entitySprites.get(entity.id);
+    if (!sprite) {
+      const emoji = ENTITY_EMOJI[entity.type] ?? "\u2753";
+      sprite = new Text({ text: emoji, style });
+      sprite.anchor.set(0.5);
+      this.entityContainer.addChild(sprite);
+      this.entitySprites.set(entity.id, sprite);
+    }
+
+    sprite.x = entity.x * TILE_SIZE + TILE_SIZE / 2;
+    sprite.y = entity.y * TILE_SIZE + TILE_SIZE / 2;
+
+    if (entity.type === "berry_bush" && entity.properties.berries === 0) {
+      sprite.alpha = 0.3;
+    } else {
+      sprite.alpha = 1.0;
+    }
+  }
+
+  /** Remove an entity sprite (from entity_removed message). */
+  removeEntity(entityId: string): void {
+    const sprite = this.entitySprites.get(entityId);
+    if (sprite) {
+      this.entityContainer.removeChild(sprite);
+      this.entitySprites.delete(entityId);
+    }
   }
 
   /** Convert screen coordinates to tile coordinates */

@@ -138,6 +138,28 @@
       font-family: inherit;
       font-size: 13px;
     }
+    #inventory-panel {
+      background: #0f3460;
+      border: 1px solid #533483;
+      border-radius: 4px;
+      padding: 8px;
+    }
+    #inventory-panel.hidden { display: none; }
+    #inventory-list {
+      list-style: none;
+      font-size: 13px;
+    }
+    #inventory-list li {
+      padding: 4px 0;
+      border-bottom: 1px solid #16213e;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    #inventory-list li:last-child { border-bottom: none; }
+    .inv-item-label { color: #e0e0e0; }
+    .inv-item-count { color: #9fb0d1; font-size: 12px; }
+    .inv-empty { color: #666; font-style: italic; font-size: 12px; padding: 4px 0; }
     #status-bar {
       font-size: 11px;
       color: #888;
@@ -169,6 +191,10 @@
       <div id="active-actions" class="conversation-actions hidden">
         <button id="end-convo-btn">End conversation</button>
       </div>
+    </div>
+    <h2 id="inventory-header" style="cursor:pointer;">Inventory (0/10) [I]</h2>
+    <div id="inventory-panel">
+      <ul id="inventory-list"></ul>
     </div>
     <h2>Transcript</h2>
     <div id="chat-messages"></div>

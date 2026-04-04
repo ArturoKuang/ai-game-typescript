@@ -23,6 +23,13 @@ export interface ConversationPanelView {
   showEndAction: boolean;
 }
 
+/** Item display metadata keyed by item ID. */
+const ITEM_DISPLAY: Record<string, { name: string; emoji: string }> = {
+  raw_food: { name: "Berries", emoji: "\uD83E\uDED0" },
+  cooked_food: { name: "Cooked Food", emoji: "\uD83C\uDF72" },
+  bear_meat: { name: "Bear Meat", emoji: "\uD83E\uDD69" },
+};
+
 export class UI {
   private playerListEl: HTMLUListElement;
   private chatMessagesEl: HTMLDivElement;
@@ -37,6 +44,10 @@ export class UI {
   private acceptConvoBtnEl: HTMLButtonElement;
   private declineConvoBtnEl: HTMLButtonElement;
   private endConvoBtnEl: HTMLButtonElement;
+  private inventoryHeaderEl: HTMLHeadingElement;
+  private inventoryPanelEl: HTMLDivElement;
+  private inventoryListEl: HTMLUListElement;
+  private inventoryVisible = true;
   private selfId: string | null = null;
   private talkHandler: ((playerId: string) => void) | null = null;
   private acceptHandler: (() => void) | null = null;
@@ -79,6 +90,15 @@ export class UI {
     this.endConvoBtnEl = document.getElementById(
       "end-convo-btn",
     ) as HTMLButtonElement;
+    this.inventoryHeaderEl = document.getElementById(
+      "inventory-header",
+    ) as HTMLHeadingElement;
+    this.inventoryPanelEl = document.getElementById(
+      "inventory-panel",
+    ) as HTMLDivElement;
+    this.inventoryListEl = document.getElementById(
+      "inventory-list",
+    ) as HTMLUListElement;
 
     this.acceptConvoBtnEl.addEventListener("click", () =>
       this.acceptHandler?.(),
@@ -87,6 +107,9 @@ export class UI {
       this.declineHandler?.(),
     );
     this.endConvoBtnEl.addEventListener("click", () => this.endHandler?.());
+    this.inventoryHeaderEl.addEventListener("click", () =>
+      this.toggleInventory(),
+    );
   }
 
   setSelfId(id: string): void {
@@ -183,6 +206,46 @@ export class UI {
 
   onEndConversation(callback: () => void): void {
     this.endHandler = callback;
+  }
+
+  /** Toggle the inventory panel visibility. */
+  toggleInventory(): void {
+    this.inventoryVisible = !this.inventoryVisible;
+    this.inventoryPanelEl.classList.toggle("hidden", !this.inventoryVisible);
+  }
+
+  /** Update the inventory display with new data from the server. */
+  updateInventory(items: Record<string, number>, capacity: number): void {
+    const entries = Object.entries(items).filter(([, count]) => count > 0);
+    const slotCount = entries.length;
+
+    this.inventoryHeaderEl.textContent = `Inventory (${slotCount}/${capacity}) [I]`;
+    this.inventoryListEl.innerHTML = "";
+
+    if (entries.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "inv-empty";
+      empty.textContent = "Empty \u2014 press E near items to pick up";
+      this.inventoryListEl.appendChild(empty);
+      return;
+    }
+
+    for (const [itemId, count] of entries) {
+      const display = ITEM_DISPLAY[itemId] ?? { name: itemId, emoji: "\uD83D\uDCE6" };
+      const li = document.createElement("li");
+
+      const label = document.createElement("span");
+      label.className = "inv-item-label";
+      label.textContent = `${display.emoji} ${display.name}`;
+
+      const qty = document.createElement("span");
+      qty.className = "inv-item-count";
+      qty.textContent = `x${count}`;
+
+      li.appendChild(label);
+      li.appendChild(qty);
+      this.inventoryListEl.appendChild(li);
+    }
   }
 
   /** Map player state to a suffix icon for the player list. */

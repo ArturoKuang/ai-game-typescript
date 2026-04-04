@@ -36,6 +36,7 @@ import type {
   MoveDirection,
   Player,
   TileType,
+  WorldEntity,
 } from "./types.js";
 import { UI } from "./ui.js";
 
@@ -303,6 +304,10 @@ async function start() {
         ui.setStatus(
           `Connected | Tick: ${gameState.tick} | Players: ${gameState.players.length}`,
         );
+        // Render initial entities
+        if (gameState.entities) {
+          renderer.updateEntities(gameState.entities);
+        }
         refreshConversationUi();
         break;
       }
@@ -452,8 +457,51 @@ async function start() {
         break;
       }
 
+      case "entity_update": {
+        if (!gameState) break;
+        if (!gameState.entities) gameState.entities = [];
+        const entityIdx = gameState.entities.findIndex(
+          (e) => e.id === msg.data.id,
+        );
+        if (entityIdx >= 0) {
+          gameState.entities[entityIdx] = msg.data;
+        } else {
+          gameState.entities.push(msg.data);
+        }
+        renderer.updateEntity(msg.data);
+        break;
+      }
+
+      case "entity_removed": {
+        if (!gameState?.entities) break;
+        gameState.entities = gameState.entities.filter(
+          (e) => e.id !== msg.data.entityId,
+        );
+        renderer.removeEntity(msg.data.entityId);
+        break;
+      }
+
+      case "inventory_update": {
+        if (msg.data.playerId === selfId) {
+          ui.updateInventory(msg.data.items, msg.data.capacity);
+        }
+        break;
+      }
+
+      case "combat_event": {
+        // Combat events are informational; no specific UI handling needed yet
+        break;
+      }
+
       case "error": {
         ui.addChatMessage("", `Error: ${msg.data.message}`, true);
+        break;
+      }
+
+      case "capture_screenshot": {
+        // Extract canvas contents as PNG and send back to server
+        const dataUrl = canvas.toDataURL("image/png");
+        client.send({ type: "screenshot_data", data: { png: dataUrl } });
         break;
       }
     }
@@ -535,6 +583,23 @@ async function start() {
 
   window.addEventListener("keydown", (e) => {
     if (isInputFocused()) return;
+
+    // I key: toggle inventory panel
+    if (e.key === "i" || e.key === "I") {
+      e.preventDefault();
+      ui.toggleInventory();
+      return;
+    }
+
+    // E key: pick up nearest item
+    if (e.key === "e" || e.key === "E") {
+      e.preventDefault();
+      if (selfId) {
+        client.send({ type: "pickup_nearby" });
+      }
+      return;
+    }
+
     const dir = KEY_TO_DIR[e.key];
     if (!dir) return;
 
