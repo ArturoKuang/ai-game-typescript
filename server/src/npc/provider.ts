@@ -39,11 +39,33 @@ export interface NpcModelResponse {
   latencyMs: number;
 }
 
+/** Input context for NPC goal selection in the autonomy system. */
+export interface NpcGoalRequest {
+  npc: Player;
+  needs: { hunger: number; energy: number; social: number; safety: number; curiosity: number };
+  inventory: Record<string, number>;
+  nearbyEntities: { type: string; distance: number; name?: string }[];
+  recentMemories: Memory[];
+  availableGoals: { id: string; description: string }[];
+  currentTick: number;
+  sessionId?: string;
+}
+
+/** Provider output for goal selection. */
+export interface NpcGoalResponse {
+  goalId: string;
+  reasoning?: string;
+  prompt: string;
+  sessionId?: string;
+  latencyMs: number;
+}
+
 /** Contract for LLM backends that generate NPC dialogue and reflections. */
 export interface NpcModelProvider {
   readonly name: string;
   generateReply(request: NpcReplyRequest): Promise<NpcModelResponse>;
   generateReflection(request: NpcReflectionRequest): Promise<NpcModelResponse>;
+  generateGoalSelection?(request: NpcGoalRequest): Promise<NpcGoalResponse>;
 }
 
 /**
@@ -112,5 +134,59 @@ export function buildReflectionPrompt(request: NpcReflectionRequest): string {
     "",
     "Recent memories:",
     memories || "None.",
+  ].join("\n");
+}
+
+/**
+ * Build a goal selection prompt for NPC autonomy.
+ *
+ * ~200-300 input tokens. Expected ~20-40 output tokens.
+ */
+export function buildGoalSelectionPrompt(request: NpcGoalRequest): string {
+  const needLines = Object.entries(request.needs)
+    .map(([key, value]) => {
+      const urgent = value < 40 ? " (URGENT)" : "";
+      return `- ${key[0].toUpperCase() + key.slice(1)}: ${Math.round(value)}/100${urgent}`;
+    })
+    .join("\n");
+
+  const invItems = Object.entries(request.inventory);
+  const invLine = invItems.length > 0
+    ? invItems.map(([item, count]) => `${item} x${count}`).join(", ")
+    : "empty";
+
+  const nearbyLines = request.nearbyEntities
+    .slice(0, 5)
+    .map((e) => `- ${e.type} (${Math.round(e.distance)} tiles away)`)
+    .join("\n");
+
+  const memoryLines = request.recentMemories
+    .slice(0, 3)
+    .map((m, i) => `${i + 1}. ${m.content}`)
+    .join("\n");
+
+  const goalLines = request.availableGoals
+    .map((g, i) => `${i + 1}. ${g.id}: ${g.description}`)
+    .join("\n");
+
+  return [
+    `You are ${request.npc.name}. ${request.npc.description}`,
+    `Personality: ${request.npc.personality ?? "Unknown"}`,
+    "",
+    "Current state:",
+    needLines,
+    "",
+    `Inventory: ${invLine}`,
+    "",
+    "Nearby:",
+    nearbyLines || "Nothing notable nearby.",
+    "",
+    "Recent memories:",
+    memoryLines || "None.",
+    "",
+    "Choose your next goal:",
+    goalLines,
+    "",
+    'Reply as JSON: { "goalId": "...", "reasoning": "..." }',
   ].join("\n");
 }

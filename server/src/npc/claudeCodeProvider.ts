@@ -8,12 +8,14 @@
  */
 import { spawn } from "node:child_process";
 import type {
+  NpcGoalRequest,
+  NpcGoalResponse,
   NpcModelProvider,
   NpcModelResponse,
   NpcReflectionRequest,
   NpcReplyRequest,
 } from "./provider.js";
-import { buildReflectionPrompt, buildReplyPrompt } from "./provider.js";
+import { buildGoalSelectionPrompt, buildReflectionPrompt, buildReplyPrompt } from "./provider.js";
 
 export interface ClaudeCodeProviderOptions {
   command?: string;
@@ -52,6 +54,38 @@ export class ClaudeCodeProvider implements NpcModelProvider {
   ): Promise<NpcModelResponse> {
     const prompt = buildReflectionPrompt(request);
     return this.runPrompt(prompt, request.sessionId);
+  }
+
+  async generateGoalSelection(
+    request: NpcGoalRequest,
+  ): Promise<NpcGoalResponse> {
+    const prompt = buildGoalSelectionPrompt(request);
+    const response = await this.runPrompt(prompt, request.sessionId);
+
+    // Parse the JSON response
+    let goalId = request.availableGoals[0]?.id ?? "satisfy_curiosity";
+    let reasoning: string | undefined;
+    try {
+      const parsed = JSON.parse(response.content);
+      if (parsed.goalId) goalId = parsed.goalId;
+      if (parsed.reasoning) reasoning = parsed.reasoning;
+    } catch {
+      // If JSON parsing fails, try to extract goalId from text
+      for (const goal of request.availableGoals) {
+        if (response.content.includes(goal.id)) {
+          goalId = goal.id;
+          break;
+        }
+      }
+    }
+
+    return {
+      goalId,
+      reasoning,
+      prompt,
+      sessionId: response.sessionId,
+      latencyMs: response.latencyMs,
+    };
   }
 
   private async runPrompt(
