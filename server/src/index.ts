@@ -31,6 +31,9 @@ import { MemoryManager } from "./npc/memory.js";
 import { NpcOrchestrator } from "./npc/orchestrator.js";
 import { ResilientNpcProvider } from "./npc/resilientProvider.js";
 import { ScriptedNpcProvider } from "./npc/scriptedProvider.js";
+import { EntityManager } from "./autonomy/entityManager.js";
+import { NpcAutonomyManager } from "./autonomy/manager.js";
+import { BearManager } from "./bears/bearManager.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -54,13 +57,26 @@ const provider = new ResilientNpcProvider(
   }),
   new ScriptedNpcProvider(),
 );
-new NpcOrchestrator(game, memoryManager, provider, npcStore);
+new NpcOrchestrator(game, memoryManager, provider, npcStore, {
+  enableInitiation: false, // Autonomy system handles conversation initiation
+});
 
 // Load default map
 const mapPath = resolveMapPath();
 const mapData: MapData = JSON.parse(readFileSync(mapPath, "utf-8"));
 game.loadWorld(mapData);
 console.log(`Loaded map: ${mapData.width}x${mapData.height}`);
+
+// --- Entity Manager & NPC Autonomy ---
+const entityManager = new EntityManager();
+if (mapData.entities) {
+  entityManager.loadFromMapData(mapData.entities);
+  console.log(`Loaded ${mapData.entities.length} world entities`);
+}
+const autonomyManager = new NpcAutonomyManager(game, entityManager, {
+  provider,
+  memoryManager,
+});
 
 // --- Spawn NPCs ---
 for (const char of CHARACTERS) {
@@ -82,11 +98,39 @@ for (const char of CHARACTERS) {
   }
 }
 
+// --- Bear Manager ---
+const bearManager = new BearManager(game, entityManager);
+bearManager.seedInitialBears();
+console.log("Bear manager initialized with GoL spawning");
+
 // --- WebSocket ---
-const wsServer = new GameWebSocketServer(server, game);
+const wsServer = new GameWebSocketServer(server, game, entityManager);
+wsServer.setBearManager(bearManager);
 
 // --- Event-driven broadcasting ---
 game.on("*", (event) => wsServer.broadcastGameEvent(event));
+
+// --- Entity change broadcasting ---
+entityManager.onChange((event, entity) => {
+  if (event === "update") {
+    wsServer.broadcast({
+      type: "entity_update",
+      data: {
+        id: entity.id,
+        type: entity.type,
+        x: entity.position.x,
+        y: entity.position.y,
+        properties: entity.properties,
+        destroyed: entity.destroyed,
+      },
+    });
+  } else {
+    wsServer.broadcast({
+      type: "entity_removed",
+      data: { entityId: entity.id },
+    });
+  }
+});
 
 // Start the realtime loop
 game.start();
@@ -102,7 +146,10 @@ app.get("/health", async (_req, res) => {
   });
 });
 
-app.use("/api/debug", createDebugRouter(game, memoryManager, pool));
+app.use(
+  "/api/debug",
+  createDebugRouter(game, memoryManager, pool, autonomyManager, bearManager, wsServer),
+);
 
 // Serve map data
 app.get("/data/map.json", (_req, res) => {

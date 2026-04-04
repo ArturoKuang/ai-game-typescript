@@ -8,11 +8,16 @@
  *
  * @see docs/debug-api.md for full request/response examples
  */
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Router } from "express";
 import type { Pool } from "pg";
+import type { NpcAutonomyManager } from "../autonomy/manager.js";
+import type { BearManager } from "../bears/bearManager.js";
 import type { GameLoop } from "../engine/gameLoop.js";
 import type { Player } from "../engine/types.js";
 import type { MemoryManager } from "../npc/memory.js";
+import type { GameWebSocketServer } from "../network/websocket.js";
 import { renderAsciiMap } from "./asciiMap.js";
 import { SCENARIOS, listScenarios } from "./scenarios.js";
 
@@ -42,6 +47,9 @@ export function createDebugRouter(
   game: GameLoop,
   memoryManager?: MemoryManager,
   pool?: Pool,
+  autonomyManager?: NpcAutonomyManager,
+  bearManager?: BearManager,
+  wsServer?: GameWebSocketServer,
 ): Router {
   const router = Router();
 
@@ -60,7 +68,8 @@ export function createDebugRouter(
   });
 
   router.get("/map", (req, res) => {
-    const { ascii, legend } = renderAsciiMap(game);
+    const em = autonomyManager?.getEntityManager();
+    const { ascii, legend } = renderAsciiMap(game, em);
     if (req.query.format === "json") {
       res.json({ ascii, legend });
     } else {
@@ -387,6 +396,152 @@ export function createDebugRouter(
       } catch (err: any) {
         res.status(500).json({ error: err.message });
       }
+    });
+  }
+
+  // --- Autonomy endpoints (require autonomyManager) ---
+
+  if (autonomyManager) {
+    router.get("/autonomy/state", (_req, res) => {
+      const states: Record<string, unknown> = {};
+      for (const [npcId, state] of autonomyManager.getAllStates()) {
+        states[npcId] = {
+          needs: state.needs,
+          inventory: Object.fromEntries(state.inventory),
+          currentPlan: state.currentPlan,
+          currentStepIndex: state.currentStepIndex,
+          currentExecution: state.currentExecution
+            ? {
+                actionId: state.currentExecution.actionId,
+                startedAtTick: state.currentExecution.startedAtTick,
+                status: state.currentExecution.status,
+              }
+            : null,
+          consecutivePlanFailures: state.consecutivePlanFailures,
+        };
+      }
+      res.json(states);
+    });
+
+    router.get("/autonomy/:npcId", (req, res) => {
+      const state = autonomyManager.getAllStates().get(req.params.npcId);
+      if (!state) {
+        res.status(404).json({ error: "NPC autonomy state not found" });
+        return;
+      }
+      res.json({
+        needs: state.needs,
+        inventory: Object.fromEntries(state.inventory),
+        currentPlan: state.currentPlan,
+        currentStepIndex: state.currentStepIndex,
+        currentExecution: state.currentExecution
+          ? {
+              actionId: state.currentExecution.actionId,
+              startedAtTick: state.currentExecution.startedAtTick,
+              status: state.currentExecution.status,
+            }
+          : null,
+        consecutivePlanFailures: state.consecutivePlanFailures,
+      });
+    });
+
+    router.post("/autonomy/:npcId/needs", (req, res) => {
+      const state = autonomyManager.getState(req.params.npcId);
+      const { hunger, energy, social, safety, curiosity } = req.body;
+      if (hunger !== undefined) state.needs.hunger = hunger;
+      if (energy !== undefined) state.needs.energy = energy;
+      if (social !== undefined) state.needs.social = social;
+      if (safety !== undefined) state.needs.safety = safety;
+      if (curiosity !== undefined) state.needs.curiosity = curiosity;
+      res.json(state.needs);
+    });
+
+    router.get("/entities", (_req, res) => {
+      const em = autonomyManager.getEntityManager();
+      res.json(
+        em.getAll().map((e) => ({
+          id: e.id,
+          type: e.type,
+          position: e.position,
+          properties: e.properties,
+          destroyed: e.destroyed,
+        })),
+      );
+    });
+  }
+
+  // --- Bear endpoints (require bearManager) ---
+
+  if (bearManager) {
+    router.get("/bears", (_req, res) => {
+      res.json(
+        bearManager.getBears().map((b) => ({
+          id: b.id,
+          position: b.position,
+          properties: b.properties,
+        })),
+      );
+    });
+
+    router.post("/spawn-bear", (req, res) => {
+      const { x, y } = req.body;
+      if (x === undefined || y === undefined) {
+        res.status(400).json({ error: "Missing required fields: x, y" });
+        return;
+      }
+      const bearId = bearManager.debugSpawnBear(x, y);
+      res.json({ ok: true, bearId });
+    });
+
+    router.post("/kill-bear", (req, res) => {
+      const { bearId } = req.body;
+      if (!bearId) {
+        res.status(400).json({ error: "Missing required field: bearId" });
+        return;
+      }
+      const killed = bearManager.debugKillBear(bearId);
+      if (!killed) {
+        res.status(404).json({ error: "Bear not found or already dead" });
+        return;
+      }
+      res.json({ ok: true, bearId });
+    });
+
+    router.get("/inventory/:playerId", (_req, res) => {
+      const inv = bearManager.getInventory(_req.params.playerId);
+      res.json(Object.fromEntries(inv));
+    });
+  }
+
+  // --- Screenshot endpoints (require wsServer) ---
+
+  if (wsServer) {
+    router.post("/capture-screenshot", async (_req, res) => {
+      const png = await wsServer.requestScreenshot();
+      if (!png) {
+        res.status(503).json({ error: "No connected client or capture timed out" });
+        return;
+      }
+      // Save to temp file for CLI tools to read
+      const tmpDir = process.env.TMPDIR || "/tmp";
+      const outPath = join(tmpDir, "claude", "qa-screenshot.png");
+      try {
+        const base64 = png.replace(/^data:image\/png;base64,/, "");
+        writeFileSync(outPath, Buffer.from(base64, "base64"));
+      } catch {
+        // ignore write errors — the API response is the primary output
+      }
+      res.json({ ok: true, savedTo: outPath });
+    });
+
+    router.get("/screenshot", (_req, res) => {
+      const png = wsServer.getLatestScreenshot();
+      if (!png) {
+        res.status(404).json({ error: "No screenshot available. POST /capture-screenshot first." });
+        return;
+      }
+      const base64 = png.replace(/^data:image\/png;base64,/, "");
+      res.type("image/png").send(Buffer.from(base64, "base64"));
     });
   }
 
