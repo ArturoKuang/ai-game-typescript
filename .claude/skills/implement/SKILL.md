@@ -77,30 +77,17 @@ cd server && npm test
 
 If tests fail, fix the issues and re-run until all tests pass. Do not proceed until green.
 
-### Step 5: Manual Verification
+### Step 5: Full QA Pass
 
-If the server is running, verify the feature works via the debug API:
+Run the `/qa` skill to perform the full QA suite — unit tests, type checking, lint, movement harness invariants, live scenario play testing with screenshots, and log analysis.
 
-```bash
-# Reset and load appropriate scenario
-curl -s -X POST localhost:3001/api/debug/reset | jq .
-curl -s -X POST localhost:3001/api/debug/scenario -H 'Content-Type: application/json' -d '{"name": "two_npcs_near_cafe"}' | jq .
-
-# Set up the specific scenario for the feature
-# (adapt these commands to the feature being tested)
-
-# Tick and observe
-curl -s -X POST localhost:3001/api/debug/tick -H 'Content-Type: application/json' -d '{"count": 10}' | jq .
-curl -s localhost:3001/api/debug/map
-curl -s localhost:3001/api/debug/players | jq .
-```
-
-If the server is not running, skip this step — test coverage from Step 4 is sufficient.
+This is mandatory. Do not skip this step. The QA report determines whether the feature is ready to ship.
 
 ### Step 6: Report
 
 Report to the user:
 - What was implemented and where (file paths)
-- Test results (pass/fail count)
-- ASCII map snapshot if manual verification was done
+- QA report verdict (**SHIP IT** or **NEEDS FIXES**)
+- Screenshot of the game (if captured)
+- ASCII map snapshot
 - Any design decisions or trade-offs made
