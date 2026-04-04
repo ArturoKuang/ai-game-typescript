@@ -1,28 +1,30 @@
 /**
- * Eat action — consume food to restore hunger.
+ * Eat actions — consume food to restore hunger.
+ *
+ * Two variants:
+ * - `eat` consumes raw_food, restores 40 hunger
+ * - `eat_cooked` consumes cooked_food, restores 70 hunger (lower cost so planner prefers it)
  */
 import { removeItem } from "../inventory.js";
 import { boostNeed } from "../needs.js";
 import type { ActionDefinition, ActionTickResult, ExecutionContext } from "../types.js";
 
 const EAT_DURATION = 20; // 1 second at 20 ticks/sec
-const HUNGER_RESTORE = 50;
+const RAW_HUNGER_RESTORE = 40;
+const COOKED_HUNGER_RESTORE = 70;
 
+/** Eat raw food — available whenever NPC has raw_food. */
 export const eatAction: ActionDefinition = {
   id: "eat",
-  displayName: "Eat food",
+  displayName: "Eat raw food",
 
   preconditions: new Map([["has_raw_food", true]]),
   effects: new Map([["need_hunger_satisfied", true]]),
-  cost: 1,
+  cost: 2, // slightly higher than eat_cooked so planner prefers cooking
   estimatedDurationTicks: EAT_DURATION,
 
-  // No proximity requirement — can eat anywhere
-
   validate(ctx: ExecutionContext): string | null {
-    const hasRaw = ctx.inventory.has("raw_food") && (ctx.inventory.get("raw_food") ?? 0) > 0;
-    const hasCooked = ctx.inventory.has("cooked_food") && (ctx.inventory.get("cooked_food") ?? 0) > 0;
-    if (!hasRaw && !hasCooked) return "No food in inventory";
+    if ((ctx.inventory.get("raw_food") ?? 0) <= 0) return "No raw food";
     return null;
   },
 
@@ -33,22 +35,48 @@ export const eatAction: ActionDefinition = {
   onTick(ctx: ExecutionContext): ActionTickResult {
     const remaining = (ctx.actionState.get("ticksRemaining") as number) - 1;
     ctx.actionState.set("ticksRemaining", remaining);
+    if (remaining > 0) return { status: "running" };
 
-    if (remaining > 0) {
-      return { status: "running" };
+    if (!removeItem(ctx.inventory, "raw_food")) {
+      return { status: "failed", reason: "Raw food disappeared" };
     }
-
-    // Prefer cooked food, fall back to raw
-    const ate = removeItem(ctx.inventory, "cooked_food") || removeItem(ctx.inventory, "raw_food");
-    if (!ate) {
-      return { status: "failed", reason: "Food disappeared from inventory" };
-    }
-
-    boostNeed(ctx.needs, "hunger", HUNGER_RESTORE);
+    boostNeed(ctx.needs, "hunger", RAW_HUNGER_RESTORE);
     return { status: "completed" };
   },
 
-  onEnd(_ctx: ExecutionContext, _reason): void {
-    // No cleanup
+  onEnd(_ctx: ExecutionContext, _reason): void {},
+};
+
+/** Eat cooked food — preferred path, restores more hunger at lower cost. */
+export const eatCookedAction: ActionDefinition = {
+  id: "eat_cooked",
+  displayName: "Eat cooked food",
+
+  preconditions: new Map([["has_cooked_food", true]]),
+  effects: new Map([["need_hunger_satisfied", true]]),
+  cost: 1, // cheaper than raw — planner will prefer this path
+  estimatedDurationTicks: EAT_DURATION,
+
+  validate(ctx: ExecutionContext): string | null {
+    if ((ctx.inventory.get("cooked_food") ?? 0) <= 0) return "No cooked food";
+    return null;
   },
+
+  onStart(ctx: ExecutionContext): void {
+    ctx.actionState.set("ticksRemaining", EAT_DURATION);
+  },
+
+  onTick(ctx: ExecutionContext): ActionTickResult {
+    const remaining = (ctx.actionState.get("ticksRemaining") as number) - 1;
+    ctx.actionState.set("ticksRemaining", remaining);
+    if (remaining > 0) return { status: "running" };
+
+    if (!removeItem(ctx.inventory, "cooked_food")) {
+      return { status: "failed", reason: "Cooked food disappeared" };
+    }
+    boostNeed(ctx.needs, "hunger", COOKED_HUNGER_RESTORE);
+    return { status: "completed" };
+  },
+
+  onEnd(_ctx: ExecutionContext, _reason): void {},
 };
