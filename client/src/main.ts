@@ -481,6 +481,11 @@ async function start() {
         break;
       }
 
+      case "npc_needs": {
+        renderer.updateNpcNeeds(msg.data);
+        break;
+      }
+
       case "inventory_update": {
         if (msg.data.playerId === selfId) {
           ui.updateInventory(msg.data.items, msg.data.capacity);

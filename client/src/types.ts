@@ -96,6 +96,16 @@ export interface FullGameState {
   entities?: WorldEntity[];
 }
 
+/** NPC needs data for client-side visualization. */
+export interface NpcNeedsData {
+  npcId: string;
+  hunger: number;
+  energy: number;
+  social: number;
+  safety: number;
+  curiosity: number;
+}
+
 // Server -> Client
 export type ServerMessage =
   | { type: "state"; data: FullGameState }
@@ -107,6 +117,7 @@ export type ServerMessage =
   | { type: "message"; data: Message }
   | { type: "entity_update"; data: WorldEntity }
   | { type: "entity_removed"; data: { entityId: string } }
+  | { type: "npc_needs"; data: NpcNeedsData }
   | { type: "combat_event"; data: { eventType: string; [key: string]: unknown } }
   | { type: "inventory_update"; data: { playerId: string; items: Record<string, number>; capacity: number } }
   | { type: "error"; data: { message: string } }

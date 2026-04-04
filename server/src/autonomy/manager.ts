@@ -137,8 +137,21 @@ export class NpcAutonomyManager {
     return this.entityManager;
   }
 
+  /** Register a listener for NPC needs updates (used for client broadcasting). */
+  onNeedsUpdate(listener: (npcId: string, needs: { hunger: number; energy: number; social: number; safety: number; curiosity: number }) => void): void {
+    this.needsListeners.push(listener);
+  }
+
+  private broadcastNeeds(npcId: string, state: NpcAutonomyState): void {
+    const { hunger, energy, social, safety, curiosity } = state.needs;
+    for (const listener of this.needsListeners) {
+      listener(npcId, { hunger, energy, social, safety, curiosity });
+    }
+  }
+
   private processAutonomyTick(_result: TickResult): void {
     const npcs = this.game.getPlayers().filter((p) => p.isNpc);
+    const shouldBroadcast = this.game.currentTick % NEEDS_BROADCAST_INTERVAL === 0;
 
     for (const npc of npcs) {
       const state = this.getState(npc.id);
@@ -147,6 +160,7 @@ export class NpcAutonomyManager {
       if (npc.state === "conversing") {
         // Still decay needs while conversing (except social gets boosted on end)
         tickNeeds(state.needs, this.needConfigs);
+        if (shouldBroadcast) this.broadcastNeeds(npc.id, state);
         continue;
       }
 
@@ -204,6 +218,9 @@ export class NpcAutonomyManager {
           state.consecutivePlanFailures = 0;
         }
       }
+
+      // 6. Broadcast needs to clients periodically
+      if (shouldBroadcast) this.broadcastNeeds(npc.id, state);
     }
   }
 

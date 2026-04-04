@@ -13,7 +13,7 @@
  * factor of 0.3 to hide network jitter.
  */
 import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
-import type { Activity, Player, TileType, WorldEntity } from "./types.js";
+import type { Activity, NpcNeedsData, Player, TileType, WorldEntity } from "./types.js";
 
 /** Pixels per tile edge. */
 const TILE_SIZE = 32;
@@ -29,6 +29,16 @@ const HUMAN_COLOR = 0x5dade2;
 const SELF_COLOR = 0xf7dc6f;
 const CONVO_LINE_COLOR = 0xe94560;
 
+/** Colors for need bar visualization (hunger, energy, social). */
+const NEED_BAR_COLORS: Record<string, number> = {
+  hunger: 0xe74c3c, // red
+  energy: 0xf39c12, // orange
+  social: 0x3498db, // blue
+};
+const NEED_BAR_WIDTH = 20;
+const NEED_BAR_HEIGHT = 3;
+const NEED_BAR_GAP = 1;
+
 interface PlayerSprite {
   container: Container;
   circle: Graphics;
@@ -36,6 +46,7 @@ interface PlayerSprite {
   waitingIndicator: Container | null;
   chatBubble: Container | null;
   chatTimeout: ReturnType<typeof setTimeout> | null;
+  needBars: Container | null;
 }
 
 /** Map entity types to emoji for rendering. */
@@ -54,6 +65,7 @@ export class GameRenderer {
   private lineContainer: Container = new Container();
   private playerSprites: Map<string, PlayerSprite> = new Map();
   private entitySprites: Map<string, Text> = new Map();
+  private npcNeeds: Map<string, NpcNeedsData> = new Map();
   private mapWidth = 0;
   private mapHeight = 0;
   private selfId: string | null = null;
@@ -337,6 +349,55 @@ export class GameRenderer {
     }
   }
 
+  /** Store NPC needs data for visualization. */
+  updateNpcNeeds(data: NpcNeedsData): void {
+    this.npcNeeds.set(data.npcId, data);
+    this.renderNeedBars(data.npcId);
+  }
+
+  /** Render or update need bars above an NPC sprite. */
+  private renderNeedBars(npcId: string): void {
+    const sprite = this.playerSprites.get(npcId);
+    const needs = this.npcNeeds.get(npcId);
+    if (!sprite || !needs) return;
+
+    // Remove old bars
+    if (sprite.needBars) {
+      sprite.container.removeChild(sprite.needBars);
+    }
+
+    const barsContainer = new Container();
+    const barKeys: Array<{ key: keyof typeof NEED_BAR_COLORS; value: number }> = [
+      { key: "hunger", value: needs.hunger },
+      { key: "energy", value: needs.energy },
+      { key: "social", value: needs.social },
+    ];
+
+    const totalHeight =
+      barKeys.length * NEED_BAR_HEIGHT +
+      (barKeys.length - 1) * NEED_BAR_GAP;
+    const startY = -TILE_SIZE * 0.55 - totalHeight;
+
+    for (let i = 0; i < barKeys.length; i++) {
+      const { key, value } = barKeys[i];
+      const y = startY + i * (NEED_BAR_HEIGHT + NEED_BAR_GAP);
+
+      const bg = new Graphics();
+      bg.rect(-NEED_BAR_WIDTH / 2, y, NEED_BAR_WIDTH, NEED_BAR_HEIGHT);
+      bg.fill({ color: 0x333333, alpha: 0.7 });
+      barsContainer.addChild(bg);
+
+      const fill = new Graphics();
+      const fillWidth = (value / 100) * NEED_BAR_WIDTH;
+      fill.rect(-NEED_BAR_WIDTH / 2, y, fillWidth, NEED_BAR_HEIGHT);
+      fill.fill(NEED_BAR_COLORS[key]);
+      barsContainer.addChild(fill);
+    }
+
+    sprite.container.addChild(barsContainer);
+    sprite.needBars = barsContainer;
+  }
+
   /** Convert screen coordinates to tile coordinates */
   screenToTile(
     screenX: number,
@@ -377,6 +438,7 @@ export class GameRenderer {
       waitingIndicator: null,
       chatBubble: null,
       chatTimeout: null,
+      needBars: null,
     };
   }
 

@@ -132,6 +132,14 @@ entityManager.onChange((event, entity) => {
   }
 });
 
+// --- NPC needs broadcasting ---
+autonomyManager.onNeedsUpdate((npcId, needs) => {
+  wsServer.broadcast({
+    type: "npc_needs",
+    data: { npcId, ...needs },
+  });
+});
+
 // Start the realtime loop
 game.start();
 
