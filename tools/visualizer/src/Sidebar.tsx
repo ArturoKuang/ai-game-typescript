@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useStore, type ComponentFocusDirection, type ComponentInspectorTab, type ContainerInspectorTab, type CouplingFilter, type DataModelInspectorTab } from "./store";
+import { useStore, type ComponentFocusDirection, type ComponentInspectorTab, type ContainerInspectorTab, type CouplingFilter, type DataModelInspectorTab, type DependencyInspectorTab } from "./store";
 import type { ArchitectureGraph, EventInfo, ZoomLevel } from "./types";
 import {
   DATA_MODEL_CATEGORY_META,
@@ -16,6 +16,7 @@ const ZOOM_LABELS: Record<ZoomLevel, string> = {
   container: "Containers",
   component: "Components",
   dataModel: "Data Model",
+  dependency: "Dependencies",
   file: "Files",
   class: "Classes",
   flow: "Data Flow",
@@ -208,6 +209,16 @@ export function Sidebar() {
   const setComponentFocusDirection = useStore((s) => s.setComponentFocusDirection);
   const componentSearchQuery = useStore((s) => s.componentSearchQuery);
   const setComponentSearchQuery = useStore((s) => s.setComponentSearchQuery);
+  const dependencyInspectorTab = useStore((s) => s.dependencyInspectorTab);
+  const setDependencyInspectorTab = useStore((s) => s.setDependencyInspectorTab);
+  const dependencyGranularity = useStore((s) => s.dependencyGranularity);
+  const setDependencyGranularity = useStore((s) => s.setDependencyGranularity);
+  const dependencyFocusEnabled = useStore((s) => s.dependencyFocusEnabled);
+  const toggleDependencyFocus = useStore((s) => s.toggleDependencyFocus);
+  const dependencyShowCircularOnly = useStore((s) => s.dependencyShowCircularOnly);
+  const toggleDependencyShowCircularOnly = useStore((s) => s.toggleDependencyShowCircularOnly);
+  const dependencyHideTypeOnly = useStore((s) => s.dependencyHideTypeOnly);
+  const toggleDependencyHideTypeOnly = useStore((s) => s.toggleDependencyHideTypeOnly);
 
   if (!graph) {
     return (
@@ -222,6 +233,8 @@ export function Sidebar() {
   const hasContainerDiagram = Boolean(graph.containerDiagram);
   const isContainerView = zoomLevel === "container" && hasContainerDiagram;
   const isDataModelView = zoomLevel === "dataModel";
+  const hasDependencyDiagram = Boolean(graph.dependencyDiagram);
+  const isDependencyView = zoomLevel === "dependency" && hasDependencyDiagram;
   const hasDetailedComponentDiagram = Boolean(graph.componentDiagram);
   const isDetailedComponentView = zoomLevel === "component" && hasDetailedComponentDiagram;
   const dataModelVisibility = {
@@ -233,11 +246,14 @@ export function Sidebar() {
   const applicationCount = graph.containerDiagram?.containers.filter((item) => item.kind === "application").length ?? 0;
   const datastoreCount = graph.containerDiagram?.containers.filter((item) => item.kind === "datastore").length ?? 0;
   const relationshipCount = graph.containerDiagram?.relationships.length ?? 0;
+  const depDiag = graph.dependencyDiagram;
   const headerMeta = isContainerView
     ? `${containerCount} containers · ${relationshipCount} relationships · ${applicationCount} applications · ${datastoreCount} data stores`
-    : isDataModelView
-      ? `${visibleDataModelStructureCount(graph, dataModelVisibility)} visible structures · ${visibleDataModelRelationCount(graph, dataModelVisibility)} visible relations · ${graph.dataStructureAccesses.length} access paths`
-      : `${graph.meta.fileCount} files · ${graph.meta.classCount} types · ${graph.components.length} components`;
+    : isDependencyView && depDiag
+      ? `${depDiag.summary.totalModules} modules · ${depDiag.summary.totalFileDeps} file deps · ${depDiag.summary.circularCycleCount} cycles`
+      : isDataModelView
+        ? `${visibleDataModelStructureCount(graph, dataModelVisibility)} visible structures · ${visibleDataModelRelationCount(graph, dataModelVisibility)} visible relations · ${graph.dataStructureAccesses.length} access paths`
+        : `${graph.meta.fileCount} files · ${graph.meta.classCount} types · ${graph.components.length} components`;
 
   return (
     <div style={sidebarStyle} data-testid="architecture-sidebar">
@@ -251,7 +267,7 @@ export function Sidebar() {
 
       {/* Zoom level toggle */}
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
-        {(["container", "component", "dataModel", "file", "class", "flow"] as ZoomLevel[]).map((level) => (
+        {(["container", "component", "dataModel", "dependency", "file", "class", "flow"] as ZoomLevel[]).map((level) => (
           <button
             key={level}
             onClick={() => setZoomLevel(level)}
@@ -274,7 +290,7 @@ export function Sidebar() {
       </div>
 
       {/* Edge filters — only for non-flow views */}
-      {!isFlowView && !isContainerView && !isDataModelView && !(zoomLevel === "component" && hasDetailedComponentDiagram) && (
+      {!isFlowView && !isContainerView && !isDataModelView && !isDependencyView && !(zoomLevel === "component" && hasDetailedComponentDiagram) && (
         <div style={{ ...sectionStyle, padding: "10px 12px" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#aaa", marginBottom: 10 }}>
             Relationship types
@@ -344,6 +360,20 @@ export function Sidebar() {
           onToggleExpandMirrors={toggleDataModelExpandMirrors}
         />
       )}
+      {isDependencyView && (
+        <DependencyTabControls
+          inspectorTab={dependencyInspectorTab}
+          onSelectTab={setDependencyInspectorTab}
+          granularity={dependencyGranularity}
+          onSelectGranularity={setDependencyGranularity}
+          focusEnabled={dependencyFocusEnabled}
+          onToggleFocus={toggleDependencyFocus}
+          showCircularOnly={dependencyShowCircularOnly}
+          onToggleCircularOnly={toggleDependencyShowCircularOnly}
+          hideTypeOnly={dependencyHideTypeOnly}
+          onToggleHideTypeOnly={toggleDependencyHideTypeOnly}
+        />
+      )}
       {isDetailedComponentView && (
         <ComponentTabControls
           activeViewId={activeComponentViewId}
@@ -363,6 +393,8 @@ export function Sidebar() {
       {!isFlowView && (
         isContainerView ? (
           <ContainerInspector />
+        ) : isDependencyView ? (
+          <DependencyInspector />
         ) : isDataModelView ? (
           <DataModelInspector />
         ) : isDetailedComponentView ? (
@@ -3036,6 +3068,547 @@ function scoreReadNextFile(
   if (fileId.startsWith("client/src/")) score -= 8;
   if (fileId.includes("/debug/")) score += 40;
   return score;
+}
+
+// ---------------------------------------------------------------------------
+// Dependency view controls + inspector
+// ---------------------------------------------------------------------------
+
+const DEPENDENCY_INSPECTOR_TABS: {
+  value: DependencyInspectorTab;
+  label: string;
+  description: string;
+}[] = [
+  { value: "overview", label: "Overview", description: "Module summary, files, metrics." },
+  { value: "dependencies", label: "Deps", description: "Inbound and outbound dependencies." },
+  { value: "metrics", label: "Metrics", description: "All modules ranked by instability." },
+  { value: "cycles", label: "Cycles", description: "Detected circular dependency chains." },
+];
+
+function DependencyTabControls({
+  inspectorTab,
+  onSelectTab,
+  granularity,
+  onSelectGranularity,
+  focusEnabled,
+  onToggleFocus,
+  showCircularOnly,
+  onToggleCircularOnly,
+  hideTypeOnly,
+  onToggleHideTypeOnly,
+}: {
+  inspectorTab: DependencyInspectorTab;
+  onSelectTab: (tab: DependencyInspectorTab) => void;
+  granularity: string;
+  onSelectGranularity: (g: "module" | "file" | "symbol") => void;
+  focusEnabled: boolean;
+  onToggleFocus: () => void;
+  showCircularOnly: boolean;
+  onToggleCircularOnly: () => void;
+  hideTypeOnly: boolean;
+  onToggleHideTypeOnly: () => void;
+}) {
+  return (
+    <>
+      {/* Granularity toggle */}
+      <div style={{ ...sectionStyle, padding: "8px 10px" }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>GRANULARITY</div>
+        <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+          {(["module", "file", "symbol"] as const).map((g) => (
+            <button
+              key={g}
+              onClick={() => onSelectGranularity(g)}
+              style={{
+                flex: 1,
+                padding: "5px 6px",
+                fontSize: 10,
+                fontWeight: granularity === g ? 700 : 400,
+                background: granularity === g ? "#1a2a3a" : "transparent",
+                color: granularity === g ? "#fff" : "#666",
+                border: `1px solid ${granularity === g ? "#2a4a6a" : "#252545"}`,
+                borderRadius: 5,
+                cursor: "pointer",
+              }}
+            >
+              {g === "symbol" ? "Class / Fn" : g === "file" ? "File" : "Module"}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>INSPECTOR</div>
+        <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+          {DEPENDENCY_INSPECTOR_TABS.map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => onSelectTab(tab.value)}
+              title={tab.description}
+              style={{
+                flex: 1,
+                padding: "5px 6px",
+                fontSize: 10,
+                fontWeight: inspectorTab === tab.value ? 700 : 400,
+                background: inspectorTab === tab.value ? "#252545" : "transparent",
+                color: inspectorTab === tab.value ? "#fff" : "#666",
+                border: `1px solid ${inspectorTab === tab.value ? "#444" : "#252545"}`,
+                borderRadius: 5,
+                cursor: "pointer",
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 10, color: "#aaa" }}>
+            <input type="checkbox" checked={focusEnabled} onChange={onToggleFocus} style={{ accentColor: "#648FFF" }} />
+            Focus mode
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 10, color: "#aaa" }}>
+            <input type="checkbox" checked={showCircularOnly} onChange={onToggleCircularOnly} style={{ accentColor: "#ef4444" }} />
+            Circular only
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 10, color: "#aaa" }}>
+            <input type="checkbox" checked={hideTypeOnly} onChange={onToggleHideTypeOnly} style={{ accentColor: "#a855f7" }} />
+            Hide type imports
+          </label>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function DependencyInspector() {
+  const graph = useStore((s) => s.graph);
+  const selectedNodeId = useStore((s) => s.selectedNodeId);
+  const selectedEdgeId = useStore((s) => s.selectedEdgeId);
+  const inspectorTab = useStore((s) => s.dependencyInspectorTab);
+
+  if (!graph?.dependencyDiagram) return null;
+  const diagram = graph.dependencyDiagram;
+
+  // No selection — show intro or metrics/cycles tabs
+  if (!selectedNodeId && !selectedEdgeId) {
+    if (inspectorTab === "metrics") return <DependencyMetricsPanel />;
+    if (inspectorTab === "cycles") return <DependencyCyclesPanel />;
+    return <DependencyIntroPanel />;
+  }
+
+  // Edge selected
+  if (selectedEdgeId) {
+    const dep = diagram.moduleDeps.find((d) => d.id === selectedEdgeId);
+    if (dep) return <DependencyEdgeInspector dep={dep} />;
+  }
+
+  // Symbol selected (pill node — id contains "::")
+  if (selectedNodeId && selectedNodeId.includes("::")) {
+    if (inspectorTab === "metrics") return <DependencyMetricsPanel />;
+    if (inspectorTab === "cycles") return <DependencyCyclesPanel />;
+    return <SymbolDetailPanel symbolId={selectedNodeId} />;
+  }
+
+  // Module selected
+  if (selectedNodeId) {
+    const mod = diagram.modules.find((m) => m.id === selectedNodeId);
+    if (!mod) return null;
+
+    if (inspectorTab === "metrics") return <DependencyMetricsPanel />;
+    if (inspectorTab === "cycles") return <DependencyCyclesPanel />;
+    if (inspectorTab === "dependencies") return <DependencyDepsPanel moduleId={mod.id} />;
+    return <DependencyOverviewPanel moduleId={mod.id} />;
+  }
+
+  return null;
+}
+
+const ARROW_LEGEND: Record<string, { boxLabel: string; arrowMeaning: string; example: string }> = {
+  module: {
+    boxLabel: "Each box is a component module (Engine, NPC, etc.)",
+    arrowMeaning: "A → B means at least one file in A imports from a file in B",
+    example: "Bootstrap → Engine = bootstrap code imports engine modules",
+  },
+  file: {
+    boxLabel: "Each box is a source file (.ts)",
+    arrowMeaning: "A → B means file A has an import statement that resolves to file B",
+    example: "orchestrator.ts → memory.ts = orchestrator imports from memory",
+  },
+  symbol: {
+    boxLabel: "Each box is an exported class, interface, or function",
+    arrowMeaning: "A → B means a file that defines A imports the symbol B",
+    example: "NpcOrchestrator → MemoryManager = orchestrator file imports MemoryManager",
+  },
+};
+
+function DependencyIntroPanel() {
+  const graph = useStore((s) => s.graph);
+  const granularity = useStore((s) => s.dependencyGranularity);
+  if (!graph?.dependencyDiagram) return null;
+  const { summary } = graph.dependencyDiagram;
+  const legend = ARROW_LEGEND[granularity] ?? ARROW_LEGEND.file;
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", marginBottom: 8 }}>
+        Dependency Graph
+      </div>
+
+      {/* Arrow legend */}
+      <div
+        style={{
+          padding: "8px 10px",
+          marginBottom: 10,
+          background: "#111827",
+          border: "1px solid #1e293b",
+          borderRadius: 8,
+          lineHeight: 1.55,
+        }}
+      >
+        <div style={{ fontSize: 10, color: "#cbd5e1" }}>{legend.boxLabel}</div>
+        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>
+          <span style={{ fontWeight: 700, color: "#e2e8f0" }}>→</span>{" "}
+          {legend.arrowMeaning}
+        </div>
+        <div style={{ fontSize: 9, color: "#64748b", marginTop: 4, fontStyle: "italic" }}>
+          e.g. {legend.example}
+        </div>
+        <div style={{ display: "flex", gap: 14, marginTop: 8, alignItems: "center" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <svg width="24" height="6"><line x1="0" y1="3" x2="24" y2="3" stroke="#94a3b8" strokeWidth="2" /></svg>
+            <span style={{ fontSize: 9, color: "#cbd5e1" }}>normal</span>
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <svg width="24" height="6"><line x1="0" y1="3" x2="24" y2="3" stroke="#ef4444" strokeWidth="2" strokeDasharray="4 3" /></svg>
+            <span style={{ fontSize: 9, color: "#cbd5e1" }}>circular</span>
+          </span>
+          <span style={{ fontSize: 9, color: "#94a3b8" }}>width = strength</span>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 10, color: "#94a3b8", lineHeight: 1.5, marginBottom: 10 }}>
+        {summary.totalFileDeps} file imports across {summary.totalModules} modules.
+        Click a node to inspect its dependencies and metrics.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        <MetricCard label="Modules" value={String(summary.totalModules)} color="#648FFF" />
+        <MetricCard label="File imports" value={String(summary.totalFileDeps)} color="#22D3EE" />
+        <MetricCard label="Module deps" value={String(summary.totalModuleDeps)} color="#f59e0b" />
+        <MetricCard label="Circular cycles" value={String(summary.circularCycleCount)} color={summary.circularCycleCount > 0 ? "#ef4444" : "#22c55e"} />
+        <MetricCard label="Avg instability" value={summary.averageInstability.toFixed(2)} color="#a855f7" />
+        <MetricCard label="Most stable" value={summary.mostStableModule} color="#22c55e" />
+      </div>
+    </div>
+  );
+}
+
+function DependencyOverviewPanel({ moduleId }: { moduleId: string }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph?.dependencyDiagram) return null;
+  const mod = graph.dependencyDiagram.modules.find((m) => m.id === moduleId);
+  if (!mod) return null;
+  const comp = graph.components.find((c) => c.id === mod.componentId);
+  const color = comp?.color ?? "#888";
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader title={mod.label} subtitle={`${mod.fileCount} files · ${mod.totalLoc} LOC`} color={color} />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 10 }}>
+        <MetricCard label="Fan-in" value={String(mod.fanIn)} color="#22D3EE" />
+        <MetricCard label="Fan-out" value={String(mod.fanOut)} color="#f59e0b" />
+        <MetricCard label="Instability" value={mod.instability.toFixed(2)} color={mod.instability <= 0.3 ? "#22c55e" : mod.instability <= 0.6 ? "#f59e0b" : "#ef4444"} />
+      </div>
+      <div style={{ marginTop: 10, fontSize: 10, color: "#94a3b8", lineHeight: 1.5 }}>
+        {mod.internalEdgeCount} internal imports between files in this module.
+        {mod.orphanFiles.length > 0 && ` ${mod.orphanFiles.length} orphan files with no imports.`}
+      </div>
+      {mod.orphanFiles.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", marginBottom: 4 }}>ORPHAN FILES</div>
+          {mod.orphanFiles.map((f) => (
+            <div key={f} style={{ fontSize: 9, color: "#94a3b8", fontFamily: "monospace", lineHeight: 1.6 }}>
+              {f.split("/").pop()}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SymbolDetailPanel({ symbolId }: { symbolId: string }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph) return null;
+
+  const [fileId, symbolName] = symbolId.split("::");
+  const cls = graph.classes.find((c) => c.fileId === fileId && c.name === symbolName);
+  const comp = graph.components.find((c) => c.fileIds?.includes(fileId));
+  const color = comp?.color ?? "#888";
+  const kind = cls ? cls.kind : "function";
+
+  // Find edges involving this symbol from the dependency diagram
+  const diagram = graph.dependencyDiagram;
+  const inbound = diagram?.fileDeps.filter((d) => d.target === fileId) ?? [];
+  const outbound = diagram?.fileDeps.filter((d) => d.source === fileId) ?? [];
+
+  return (
+    <div style={sectionStyle}>
+      <InspectorHeader
+        title={symbolName ?? symbolId}
+        subtitle={`${kind} in ${fileId?.split("/").pop() ?? fileId}`}
+        color={color}
+      />
+
+      {cls && cls.fields.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", marginBottom: 4 }}>FIELDS</div>
+          {cls.fields.map((f) => (
+            <div key={f.name} style={{ fontSize: 10, color: "#cbd5e1", fontFamily: "monospace", lineHeight: 1.5 }}>
+              {f.name}: <span style={{ color: "#64748b" }}>{f.type}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {cls && cls.methods.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", marginBottom: 4 }}>METHODS</div>
+          {cls.methods.filter((m) => m.visibility === "public").map((m) => (
+            <div key={m.name} style={{ fontSize: 10, color: "#e2e8f0", fontFamily: "monospace", lineHeight: 1.5 }}>
+              {m.name}()
+              {m.isAsync && <span style={{ color: "#648FFF", marginLeft: 4, fontSize: 8 }}>async</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(inbound.length > 0 || outbound.length > 0) && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", marginBottom: 4 }}>
+            FILE IMPORTS ({inbound.length} in, {outbound.length} out)
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DependencyDepsPanel({ moduleId }: { moduleId: string }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph?.dependencyDiagram) return null;
+  const diagram = graph.dependencyDiagram;
+  const inbound = diagram.moduleDeps.filter((d) => d.target === moduleId);
+  const outbound = diagram.moduleDeps.filter((d) => d.source === moduleId);
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#e2e8f0", marginBottom: 10 }}>Dependencies</div>
+      {outbound.length > 0 && (
+        <>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#f59e0b", marginBottom: 4 }}>
+            DEPENDS ON ({outbound.length})
+          </div>
+          {outbound.map((d) => (
+            <DepRow key={d.id} dep={d} side="target" />
+          ))}
+        </>
+      )}
+      {inbound.length > 0 && (
+        <>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#22D3EE", marginTop: 10, marginBottom: 4 }}>
+            DEPENDED ON BY ({inbound.length})
+          </div>
+          {inbound.map((d) => (
+            <DepRow key={d.id} dep={d} side="source" />
+          ))}
+        </>
+      )}
+      {inbound.length === 0 && outbound.length === 0 && (
+        <div style={{ fontSize: 10, color: "#64748b" }}>No cross-module dependencies.</div>
+      )}
+    </div>
+  );
+}
+
+function DepRow({ dep, side }: { dep: { id: string; source: string; target: string; fileEdgeCount: number; strength: string; isCircular: boolean }; side: "source" | "target" }) {
+  const label = side === "target" ? dep.target : dep.source;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 0",
+        fontSize: 10,
+        color: dep.isCircular ? "#fbbf24" : "#cbd5e1",
+      }}
+    >
+      <span style={{ fontWeight: 600, flex: 1 }}>{label}</span>
+      <span style={{ fontSize: 9, color: "#64748b" }}>{dep.fileEdgeCount} imports</span>
+      <span
+        style={{
+          fontSize: 8,
+          fontWeight: 700,
+          padding: "1px 5px",
+          borderRadius: 999,
+          background: dep.strength === "strong" ? "#7f1d1d33" : dep.strength === "moderate" ? "#78350f33" : "#1e293b",
+          color: dep.strength === "strong" ? "#fca5a5" : dep.strength === "moderate" ? "#fcd34d" : "#94a3b8",
+        }}
+      >
+        {dep.strength}
+      </span>
+      {dep.isCircular && (
+        <span style={{ fontSize: 8, fontWeight: 800, color: "#ef4444" }}>CIRC</span>
+      )}
+    </div>
+  );
+}
+
+function DependencyMetricsPanel() {
+  const graph = useStore((s) => s.graph);
+  const selectNode = useStore((s) => s.selectNode);
+  if (!graph?.dependencyDiagram) return null;
+  const sorted = [...graph.dependencyDiagram.modules].sort((a, b) => b.instability - a.instability);
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#e2e8f0", marginBottom: 8 }}>
+        Module Metrics
+      </div>
+      <div style={{ fontSize: 9, color: "#64748b", marginBottom: 8 }}>Sorted by instability (most unstable first)</div>
+      {sorted.map((mod) => {
+        const instColor = mod.instability <= 0.3 ? "#22c55e" : mod.instability <= 0.6 ? "#f59e0b" : "#ef4444";
+        return (
+          <button
+            key={mod.id}
+            onClick={() => selectNode(mod.id)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              width: "100%",
+              padding: "5px 6px",
+              marginBottom: 2,
+              background: "transparent",
+              border: "1px solid transparent",
+              borderRadius: 4,
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            <span style={{ fontSize: 10, fontWeight: 600, color: "#cbd5e1", flex: 1 }}>{mod.label}</span>
+            <span style={{ fontSize: 9, color: "#22D3EE", minWidth: 20, textAlign: "right" }}>{mod.fanIn}</span>
+            <span style={{ fontSize: 9, color: "#f59e0b", minWidth: 20, textAlign: "right" }}>{mod.fanOut}</span>
+            <span style={{ fontSize: 9, fontWeight: 700, color: instColor, minWidth: 32, textAlign: "right" }}>
+              {mod.instability.toFixed(2)}
+            </span>
+          </button>
+        );
+      })}
+      <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 8, color: "#64748b" }}>
+        <span><span style={{ color: "#22D3EE" }}>IN</span></span>
+        <span><span style={{ color: "#f59e0b" }}>OUT</span></span>
+        <span>INSTAB</span>
+      </div>
+    </div>
+  );
+}
+
+function DependencyCyclesPanel() {
+  const graph = useStore((s) => s.graph);
+  if (!graph?.dependencyDiagram) return null;
+  const { cycles } = graph.dependencyDiagram;
+
+  if (cycles.length === 0) {
+    return (
+      <div style={sectionStyle}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#22c55e", marginBottom: 6 }}>No Circular Dependencies</div>
+        <div style={{ fontSize: 10, color: "#94a3b8" }}>All module dependencies are acyclic.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", marginBottom: 8 }}>
+        Circular Dependencies ({cycles.length})
+      </div>
+      {cycles.map((cycle) => (
+        <div
+          key={cycle.id}
+          style={{
+            padding: "6px 8px",
+            marginBottom: 6,
+            background: cycle.severity === "error" ? "#7f1d1d18" : "#78350f18",
+            border: `1px solid ${cycle.severity === "error" ? "#7f1d1d44" : "#78350f44"}`,
+            borderRadius: 6,
+          }}
+        >
+          <div style={{ fontSize: 10, fontWeight: 600, color: "#fcd34d", marginBottom: 4 }}>
+            {cycle.modules.join(" → ")} → {cycle.modules[0]}
+          </div>
+          <div style={{ fontSize: 9, color: "#94a3b8" }}>
+            {cycle.fileEdges.length} file-level edges · severity: {cycle.severity}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DependencyEdgeInspector({ dep }: { dep: { id: string; source: string; target: string; fileEdgeCount: number; symbolCount: number; strength: string; isCircular: boolean } }) {
+  const graph = useStore((s) => s.graph);
+  if (!graph?.dependencyDiagram) return null;
+
+  // Find the file-level edges for this module dep
+  const fileDeps = graph.dependencyDiagram.fileDeps.filter((fd) => {
+    const srcComp = graph.components.find((c) => c.fileIds.includes(fd.source));
+    const tgtComp = graph.components.find((c) => c.fileIds.includes(fd.target));
+    return srcComp?.id === dep.source && tgtComp?.id === dep.target;
+  });
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>
+        {dep.source} → {dep.target}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 9, color: "#94a3b8" }}>{dep.fileEdgeCount} file imports</span>
+        <span style={{ fontSize: 9, fontWeight: 700, color: dep.isCircular ? "#ef4444" : "#94a3b8" }}>
+          {dep.isCircular ? "CIRCULAR" : dep.strength}
+        </span>
+      </div>
+      {fileDeps.length > 0 && (
+        <>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", marginBottom: 4 }}>FILE EDGES</div>
+          {fileDeps.slice(0, 20).map((fd, i) => (
+            <div key={i} style={{ fontSize: 9, color: fd.isCircular ? "#fbbf24" : "#cbd5e1", fontFamily: "monospace", lineHeight: 1.6 }}>
+              {fd.source.split("/").pop()} → {fd.target.split("/").pop()}
+              {fd.isCircular && <span style={{ color: "#ef4444", marginLeft: 4 }}>circ</span>}
+            </div>
+          ))}
+          {fileDeps.length > 20 && (
+            <div style={{ fontSize: 9, color: "#64748b", marginTop: 4 }}>
+              ...and {fileDeps.length - 20} more
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function MetricCard({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div
+      style={{
+        padding: "6px 8px",
+        background: "#0f172a",
+        border: "1px solid #1e293b",
+        borderRadius: 6,
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: 14, fontWeight: 800, color }}>{value}</div>
+      <div style={{ fontSize: 8, color: "#64748b", fontWeight: 600, marginTop: 2 }}>{label}</div>
+    </div>
+  );
 }
 
 function ComponentTabControls(

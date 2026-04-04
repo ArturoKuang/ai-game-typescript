@@ -1293,6 +1293,11 @@ function buildBrowserClientEdges(context: DiagramContext): ComponentDiagramEdge[
 }
 
 function buildGameServerEdges(context: DiagramContext): ComponentDiagramEdge[] {
+  const npcCommands = pickNames(
+    commandTypesByProducerPrefix(context.commands, "server/src/npc/"),
+    ["start_convo", "say", "end_convo"],
+  );
+
   return [
     edge(context, {
       viewId: VIEW_GAME_SERVER,

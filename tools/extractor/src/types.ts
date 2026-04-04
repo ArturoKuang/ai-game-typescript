@@ -36,6 +36,7 @@ export interface ArchitectureGraph {
   dataModelEvidence: DataModelEvidence[];
   containerDiagram?: ContainerDiagram;
   componentDiagram?: ComponentDiagram;
+  dependencyDiagram?: DependencyDiagram;
 }
 
 /** Component = directory-level grouping */
@@ -153,6 +154,7 @@ export interface ImportEdge {
   source: string;
   target: string;
   symbols: string[];
+  typeOnlySymbols?: string[];
 }
 
 /** An event type with its emitters and subscribers */
@@ -699,4 +701,64 @@ export interface ComponentDiagramEvidence {
   line?: number;
   symbol?: string;
   detail: string;
+}
+
+// ---------------------------------------------------------------------------
+// Dependency Diagram
+// ---------------------------------------------------------------------------
+
+export interface DependencyDiagram {
+  modules: DependencyModule[];
+  fileDeps: DependencyFileDep[];
+  moduleDeps: DependencyModuleDep[];
+  cycles: DependencyCycle[];
+  summary: DependencySummary;
+}
+
+export interface DependencyModule {
+  id: string;
+  label: string;
+  componentId: string;
+  fileCount: number;
+  totalLoc: number;
+  fanIn: number;
+  fanOut: number;
+  instability: number;
+  internalEdgeCount: number;
+  orphanFiles: string[];
+}
+
+export interface DependencyFileDep {
+  source: string;
+  target: string;
+  symbols: string[];
+  isCircular: boolean;
+  isDynamic: boolean;
+}
+
+export interface DependencyModuleDep {
+  id: string;
+  source: string;
+  target: string;
+  fileEdgeCount: number;
+  symbolCount: number;
+  isCircular: boolean;
+  strength: "weak" | "moderate" | "strong";
+}
+
+export interface DependencyCycle {
+  id: string;
+  modules: string[];
+  fileEdges: { source: string; target: string }[];
+  severity: "info" | "warning" | "error";
+}
+
+export interface DependencySummary {
+  totalModules: number;
+  totalFileDeps: number;
+  totalModuleDeps: number;
+  circularCycleCount: number;
+  averageInstability: number;
+  mostUnstableModule: string;
+  mostStableModule: string;
 }

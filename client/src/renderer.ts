@@ -13,7 +13,7 @@
  * factor of 0.3 to hide network jitter.
  */
 import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
-import type { Activity, Player, TileType } from "./types.js";
+import type { Activity, NpcNeedsData, Player, TileType, WorldEntity } from "./types.js";
 
 /** Pixels per tile edge. */
 const TILE_SIZE = 32;
@@ -29,6 +29,16 @@ const HUMAN_COLOR = 0x5dade2;
 const SELF_COLOR = 0xf7dc6f;
 const CONVO_LINE_COLOR = 0xe94560;
 
+/** Colors for need bar visualization (hunger, energy, social). */
+const NEED_BAR_COLORS: Record<string, number> = {
+  hunger: 0xe74c3c, // red
+  energy: 0xf39c12, // orange
+  social: 0x3498db, // blue
+};
+const NEED_BAR_WIDTH = 20;
+const NEED_BAR_HEIGHT = 3;
+const NEED_BAR_GAP = 1;
+
 interface PlayerSprite {
   container: Container;
   circle: Graphics;
@@ -36,15 +46,26 @@ interface PlayerSprite {
   waitingIndicator: Container | null;
   chatBubble: Container | null;
   chatTimeout: ReturnType<typeof setTimeout> | null;
+  needBars: Container | null;
 }
+
+/** Map entity types to emoji for rendering. */
+const ENTITY_EMOJI: Record<string, string> = {
+  berry_bush: "\uD83E\uDED0",
+  bench: "\uD83E\uDE91",
+  campfire: "\uD83D\uDD25",
+};
 
 export class GameRenderer {
   private app: Application;
   private tileContainer: Container = new Container();
   private activityContainer: Container = new Container();
+  private entityContainer: Container = new Container();
   private playerContainer: Container = new Container();
   private lineContainer: Container = new Container();
   private playerSprites: Map<string, PlayerSprite> = new Map();
+  private entitySprites: Map<string, Text> = new Map();
+  private npcNeeds: Map<string, NpcNeedsData> = new Map();
   private mapWidth = 0;
   private mapHeight = 0;
   private selfId: string | null = null;
@@ -63,6 +84,7 @@ export class GameRenderer {
     });
     this.app.stage.addChild(this.tileContainer);
     this.app.stage.addChild(this.activityContainer);
+    this.app.stage.addChild(this.entityContainer);
     this.app.stage.addChild(this.lineContainer);
     this.app.stage.addChild(this.playerContainer);
   }
@@ -246,6 +268,136 @@ export class GameRenderer {
     }, 5000);
   }
 
+  /** Render or update world entities (berry bushes, benches, etc.) */
+  updateEntities(entities: WorldEntity[]): void {
+    const currentIds = new Set(entities.map((e) => e.id));
+
+    // Remove sprites for removed entities
+    for (const [id, sprite] of this.entitySprites) {
+      if (!currentIds.has(id)) {
+        this.entityContainer.removeChild(sprite);
+        this.entitySprites.delete(id);
+      }
+    }
+
+    const style = new TextStyle({ fontSize: 16, fill: 0xffffff });
+
+    for (const entity of entities) {
+      if (entity.destroyed) {
+        const existing = this.entitySprites.get(entity.id);
+        if (existing) {
+          this.entityContainer.removeChild(existing);
+          this.entitySprites.delete(entity.id);
+        }
+        continue;
+      }
+
+      let sprite = this.entitySprites.get(entity.id);
+      if (!sprite) {
+        const emoji = ENTITY_EMOJI[entity.type] ?? "\u2753";
+        sprite = new Text({ text: emoji, style });
+        sprite.anchor.set(0.5);
+        this.entityContainer.addChild(sprite);
+        this.entitySprites.set(entity.id, sprite);
+      }
+
+      sprite.x = entity.x * TILE_SIZE + TILE_SIZE / 2;
+      sprite.y = entity.y * TILE_SIZE + TILE_SIZE / 2;
+
+      // Dim depleted berry bushes
+      if (entity.type === "berry_bush" && entity.properties.berries === 0) {
+        sprite.alpha = 0.3;
+      } else {
+        sprite.alpha = 1.0;
+      }
+    }
+  }
+
+  /** Update a single entity (from entity_update message). */
+  updateEntity(entity: WorldEntity): void {
+    if (entity.destroyed) {
+      this.removeEntity(entity.id);
+      return;
+    }
+
+    const style = new TextStyle({ fontSize: 16, fill: 0xffffff });
+    let sprite = this.entitySprites.get(entity.id);
+    if (!sprite) {
+      const emoji = ENTITY_EMOJI[entity.type] ?? "\u2753";
+      sprite = new Text({ text: emoji, style });
+      sprite.anchor.set(0.5);
+      this.entityContainer.addChild(sprite);
+      this.entitySprites.set(entity.id, sprite);
+    }
+
+    sprite.x = entity.x * TILE_SIZE + TILE_SIZE / 2;
+    sprite.y = entity.y * TILE_SIZE + TILE_SIZE / 2;
+
+    if (entity.type === "berry_bush" && entity.properties.berries === 0) {
+      sprite.alpha = 0.3;
+    } else {
+      sprite.alpha = 1.0;
+    }
+  }
+
+  /** Remove an entity sprite (from entity_removed message). */
+  removeEntity(entityId: string): void {
+    const sprite = this.entitySprites.get(entityId);
+    if (sprite) {
+      this.entityContainer.removeChild(sprite);
+      this.entitySprites.delete(entityId);
+    }
+  }
+
+  /** Store NPC needs data for visualization. */
+  updateNpcNeeds(data: NpcNeedsData): void {
+    this.npcNeeds.set(data.npcId, data);
+    this.renderNeedBars(data.npcId);
+  }
+
+  /** Render or update need bars above an NPC sprite. */
+  private renderNeedBars(npcId: string): void {
+    const sprite = this.playerSprites.get(npcId);
+    const needs = this.npcNeeds.get(npcId);
+    if (!sprite || !needs) return;
+
+    // Remove old bars
+    if (sprite.needBars) {
+      sprite.container.removeChild(sprite.needBars);
+    }
+
+    const barsContainer = new Container();
+    const barKeys: Array<{ key: keyof typeof NEED_BAR_COLORS; value: number }> = [
+      { key: "hunger", value: needs.hunger },
+      { key: "energy", value: needs.energy },
+      { key: "social", value: needs.social },
+    ];
+
+    const totalHeight =
+      barKeys.length * NEED_BAR_HEIGHT +
+      (barKeys.length - 1) * NEED_BAR_GAP;
+    const startY = -TILE_SIZE * 0.55 - totalHeight;
+
+    for (let i = 0; i < barKeys.length; i++) {
+      const { key, value } = barKeys[i];
+      const y = startY + i * (NEED_BAR_HEIGHT + NEED_BAR_GAP);
+
+      const bg = new Graphics();
+      bg.rect(-NEED_BAR_WIDTH / 2, y, NEED_BAR_WIDTH, NEED_BAR_HEIGHT);
+      bg.fill({ color: 0x333333, alpha: 0.7 });
+      barsContainer.addChild(bg);
+
+      const fill = new Graphics();
+      const fillWidth = (value / 100) * NEED_BAR_WIDTH;
+      fill.rect(-NEED_BAR_WIDTH / 2, y, fillWidth, NEED_BAR_HEIGHT);
+      fill.fill(NEED_BAR_COLORS[key]);
+      barsContainer.addChild(fill);
+    }
+
+    sprite.container.addChild(barsContainer);
+    sprite.needBars = barsContainer;
+  }
+
   /** Convert screen coordinates to tile coordinates */
   screenToTile(
     screenX: number,
@@ -286,6 +438,7 @@ export class GameRenderer {
       waitingIndicator: null,
       chatBubble: null,
       chatTimeout: null,
+      needBars: null,
     };
   }
 

@@ -14,7 +14,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { useStore } from "./store";
-import { buildFlowGraph } from "./graphLoader";
+import { buildFlowGraph, applyHoverHighlight } from "./graphLoader";
 import { BoundaryNode } from "./nodes/BoundaryNode";
 import { ContainerCardNode } from "./nodes/ContainerCardNode";
 import { ContainerRelationshipEdge } from "./edges/ContainerRelationshipEdge";
@@ -29,8 +29,12 @@ import { FlowStepNode } from "./nodes/FlowStepNode";
 import { StateMachineStateNode } from "./nodes/StateMachineStateNode";
 import { LegendNode } from "./nodes/LegendNode";
 import { DataStructureNode } from "./nodes/DataStructureNode";
+import { DependencyModuleNode } from "./nodes/DependencyModuleNode";
+import { PillNode } from "./nodes/PillNode";
+import { DependencyEdge } from "./edges/DependencyEdge";
 import { Sidebar } from "./Sidebar";
 import type { ArchitectureGraph } from "./types";
+import { useHoverSuppression } from "./useHoverSuppression";
 
 const nodeTypes: NodeTypes = {
   boundary: BoundaryNode,
@@ -45,11 +49,14 @@ const nodeTypes: NodeTypes = {
   stateMachineState: StateMachineStateNode,
   legend: LegendNode,
   dataStructure: DataStructureNode,
+  dependencyModule: DependencyModuleNode,
+  pillNode: PillNode,
 };
 
 const edgeTypes: EdgeTypes = {
   containerRelationship: ContainerRelationshipEdge,
   dataModelRelation: DataModelRelationEdge,
+  dependencyEdge: DependencyEdge,
 };
 
 export function App() {
@@ -73,6 +80,10 @@ export function App() {
   const componentFocusEnabled = useStore((s) => s.componentFocusEnabled);
   const componentFocusDirection = useStore((s) => s.componentFocusDirection);
   const selectedFlowGroup = useStore((s) => s.selectedFlowGroup);
+  const dependencyGranularity = useStore((s) => s.dependencyGranularity);
+  const dependencyFocusEnabled = useStore((s) => s.dependencyFocusEnabled);
+  const dependencyShowCircularOnly = useStore((s) => s.dependencyShowCircularOnly);
+  const dependencyHideTypeOnly = useStore((s) => s.dependencyHideTypeOnly);
   const setGraph = useStore((s) => s.setGraph);
   const selectNode = useStore((s) => s.selectNode);
   const selectEdge = useStore((s) => s.selectEdge);
@@ -81,6 +92,7 @@ export function App() {
   const setContainerInspectorTab = useStore((s) => s.setContainerInspectorTab);
   const setDataModelInspectorTab = useStore((s) => s.setDataModelInspectorTab);
   const setComponentInspectorTab = useStore((s) => s.setComponentInspectorTab);
+  const setDependencyInspectorTab = useStore((s) => s.setDependencyInspectorTab);
 
   useEffect(() => {
     fetch("/graph.json")
@@ -89,15 +101,17 @@ export function App() {
       .catch((err) => console.error("Failed to load graph.json:", err));
   }, [setGraph]);
 
-  const { nodes, edges } = useMemo(() => {
+  // Stage 1: structural graph build (expensive — layout, grouping, filtering).
+  // Does NOT depend on hover state so zooming while hovering won't rebuild.
+  const baseGraph = useMemo(() => {
     if (!graph) return { nodes: [], edges: [] };
     return buildFlowGraph(
       graph,
       zoomLevel,
       expandedComponents,
       visibleCouplingTypes,
-      hoveredNodeId,
-      hoveredEdgeId,
+      null, // hoveredNodeId — applied in stage 2
+      null, // hoveredEdgeId — applied in stage 2
       selectedNodeId,
       selectedEdgeId,
       containerFocusEnabled,
@@ -112,14 +126,16 @@ export function App() {
       selectedStateMachine,
       activeLegendKeys,
       selectedFlowGroup,
+      dependencyGranularity,
+      dependencyFocusEnabled,
+      dependencyShowCircularOnly,
+      dependencyHideTypeOnly,
     );
   }, [
     graph,
     zoomLevel,
     expandedComponents,
     visibleCouplingTypes,
-    hoveredNodeId,
-    hoveredEdgeId,
     selectedNodeId,
     selectedEdgeId,
     containerFocusEnabled,
@@ -134,7 +150,16 @@ export function App() {
     selectedStateMachine,
     activeLegendKeys,
     selectedFlowGroup,
+    dependencyGranularity,
+    dependencyFocusEnabled,
+    dependencyShowCircularOnly,
+    dependencyHideTypeOnly,
   ]);
+
+  // Stage 2: hover highlight (cheap — only touches node/edge styles).
+  const { nodes, edges } = useMemo(() => {
+    return applyHoverHighlight(baseGraph.nodes, baseGraph.edges, hoveredNodeId, hoveredEdgeId);
+  }, [baseGraph, hoveredNodeId, hoveredEdgeId]);
 
   // Flow view needs a higher minZoom to keep node text readable
   const fitViewOpts = useMemo(() => {
@@ -146,6 +171,9 @@ export function App() {
     }
     if (zoomLevel === "dataModel") {
       return { padding: 0.08, minZoom: 0.22 };
+    }
+    if (zoomLevel === "dependency") {
+      return { padding: 0.12, minZoom: 0.3 };
     }
     if (zoomLevel === "component" && graph?.componentDiagram) {
       return { padding: 0.1, minZoom: 0.3 };
@@ -165,8 +193,11 @@ export function App() {
       if (node.type === "detailedComponentCard" || node.type === "boundary" || node.type === "componentContextContainer") {
         setComponentInspectorTab("overview");
       }
+      if (node.type === "dependencyModule" || node.type === "pillNode") {
+        setDependencyInspectorTab("overview");
+      }
     },
-    [selectNode, setComponentInspectorTab, setContainerInspectorTab, setDataModelInspectorTab],
+    [selectNode, setComponentInspectorTab, setContainerInspectorTab, setDataModelInspectorTab, setDependencyInspectorTab],
   );
   const onEdgeClick: OnEdgeClick = useCallback(
     (_e, edge) => {
@@ -179,28 +210,45 @@ export function App() {
         setDataModelInspectorTab("access");
         return;
       }
+      if (zoomLevel === "dependency") {
+        setDependencyInspectorTab("dependencies");
+        return;
+      }
       setComponentInspectorTab("contract");
     },
-    [selectEdge, setComponentInspectorTab, setContainerInspectorTab, setDataModelInspectorTab, zoomLevel],
+    [selectEdge, setComponentInspectorTab, setContainerInspectorTab, setDataModelInspectorTab, setDependencyInspectorTab, zoomLevel],
   );
   const onPaneClick = useCallback(() => { selectNode(null); selectEdge(null); }, [selectNode, selectEdge]);
+
+  // Hover suppression — prevents flashing during zoom/pan.
+  const nodeHover = useHoverSuppression(setHoveredNode);
+  const edgeHover = useHoverSuppression(setHoveredEdge);
+
+  const onMoveStart = useCallback(() => { nodeHover.onMoveStart(); edgeHover.onMoveStart(); }, [nodeHover, edgeHover]);
+  const onMoveEnd = useCallback(() => { nodeHover.onMoveEnd(); edgeHover.onMoveEnd(); }, [nodeHover, edgeHover]);
 
   const onNodeMouseEnter: NodeMouseHandler = useCallback(
     (_e, node) => {
       if (node.type === "boundary" || node.type === "legend" || node.type === "swimLane") return;
-      setHoveredNode(node.id);
+      nodeHover.enter(node.id);
     },
-    [setHoveredNode],
+    [nodeHover],
   );
   const onNodeMouseLeave: NodeMouseHandler = useCallback(
     (_e, node) => {
       if (node.type === "boundary" || node.type === "legend" || node.type === "swimLane") return;
-      setHoveredNode(null);
+      nodeHover.leave();
     },
-    [setHoveredNode],
+    [nodeHover],
   );
-  const onEdgeMouseEnter: EdgeMouseHandler = useCallback((_e, edge) => setHoveredEdge(edge.id), [setHoveredEdge]);
-  const onEdgeMouseLeave: EdgeMouseHandler = useCallback(() => setHoveredEdge(null), [setHoveredEdge]);
+  const onEdgeMouseEnter: EdgeMouseHandler = useCallback(
+    (_e, edge) => { edgeHover.enter(edge.id); },
+    [edgeHover],
+  );
+  const onEdgeMouseLeave: EdgeMouseHandler = useCallback(
+    () => { edgeHover.leave(); },
+    [edgeHover],
+  );
 
   const clearLegendKeys = useStore((s) => s.clearLegendKeys);
 
@@ -235,6 +283,8 @@ export function App() {
           onNodeMouseLeave={onNodeMouseLeave}
           onEdgeMouseEnter={onEdgeMouseEnter}
           onEdgeMouseLeave={onEdgeMouseLeave}
+          onMoveStart={onMoveStart}
+          onMoveEnd={onMoveEnd}
           fitView
           fitViewOptions={fitViewOpts}
           minZoom={0.08}

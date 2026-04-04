@@ -6,6 +6,8 @@ export type ComponentInspectorTab = "overview" | "contract" | "internals" | "evi
 export type ComponentFocusDirection = "inbound" | "outbound" | "both";
 export type ContainerInspectorTab = "overview" | "relationships" | "ownership" | "changes" | "evidence";
 export type DataModelInspectorTab = "overview" | "shape" | "access" | "evidence" | "open_next";
+export type DependencyInspectorTab = "overview" | "dependencies" | "metrics" | "cycles";
+export type DependencyGranularity = "module" | "file" | "symbol";
 
 interface StoreState {
   graph: ArchitectureGraph | null;
@@ -47,6 +49,14 @@ interface StoreState {
   dataModelShowDebugStructures: boolean;
   dataModelExpandMirrors: boolean;
 
+  // Dependency tab state
+  dependencyInspectorTab: DependencyInspectorTab;
+  dependencyGranularity: DependencyGranularity;
+  dependencyFocusEnabled: boolean;
+  dependencySearchQuery: string;
+  dependencyShowCircularOnly: boolean;
+  dependencyHideTypeOnly: boolean;
+
   // Component tab state
   componentInspectorTab: ComponentInspectorTab;
   activeComponentViewId: string | null;
@@ -78,6 +88,12 @@ interface StoreState {
   toggleDataModelShowRuntimeStores: () => void;
   toggleDataModelShowDebugStructures: () => void;
   toggleDataModelExpandMirrors: () => void;
+  setDependencyInspectorTab: (tab: DependencyInspectorTab) => void;
+  setDependencyGranularity: (g: DependencyGranularity) => void;
+  toggleDependencyFocus: () => void;
+  setDependencySearchQuery: (query: string) => void;
+  toggleDependencyShowCircularOnly: () => void;
+  toggleDependencyHideTypeOnly: () => void;
   setComponentInspectorTab: (tab: ComponentInspectorTab) => void;
   setActiveComponentView: (viewId: string | null) => void;
   toggleComponentFocus: () => void;
@@ -115,6 +131,12 @@ export const useStore = create<StoreState>((set, get) => ({
   dataModelShowRuntimeStores: false,
   dataModelShowDebugStructures: false,
   dataModelExpandMirrors: false,
+  dependencyInspectorTab: "overview",
+  dependencyGranularity: "file",
+  dependencyFocusEnabled: true,
+  dependencySearchQuery: "",
+  dependencyShowCircularOnly: false,
+  dependencyHideTypeOnly: true,
   componentInspectorTab: "overview",
   activeComponentViewId: null,
   componentFocusEnabled: true,
@@ -188,6 +210,15 @@ export const useStore = create<StoreState>((set, get) => ({
     set((state) => ({ dataModelShowDebugStructures: !state.dataModelShowDebugStructures })),
   toggleDataModelExpandMirrors: () =>
     set((state) => ({ dataModelExpandMirrors: !state.dataModelExpandMirrors })),
+  setDependencyInspectorTab: (dependencyInspectorTab) => set({ dependencyInspectorTab }),
+  setDependencyGranularity: (dependencyGranularity) => set({ dependencyGranularity, selectedNodeId: null, selectedEdgeId: null }),
+  toggleDependencyFocus: () =>
+    set((state) => ({ dependencyFocusEnabled: !state.dependencyFocusEnabled })),
+  setDependencySearchQuery: (dependencySearchQuery) => set({ dependencySearchQuery }),
+  toggleDependencyShowCircularOnly: () =>
+    set((state) => ({ dependencyShowCircularOnly: !state.dependencyShowCircularOnly })),
+  toggleDependencyHideTypeOnly: () =>
+    set((state) => ({ dependencyHideTypeOnly: !state.dependencyHideTypeOnly })),
   setComponentInspectorTab: (componentInspectorTab) => set({ componentInspectorTab }),
   setActiveComponentView: (activeComponentViewId) =>
     set((state) => ({

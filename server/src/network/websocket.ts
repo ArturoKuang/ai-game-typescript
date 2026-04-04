@@ -16,6 +16,8 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { Conversation, Message } from "../engine/conversation.js";
 import type { GameLoop } from "../engine/gameLoop.js";
 import type { GameEvent, Player } from "../engine/types.js";
+import type { EntityManager } from "../autonomy/entityManager.js";
+import type { BearManager } from "../bears/bearManager.js";
 import type {
   ClientMessage,
   FullGameState,
@@ -42,12 +44,26 @@ export class GameWebSocketServer {
   private clients: Map<WebSocket, ClientInfo> = new Map();
   /** Reference to the game engine; used to read state for snapshots and enqueue commands. */
   private game: GameLoop;
+  /** Optional entity manager for including entities in state snapshots. */
+  private entityManager?: EntityManager;
+  /** Optional bear manager for routing combat commands. */
+  private bearManager?: BearManager;
+  /** Latest screenshot captured from a connected client (base64 PNG data URL). */
+  private latestScreenshot: string | null = null;
+  /** Resolvers waiting for a screenshot to arrive. */
+  private screenshotWaiters: Array<(png: string) => void> = [];
 
-  constructor(server: Server, game: GameLoop) {
+  constructor(server: Server, game: GameLoop, entityManager?: EntityManager) {
     this.game = game;
+    this.entityManager = entityManager;
     this.wss = new WebSocketServer({ server });
 
     this.wss.on("connection", (ws) => this.onConnection(ws));
+  }
+
+  /** Wire the bear manager for routing combat commands. */
+  setBearManager(bm: BearManager): void {
+    this.bearManager = bm;
   }
 
   /** Broadcast a message to all connected clients */
@@ -160,6 +176,68 @@ export class GameWebSocketServer {
         }
         return;
       }
+
+      // Combat / bear events
+      case "bear_spawn":
+      case "bear_death":
+      case "bear_attack":
+      case "player_attack":
+      case "item_drop": {
+        this.broadcast({
+          type: "combat_event",
+          data: { eventType: event.type, ...event.data },
+        });
+        return;
+      }
+      case "item_pickup": {
+        this.broadcast({
+          type: "combat_event",
+          data: { eventType: event.type, ...event.data },
+        });
+        // Send inventory_update to the player who picked up
+        if (event.playerId && this.bearManager) {
+          this.sendInventoryUpdate(event.playerId);
+        }
+        return;
+      }
+      case "player_damage":
+      case "player_death": {
+        // Broadcast updated player state + combat event
+        const player = event.playerId
+          ? this.game.getPlayer(event.playerId)
+          : undefined;
+        if (player) {
+          this.broadcast({
+            type: "player_update",
+            data: this.toPublicPlayer(player),
+          });
+        }
+        this.broadcast({
+          type: "combat_event",
+          data: { eventType: event.type, ...event.data },
+        });
+        return;
+      }
+      case "player_heal": {
+        const player = event.playerId
+          ? this.game.getPlayer(event.playerId)
+          : undefined;
+        if (player) {
+          this.broadcast({
+            type: "player_update",
+            data: this.toPublicPlayer(player),
+          });
+        }
+        this.broadcast({
+          type: "combat_event",
+          data: { eventType: event.type, ...event.data },
+        });
+        // Eating consumes an item — send updated inventory
+        if (event.playerId && this.bearManager) {
+          this.sendInventoryUpdate(event.playerId);
+        }
+        return;
+      }
     }
   }
 
@@ -246,6 +324,15 @@ export class GameWebSocketServer {
           type: "player_joined",
           data: this.toPublicPlayer(previewPlayer),
         });
+        // Send initial (empty) inventory
+        if (this.bearManager) {
+          const items = this.bearManager.getInventoryItems(id);
+          const capacity = this.bearManager.getInventoryCapacity();
+          this.send(ws, {
+            type: "inventory_update",
+            data: { playerId: id, items, capacity },
+          });
+        }
         return;
       }
 
@@ -386,7 +473,57 @@ export class GameWebSocketServer {
         return;
       }
 
+      case "attack": {
+        if (!info.playerId || !this.bearManager) return;
+        this.bearManager.enqueue({
+          type: "attack",
+          playerId: info.playerId,
+          data: { targetBearId: msg.data.targetBearId },
+        });
+        return;
+      }
+
+      case "pickup": {
+        if (!info.playerId || !this.bearManager) return;
+        this.bearManager.enqueue({
+          type: "pickup",
+          playerId: info.playerId,
+          data: { entityId: msg.data.entityId },
+        });
+        return;
+      }
+
+      case "pickup_nearby": {
+        if (!info.playerId || !this.bearManager) return;
+        const nearestId = this.bearManager.findNearestPickupable(info.playerId);
+        if (nearestId) {
+          this.bearManager.enqueue({
+            type: "pickup",
+            playerId: info.playerId,
+            data: { entityId: nearestId },
+          });
+        }
+        return;
+      }
+
+      case "eat": {
+        if (!info.playerId || !this.bearManager) return;
+        this.bearManager.enqueue({
+          type: "eat",
+          playerId: info.playerId,
+          data: { item: msg.data.item },
+        });
+        return;
+      }
+
       case "ping": {
+        return;
+      }
+
+      case "screenshot_data": {
+        if (msg.data?.png) {
+          this.handleScreenshotData(msg.data.png);
+        }
         return;
       }
     }
@@ -403,6 +540,17 @@ export class GameWebSocketServer {
           )
       : [];
 
+    const entities = this.entityManager
+      ? this.entityManager.getAll().map((e) => ({
+          id: e.id,
+          type: e.type,
+          x: e.position.x,
+          y: e.position.y,
+          properties: e.properties,
+          destroyed: e.destroyed,
+        }))
+      : undefined;
+
     return {
       tick: this.game.currentTick,
       world: { width: this.game.world.width, height: this.game.world.height },
@@ -411,6 +559,7 @@ export class GameWebSocketServer {
         .map((player) => this.toPublicPlayer(player)),
       conversations,
       activities: this.game.world.getActivities(),
+      entities,
     };
   }
 
@@ -440,6 +589,17 @@ export class GameWebSocketServer {
     return [conversation.player1Id, conversation.player2Id];
   }
 
+  /** Send the current inventory state to a specific player. */
+  private sendInventoryUpdate(playerId: string): void {
+    if (!this.bearManager) return;
+    const items = this.bearManager.getInventoryItems(playerId);
+    const capacity = this.bearManager.getInventoryCapacity();
+    this.sendToPlayer(playerId, {
+      type: "inventory_update",
+      data: { playerId, items, capacity },
+    });
+  }
+
   /** Strip internal input state before sending player data to clients. */
   private toPublicPlayer(player: Player): Player {
     const { inputX: _ix, inputY: _iy, ...rest } = player;
@@ -461,5 +621,44 @@ export class GameWebSocketServer {
 
   get clientCount(): number {
     return this.clients.size;
+  }
+
+  /** Request a screenshot from the first connected client. Returns the base64 PNG data URL. */
+  requestScreenshot(timeoutMs = 5000): Promise<string | null> {
+    // Find a connected client to ask
+    let sent = false;
+    for (const [ws] of this.clients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "capture_screenshot" }));
+        sent = true;
+        break;
+      }
+    }
+    if (!sent) return Promise.resolve(null);
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        const idx = this.screenshotWaiters.indexOf(resolve as (png: string) => void);
+        if (idx >= 0) this.screenshotWaiters.splice(idx, 1);
+        resolve(null);
+      }, timeoutMs);
+
+      this.screenshotWaiters.push((png: string) => {
+        clearTimeout(timer);
+        resolve(png);
+      });
+    });
+  }
+
+  /** Get the latest screenshot without requesting a new one. */
+  getLatestScreenshot(): string | null {
+    return this.latestScreenshot;
+  }
+
+  /** Called when a client sends screenshot data. */
+  private handleScreenshotData(png: string): void {
+    this.latestScreenshot = png;
+    const waiter = this.screenshotWaiters.shift();
+    if (waiter) waiter(png);
   }
 }

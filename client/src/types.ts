@@ -72,6 +72,16 @@ export interface Conversation {
   endedReason?: ConversationEndReason;
 }
 
+/** A dynamic world entity (berry bush, bench, etc.) rendered on the map. */
+export interface WorldEntity {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  properties: Record<string, boolean | number | string>;
+  destroyed: boolean;
+}
+
 export interface FullGameState {
   tick: number;
   /** Static world bounds; the client fetches tiles separately from `/data/map.json`. */
@@ -82,6 +92,18 @@ export interface FullGameState {
   conversations: Conversation[];
   /** Map activities mirrored from the server snapshot for sidebar/rendering use. */
   activities: Activity[];
+  /** Dynamic world entities from the autonomy system. */
+  entities?: WorldEntity[];
+}
+
+/** NPC needs data for client-side visualization. */
+export interface NpcNeedsData {
+  npcId: string;
+  hunger: number;
+  energy: number;
+  social: number;
+  safety: number;
+  curiosity: number;
 }
 
 // Server -> Client
@@ -93,7 +115,13 @@ export type ServerMessage =
   | { type: "player_left"; data: { id: string } }
   | { type: "convo_update"; data: Conversation }
   | { type: "message"; data: Message }
-  | { type: "error"; data: { message: string } };
+  | { type: "entity_update"; data: WorldEntity }
+  | { type: "entity_removed"; data: { entityId: string } }
+  | { type: "npc_needs"; data: NpcNeedsData }
+  | { type: "combat_event"; data: { eventType: string; [key: string]: unknown } }
+  | { type: "inventory_update"; data: { playerId: string; items: Record<string, number>; capacity: number } }
+  | { type: "error"; data: { message: string } }
+  | { type: "capture_screenshot" };
 
 // Client -> Server
 export type MoveDirection = "up" | "down" | "left" | "right";
@@ -109,4 +137,6 @@ export type ClientMessage =
   | { type: "accept_convo"; data: { convoId: number } }
   | { type: "decline_convo"; data: { convoId: number } }
   | { type: "end_convo" }
-  | { type: "ping" };
+  | { type: "pickup_nearby" }
+  | { type: "ping" }
+  | { type: "screenshot_data"; data: { png: string } };

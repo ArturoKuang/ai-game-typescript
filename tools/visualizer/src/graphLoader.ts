@@ -12,7 +12,7 @@
 import type { Node, Edge, MarkerType } from "@xyflow/react";
 import type { ArchitectureGraph, ZoomLevel, BoundaryEdge } from "./types";
 import type { ComponentFocusDirection, CouplingFilter } from "./store";
-import { computeLayout, computeSplitLayout } from "./layout";
+import { computeLayout, computeSplitLayout, computeDependencyLayout, computeGroupedDependencyLayout, type GroupDef } from "./layout";
 import { buildFlowLevel } from "./flowLayout";
 import {
   compareStructureOrder,
@@ -491,6 +491,10 @@ export function buildFlowGraph(
   selectedStateMachine?: string | null,
   activeLegendKeys?: Set<string>,
   selectedFlowGroup?: string | null,
+  dependencyGranularity?: string,
+  dependencyFocusEnabled?: boolean,
+  dependencyShowCircularOnly?: boolean,
+  dependencyHideTypeOnly?: boolean,
 ): { nodes: Node[]; edges: Edge[] } {
   let result: { nodes: Node[]; edges: Edge[] };
 
@@ -515,6 +519,11 @@ export function buildFlowGraph(
       result = graph.componentDiagram
         ? buildDetailedComponentLevel(graph, activeComponentViewId)
         : buildComponentLevel(graph, expandedComponents, visibleCouplingTypes);
+      break;
+    case "dependency":
+      result = graph.dependencyDiagram
+        ? buildDependencyLevel(graph, dependencyGranularity ?? "file", dependencyShowCircularOnly ?? false, dependencyHideTypeOnly ?? true)
+        : buildFileLevel(graph);
       break;
     case "file":
       result = buildFileLevel(graph);
@@ -552,6 +561,16 @@ export function buildFlowGraph(
     );
   }
 
+  if (zoomLevel === "dependency" && graph.dependencyDiagram) {
+    result = applyContainerFocus(
+      result.nodes,
+      result.edges,
+      selectedNodeId,
+      selectedEdgeId,
+      dependencyFocusEnabled ?? true,
+    );
+  }
+
   if (zoomLevel === "component" && graph.componentDiagram) {
     result = applyComponentFocus(
       result.nodes,
@@ -565,6 +584,71 @@ export function buildFlowGraph(
 
   const ctx = buildHighlightContext(result.edges, hoveredNodeId, hoveredEdgeId);
   return applyHighlight(result.nodes, result.edges, ctx);
+}
+
+/**
+ * Lightweight hover highlight — apply on top of an already-built graph.
+ *
+ * IMPORTANT: This always returns nodes/edges with explicit opacity + transition,
+ * even when nothing is hovered. This prevents the flash caused by toggling between
+ * "raw objects (no style)" and "wrapped objects (opacity 0.12)" — without explicit
+ * opacity on the unhovered state, the browser jumps instantly instead of transitioning.
+ */
+export function applyHoverHighlight(
+  nodes: Node[],
+  edges: Edge[],
+  hoveredNodeId: string | null,
+  hoveredEdgeId: string | null,
+): { nodes: Node[]; edges: Edge[] } {
+  const ctx = buildHighlightContext(edges, hoveredNodeId, hoveredEdgeId);
+
+  if (!ctx.active) {
+    // Nothing hovered — ensure every node/edge has explicit opacity: 1 with
+    // transition so that CLEARING a previous hover animates smoothly instead
+    // of snapping. We reuse the same object shape as the dimmed state.
+    return {
+      nodes: nodes.map((n) => (
+        n.type === "boundary" ? n : {
+          ...n,
+          style: { ...n.style, opacity: NORMAL_OPACITY, transition: "opacity 0.15s ease" },
+        }
+      )),
+      edges: edges.map((e) => ({
+        ...e,
+        style: { ...e.style, opacity: NORMAL_OPACITY, transition: "opacity 0.15s ease" },
+        labelStyle: { ...(e.labelStyle as Record<string, unknown> ?? {}), opacity: 1 },
+      })),
+    };
+  }
+
+  return {
+    nodes: nodes.map((n) => (
+      n.type === "boundary" ? n : {
+        ...n,
+        style: {
+          ...n.style,
+          opacity: ctx.highlightedNodeIds.has(n.id) ? HIGHLIGHT_OPACITY : DIM_OPACITY,
+          transition: "opacity 0.15s ease",
+        },
+      }
+    )),
+    edges: edges.map((e) => {
+      const highlighted = ctx.highlightedEdgeIds.has(e.id);
+      return {
+        ...e,
+        style: {
+          ...e.style,
+          opacity: highlighted ? HIGHLIGHT_OPACITY : DIM_OPACITY,
+          transition: "opacity 0.15s ease",
+        },
+        animated: highlighted && (e.data as { couplingType?: string })?.couplingType === "event",
+        labelStyle: {
+          ...(e.labelStyle as Record<string, unknown> ?? {}),
+          opacity: highlighted ? 1 : DIM_OPACITY,
+        },
+      };
+    }),
+  };
 }
 
 function buildContainerLevel(
@@ -1333,6 +1417,476 @@ function buildComponentLevel(
 // ---------------------------------------------------------------------------
 // File level
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Dependency level
+// ---------------------------------------------------------------------------
+
+function buildDependencyLevel(
+  graph: ArchitectureGraph,
+  granularity: string,
+  showCircularOnly: boolean,
+  hideTypeOnly: boolean,
+): { nodes: Node[]; edges: Edge[] } {
+  const diagram = graph.dependencyDiagram;
+  if (!diagram) return { nodes: [], edges: [] };
+
+  if (granularity === "symbol") return buildDependencySymbolLevel(graph, diagram, showCircularOnly, hideTypeOnly);
+  if (granularity === "module") return buildDependencyModuleLevel(graph, diagram, showCircularOnly);
+  return buildDependencyFileLevel(graph, diagram, showCircularOnly);
+}
+
+function isClientNode(nodeId: string): boolean {
+  return nodeId === "Client" || nodeId.startsWith("client/");
+}
+
+function buildDepGroups(nodeIds: string[]): GroupDef[] {
+  const serverIds = new Set<string>();
+  const clientIds = new Set<string>();
+  for (const id of nodeIds) {
+    if (isClientNode(id)) clientIds.add(id);
+    else serverIds.add(id);
+  }
+  const groups: GroupDef[] = [];
+  if (serverIds.size > 0) {
+    groups.push({ id: "dep-group-server", label: "Server", color: "#648FFF", nodeIds: serverIds });
+  }
+  if (clientIds.size > 0) {
+    groups.push({ id: "dep-group-client", label: "Client", color: "#FE6100", nodeIds: clientIds });
+  }
+  return groups;
+}
+
+function buildDepGroupsNested(
+  nodeIds: string[],
+  nodeComponentMap: Map<string, string>,
+  compColor: Map<string, string>,
+): GroupDef[] {
+  // Partition into server/client
+  const serverIds = new Set<string>();
+  const clientIds = new Set<string>();
+  for (const id of nodeIds) {
+    if (isClientNode(id)) clientIds.add(id);
+    else serverIds.add(id);
+  }
+
+  function buildSubGroups(ids: Set<string>): GroupDef[] {
+    const byComp = new Map<string, Set<string>>();
+    for (const id of ids) {
+      const comp = nodeComponentMap.get(id) ?? "Other";
+      if (!byComp.has(comp)) byComp.set(comp, new Set());
+      byComp.get(comp)!.add(id);
+    }
+    const subs: GroupDef[] = [];
+    for (const [compId, compNodeIds] of byComp) {
+      if (compNodeIds.size === 0) continue;
+      subs.push({
+        id: `dep-sub-${compId}`,
+        label: compId,
+        color: compColor.get(compId) ?? "#888",
+        nodeIds: compNodeIds,
+      });
+    }
+    return subs;
+  }
+
+  const groups: GroupDef[] = [];
+  if (serverIds.size > 0) {
+    const subs = buildSubGroups(serverIds);
+    groups.push({
+      id: "dep-group-server",
+      label: "Server",
+      color: "#648FFF",
+      nodeIds: serverIds,
+      subGroups: subs.length > 1 ? subs : undefined, // don't nest if only one component
+    });
+  }
+  if (clientIds.size > 0) {
+    groups.push({
+      id: "dep-group-client",
+      label: "Client",
+      color: "#FE6100",
+      nodeIds: clientIds,
+    });
+  }
+  return groups;
+}
+
+function buildDependencyModuleLevel(
+  graph: ArchitectureGraph,
+  diagram: NonNullable<ArchitectureGraph["dependencyDiagram"]>,
+  showCircularOnly: boolean,
+): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+
+  const cycleModuleIds = new Set<string>();
+  for (const cycle of diagram.cycles) {
+    for (const modId of cycle.modules) cycleModuleIds.add(modId);
+  }
+
+  const compColor = new Map<string, string>();
+  for (const comp of graph.components) compColor.set(comp.id, comp.color);
+
+  const visibleModules = showCircularOnly
+    ? diagram.modules.filter((m) => cycleModuleIds.has(m.id))
+    : diagram.modules;
+  const visibleModuleIds = new Set(visibleModules.map((m) => m.id));
+
+  for (const mod of visibleModules) {
+    nodes.push({
+      id: mod.id,
+      type: "dependencyModule",
+      position: { x: 0, y: 0 },
+      data: {
+        label: mod.label,
+        componentId: mod.componentId,
+        color: compColor.get(mod.componentId) ?? "#888",
+        fileCount: mod.fileCount,
+        totalLoc: mod.totalLoc,
+        fanIn: mod.fanIn,
+        fanOut: mod.fanOut,
+        instability: mod.instability,
+        internalEdgeCount: mod.internalEdgeCount,
+        orphanCount: mod.orphanFiles.length,
+        hasCycles: cycleModuleIds.has(mod.id),
+      },
+    });
+  }
+
+  const visibleDeps = showCircularOnly
+    ? diagram.moduleDeps.filter((d) => d.isCircular && visibleModuleIds.has(d.source) && visibleModuleIds.has(d.target))
+    : diagram.moduleDeps.filter((d) => visibleModuleIds.has(d.source) && visibleModuleIds.has(d.target));
+
+  // Merge bidirectional edges into one with arrows on both ends
+  const seen = new Set<string>();
+  for (const dep of visibleDeps) {
+    const reverseKey = `${dep.target}->${dep.source}`;
+    if (seen.has(reverseKey)) continue; // already merged as bidirectional
+    seen.add(`${dep.source}->${dep.target}`);
+
+    const reverse = visibleDeps.find((d) => d.source === dep.target && d.target === dep.source);
+    const isBidirectional = Boolean(reverse);
+    const totalFiles = dep.fileEdgeCount + (reverse?.fileEdgeCount ?? 0);
+    const isCirc = dep.isCircular || (reverse?.isCircular ?? false);
+    const edgeColor = isCirc ? "#ef4444" : "#94a3b8";
+
+    edges.push({
+      id: dep.id,
+      source: dep.source,
+      target: dep.target,
+      type: "dependencyEdge",
+      data: { strength: dep.strength, fileEdgeCount: totalFiles, isCircular: isCirc },
+      markerEnd: { type: "arrowclosed" as MarkerType, width: 14, height: 14, color: edgeColor },
+      ...(isBidirectional ? { markerStart: { type: "arrowclosed" as MarkerType, width: 14, height: 14, color: edgeColor } } : {}),
+    });
+  }
+
+  const groups = buildDepGroups(nodes.map((n) => n.id));
+  const laid = computeGroupedDependencyLayout(nodes, edges, groups, "module");
+  return { nodes: laid, edges };
+}
+
+function buildDependencyFileLevel(
+  graph: ArchitectureGraph,
+  diagram: NonNullable<ArchitectureGraph["dependencyDiagram"]>,
+  showCircularOnly: boolean,
+): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+
+  // Build circular file set
+  const circularFiles = new Set<string>();
+  for (const dep of diagram.fileDeps) {
+    if (dep.isCircular) {
+      circularFiles.add(dep.source);
+      circularFiles.add(dep.target);
+    }
+  }
+
+  // Compute per-file fan-in / fan-out
+  const fanIn = new Map<string, number>();
+  const fanOut = new Map<string, number>();
+  for (const dep of diagram.fileDeps) {
+    fanOut.set(dep.source, (fanOut.get(dep.source) ?? 0) + 1);
+    fanIn.set(dep.target, (fanIn.get(dep.target) ?? 0) + 1);
+  }
+
+  const compColor = new Map<string, string>();
+  const compLabel = new Map<string, string>();
+  for (const comp of graph.components) {
+    compColor.set(comp.id, comp.color);
+    compLabel.set(comp.id, comp.label);
+  }
+
+  // Build file nodes
+  const visibleFiles = showCircularOnly
+    ? graph.files.filter((f) => circularFiles.has(f.id))
+    : graph.files;
+  const visibleFileIds = new Set(visibleFiles.map((f) => f.id));
+
+  for (const file of visibleFiles) {
+    const fi = fanIn.get(file.id) ?? 0;
+    const fo = fanOut.get(file.id) ?? 0;
+    const total = fi + fo;
+    const instability = total === 0 ? 0 : fo / total;
+
+    nodes.push({
+      id: file.id,
+      type: "dependencyModule",
+      position: { x: 0, y: 0 },
+      data: {
+        label: file.id.split("/").pop() ?? file.id,
+        componentLabel: compLabel.get(file.componentId),
+        color: compColor.get(file.componentId) ?? "#888",
+        totalLoc: file.loc,
+        fanIn: fi,
+        fanOut: fo,
+        instability,
+        hasCycles: circularFiles.has(file.id),
+      },
+    });
+  }
+
+  // Build file edges (deduplicated)
+  const visibleDeps = showCircularOnly
+    ? diagram.fileDeps.filter((d) => d.isCircular && visibleFileIds.has(d.source) && visibleFileIds.has(d.target))
+    : diagram.fileDeps.filter((d) => visibleFileIds.has(d.source) && visibleFileIds.has(d.target));
+
+  const seenFileEdges = new Set<string>();
+  for (const dep of visibleDeps) {
+    const edgeKey = `${dep.source}-${dep.target}`;
+    if (seenFileEdges.has(edgeKey)) continue;
+    seenFileEdges.add(edgeKey);
+    edges.push({
+      id: `fdep-${edgeKey}`,
+      source: dep.source,
+      target: dep.target,
+      type: "dependencyEdge",
+      data: { strength: "moderate" as const, fileEdgeCount: 1, isCircular: dep.isCircular },
+      markerEnd: { type: "arrowclosed" as MarkerType, width: 12, height: 12, color: dep.isCircular ? "#ef4444" : "#64748b" },
+    });
+  }
+
+  const groups = buildDepGroups(nodes.map((n) => n.id));
+  const laid = computeGroupedDependencyLayout(nodes, edges, groups, "file");
+  return { nodes: laid, edges };
+}
+
+function buildDependencySymbolLevel(
+  graph: ArchitectureGraph,
+  diagram: NonNullable<ArchitectureGraph["dependencyDiagram"]>,
+  showCircularOnly: boolean,
+  hideTypeOnly: boolean,
+): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+
+  const compColor = new Map<string, string>();
+  for (const comp of graph.components) compColor.set(comp.id, comp.color);
+
+  // Build circular file set for propagation to symbols
+  const circularFiles = new Set<string>();
+  for (const dep of diagram.fileDeps) {
+    if (dep.isCircular) {
+      circularFiles.add(dep.source);
+      circularFiles.add(dep.target);
+    }
+  }
+
+  // Build a map: fileId -> exported symbols (classes + functions)
+  const fileSymbols = new Map<string, string[]>();
+  // Also track which symbol is a class vs function
+  const symbolKind = new Map<string, "class" | "interface" | "function">();
+  const symbolFile = new Map<string, string>();
+  const symbolComponent = new Map<string, string>();
+  // Class detail for method/field display
+  const classDetail = new Map<string, { methods: string[]; fields: string[] }>();
+
+  for (const cls of graph.classes) {
+    const symId = `${cls.fileId}::${cls.name}`;
+    symbolKind.set(symId, cls.kind);
+    symbolFile.set(symId, cls.fileId);
+    symbolComponent.set(symId, cls.componentId);
+    classDetail.set(symId, {
+      methods: cls.methods.filter((m) => m.visibility === "public").map((m) => m.name),
+      fields: cls.fields.map((f) => f.name),
+    });
+    if (!fileSymbols.has(cls.fileId)) fileSymbols.set(cls.fileId, []);
+    fileSymbols.get(cls.fileId)!.push(symId);
+  }
+
+  // Add exported functions from module facts
+  for (const fact of graph.moduleFacts) {
+    for (const fnName of fact.exportedFunctions) {
+      const symId = `${fact.fileId}::${fnName}`;
+      if (symbolKind.has(symId)) continue; // already a class
+      symbolKind.set(symId, "function");
+      const file = graph.files.find((f) => f.id === fact.fileId);
+      symbolFile.set(symId, fact.fileId);
+      symbolComponent.set(symId, file?.componentId ?? "Other");
+      if (!fileSymbols.has(fact.fileId)) fileSymbols.set(fact.fileId, []);
+      fileSymbols.get(fact.fileId)!.push(symId);
+    }
+  }
+
+  // Build symbol nodes
+  const allSymIds = new Set<string>();
+  for (const [, syms] of fileSymbols) {
+    for (const s of syms) allSymIds.add(s);
+  }
+
+  // Build edges from import graph — for each import edge with symbols,
+  // resolve to symbol-level edges
+  const edgeSet = new Set<string>();
+  const symbolEdges: { source: string; target: string; isCircular: boolean }[] = [];
+
+  for (const imp of graph.imports) {
+    const targetSyms = fileSymbols.get(imp.target) ?? [];
+    const sourceSyms = fileSymbols.get(imp.source) ?? [];
+    const isCircular = circularFiles.has(imp.source) && circularFiles.has(imp.target);
+
+    const typeOnlySet = hideTypeOnly ? new Set(imp.typeOnlySymbols ?? []) : null;
+
+    for (const importedName of imp.symbols) {
+      if (typeOnlySet?.has(importedName)) continue; // skip type-only imports
+
+      // Find the target symbol matching this imported name
+      const targetSym = targetSyms.find((s) => s.endsWith(`::${importedName}`));
+      if (!targetSym) continue;
+
+      // Connect from each source symbol to the target (or from the file if no source symbols)
+      if (sourceSyms.length > 0) {
+        for (const srcSym of sourceSyms) {
+          const key = `${srcSym}->${targetSym}`;
+          if (edgeSet.has(key)) continue;
+          edgeSet.add(key);
+          symbolEdges.push({ source: srcSym, target: targetSym, isCircular });
+        }
+      }
+    }
+  }
+
+  // Compute fan-in/fan-out per symbol
+  const symFanIn = new Map<string, number>();
+  const symFanOut = new Map<string, number>();
+  for (const e of symbolEdges) {
+    symFanOut.set(e.source, (symFanOut.get(e.source) ?? 0) + 1);
+    symFanIn.set(e.target, (symFanIn.get(e.target) ?? 0) + 1);
+  }
+
+  // Only include connected symbols (or circular files)
+  const connectedSyms = new Set<string>();
+  for (const e of symbolEdges) {
+    connectedSyms.add(e.source);
+    connectedSyms.add(e.target);
+  }
+
+  // Circular filter
+  const circularSyms = new Set<string>();
+  for (const e of symbolEdges) {
+    if (e.isCircular) {
+      circularSyms.add(e.source);
+      circularSyms.add(e.target);
+    }
+  }
+
+  const visibleSyms = showCircularOnly
+    ? [...connectedSyms].filter((s) => circularSyms.has(s))
+    : [...connectedSyms];
+  const visibleSymSet = new Set(visibleSyms);
+
+  for (const symId of visibleSyms) {
+    const kind = symbolKind.get(symId) ?? "function";
+    const fileId = symbolFile.get(symId) ?? "";
+    const compId = symbolComponent.get(symId) ?? "Other";
+    const name = symId.split("::")[1] ?? symId;
+    const fi = symFanIn.get(symId) ?? 0;
+    const fo = symFanOut.get(symId) ?? 0;
+    const total = fi + fo;
+    const instability = total === 0 ? 0 : fo / total;
+    const detail = classDetail.get(symId);
+    const shortFile = fileId.split("/").pop() ?? fileId;
+
+    nodes.push({
+      id: symId,
+      type: "pillNode",
+      position: { x: 0, y: 0 },
+      data: {
+        label: name,
+        componentColor: compColor.get(compId) ?? "#888",
+        componentLabel: shortFile,
+        componentId: compId,
+        kind: kind === "function" ? "function" : kind,
+        fanIn: fi,
+        fanOut: fo,
+        instability,
+        hasCycles: circularSyms.has(symId),
+        // Sidebar detail (not rendered by pill)
+        methods: detail?.methods ?? [],
+        fields: detail?.fields ?? [],
+        fileId: fileId,
+      },
+    });
+  }
+
+  const visibleEdges = showCircularOnly
+    ? symbolEdges.filter((e) => e.isCircular && visibleSymSet.has(e.source) && visibleSymSet.has(e.target))
+    : symbolEdges.filter((e) => visibleSymSet.has(e.source) && visibleSymSet.has(e.target));
+
+  // Bundle inter-component edges; keep intra-component edges individual
+  const bundleMap = new Map<string, { count: number; hasCircular: boolean; repSource: string; repTarget: string }>();
+
+  for (const e of visibleEdges) {
+    const srcComp = symbolComponent.get(e.source) ?? "Other";
+    const tgtComp = symbolComponent.get(e.target) ?? "Other";
+
+    if (srcComp === tgtComp) {
+      // Intra-component: individual edge
+      edges.push({
+        id: `sdep-${e.source}-${e.target}`,
+        source: e.source,
+        target: e.target,
+        sourceHandle: "bottom",
+        targetHandle: "top",
+        type: "dependencyEdge",
+        data: { strength: "weak" as const, fileEdgeCount: 1, isCircular: e.isCircular },
+        markerEnd: { type: "arrowclosed" as MarkerType, width: 10, height: 10, color: e.isCircular ? "#ef4444" : "#64748b" },
+      });
+    } else {
+      // Inter-component: aggregate into bundle
+      const key = `${srcComp}->${tgtComp}`;
+      const existing = bundleMap.get(key);
+      if (existing) {
+        existing.count++;
+        if (e.isCircular) existing.hasCircular = true;
+      } else {
+        bundleMap.set(key, { count: 1, hasCircular: e.isCircular, repSource: e.source, repTarget: e.target });
+      }
+    }
+  }
+
+  // Emit bundled edges
+  for (const [key, bundle] of bundleMap) {
+    const strength: "weak" | "moderate" | "strong" =
+      bundle.count <= 2 ? "weak" : bundle.count <= 6 ? "moderate" : "strong";
+    const edgeColor = bundle.hasCircular ? "#ef4444" : "#64748b";
+    edges.push({
+      id: `bundle-${key}`,
+      source: bundle.repSource,
+      target: bundle.repTarget,
+      sourceHandle: "bottom",
+      targetHandle: "top",
+      type: "dependencyEdge",
+      data: { strength, fileEdgeCount: bundle.count, isCircular: bundle.hasCircular, isBundled: true },
+      markerEnd: { type: "arrowclosed" as MarkerType, width: 12, height: 12, color: edgeColor },
+    });
+  }
+
+  const groups = buildDepGroupsNested(nodes.map((n) => n.id), symbolComponent, compColor);
+  const laid = computeGroupedDependencyLayout(nodes, edges, groups, "symbol");
+  return { nodes: laid, edges };
+}
 
 function buildFileLevel(graph: ArchitectureGraph): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];

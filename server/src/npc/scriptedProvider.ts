@@ -6,12 +6,14 @@
  * (warm, history, art, technology) and simple greeting templates.
  */
 import type {
+  NpcGoalRequest,
+  NpcGoalResponse,
   NpcModelProvider,
   NpcModelResponse,
   NpcReflectionRequest,
   NpcReplyRequest,
 } from "./provider.js";
-import { buildReflectionPrompt, buildReplyPrompt } from "./provider.js";
+import { buildGoalSelectionPrompt, buildReflectionPrompt, buildReplyPrompt } from "./provider.js";
 
 export class ScriptedNpcProvider implements NpcModelProvider {
   readonly name = "scripted";
@@ -37,6 +39,19 @@ export class ScriptedNpcProvider implements NpcModelProvider {
     return {
       content: `I'm noticing a pattern in town life: ${mostRecent}`,
       prompt: buildReflectionPrompt(request),
+      latencyMs: 0,
+    };
+  }
+
+  async generateGoalSelection(
+    request: NpcGoalRequest,
+  ): Promise<NpcGoalResponse> {
+    // Deterministic: pick the first available goal (most urgent need)
+    const goalId = request.availableGoals[0]?.id ?? "satisfy_curiosity";
+    return {
+      goalId,
+      reasoning: `Choosing ${goalId} as most urgent need`,
+      prompt: buildGoalSelectionPrompt(request),
       latencyMs: 0,
     };
   }

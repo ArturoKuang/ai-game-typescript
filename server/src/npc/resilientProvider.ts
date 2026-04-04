@@ -6,6 +6,8 @@
  * successful primary call clears the failure state.
  */
 import type {
+  NpcGoalRequest,
+  NpcGoalResponse,
   NpcModelProvider,
   NpcModelResponse,
   NpcReflectionRequest,
@@ -59,6 +61,30 @@ export class ResilientNpcProvider implements NpcModelProvider {
       }
     }
     return this.fallback.generateReflection(request);
+  }
+
+  async generateGoalSelection(
+    request: NpcGoalRequest,
+  ): Promise<NpcGoalResponse> {
+    if (this.isPrimaryReady() && this.primary.generateGoalSelection) {
+      try {
+        const result = await this.primary.generateGoalSelection(request);
+        this.primaryFailedAt = null;
+        return result;
+      } catch (error) {
+        this.primaryFailedAt = Date.now();
+        console.warn("Primary NPC provider failed goal selection; falling back:", error);
+      }
+    }
+    if (this.fallback.generateGoalSelection) {
+      return this.fallback.generateGoalSelection(request);
+    }
+    // Absolute fallback: pick first goal
+    return {
+      goalId: request.availableGoals[0]?.id ?? "satisfy_curiosity",
+      prompt: "",
+      latencyMs: 0,
+    };
   }
 
   private isPrimaryReady(): boolean {

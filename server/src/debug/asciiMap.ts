@@ -6,10 +6,11 @@
  * projection layer used for inspection, bundles, and human-readable test
  * output.
  */
+import type { EntityManager } from "../autonomy/entityManager.js";
 import type { GameLoop } from "../engine/gameLoop.js";
 
 /** Renders the current world snapshot plus a legend for players and activities. */
-export function renderAsciiMap(game: GameLoop): {
+export function renderAsciiMap(game: GameLoop, entityManager?: EntityManager): {
   ascii: string;
   legend: Record<string, string>;
 } {
@@ -49,6 +50,30 @@ export function renderAsciiMap(game: GameLoop): {
       const symbol = activity.emoji.charAt(0);
       grid[activity.y][activity.x] = symbol;
       legend[symbol] = activity.name;
+    }
+  }
+
+  // Place bears and loot
+  if (entityManager) {
+    for (const entity of entityManager.getByType("bear_meat")) {
+      const ex = entity.position.x;
+      const ey = entity.position.y;
+      if (ey >= 0 && ey < world.height && ex >= 0 && ex < world.width) {
+        grid[ey][ex] = "m";
+      }
+    }
+    legend["m"] = "bear meat (loot)";
+    let bearCount = 0;
+    for (const entity of entityManager.getByType("bear")) {
+      const ex = entity.position.x;
+      const ey = entity.position.y;
+      if (ey >= 0 && ey < world.height && ex >= 0 && ex < world.width) {
+        grid[ey][ex] = "B";
+      }
+      bearCount++;
+    }
+    if (bearCount > 0) {
+      legend["B"] = `bear (${bearCount} alive)`;
     }
   }
 
