@@ -11,7 +11,8 @@ import type {
   DebugFeedEvent,
 } from "../debug/streamTypes.js";
 import type { Conversation, Message } from "../engine/conversation.js";
-import type { Activity, Player } from "../engine/types.js";
+import type { Activity } from "../engine/types.js";
+import type { PublicPlayer } from "./publicPlayer.js";
 
 // --- Server -> Client ---
 
@@ -46,8 +47,8 @@ export interface PlayerSurvivalData {
 export type ServerMessage =
   | { type: "state"; data: FullGameState }
   | { type: "tick"; data: { tick: number } }
-  | { type: "player_update"; data: Player }
-  | { type: "player_joined"; data: Player }
+  | { type: "player_update"; data: PublicPlayer }
+  | { type: "player_joined"; data: PublicPlayer }
   | { type: "player_left"; data: { id: string } }
   | { type: "convo_update"; data: Conversation }
   | { type: "message"; data: Message }
@@ -74,7 +75,7 @@ export type ServerMessage =
 export interface FullGameState {
   tick: number;
   world: { width: number; height: number };
-  players: Player[];
+  players: PublicPlayer[];
   conversations: Conversation[];
   activities: Activity[];
   entities?: WorldEntityData[];

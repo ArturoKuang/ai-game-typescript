@@ -6,7 +6,7 @@
  * - Translate incoming {@link ClientMessage}s into engine commands/inputs.
  * - Translate outgoing {@link GameEvent}s into {@link ServerMessage}s and
  *   broadcast or unicast them to the appropriate clients.
- * - Scrub internal fields (inputX/inputY) before sending player data.
+ * - Serialize player state through a stable public DTO before sending it.
  * - Clean up player state when a WebSocket disconnects.
  *
  * The server is wired to the engine via `game.on("*", broadcastGameEvent)`.
@@ -30,6 +30,7 @@ import type {
   FullGameState,
   ServerMessage,
 } from "./protocol.js";
+import { createJoinPreviewPlayer, toPublicPlayer } from "./publicPlayer.js";
 
 /** Per-connection metadata tracking which player (if any) this socket controls.
  *  A client starts with playerId=null and gets assigned one on "join". */
@@ -136,7 +137,7 @@ export class GameWebSocketServer {
         if (player) {
           this.broadcast({
             type: "player_joined",
-            data: this.toPublicPlayer(player),
+            data: toPublicPlayer(player),
           });
         }
         return;
@@ -158,7 +159,7 @@ export class GameWebSocketServer {
         if (player) {
           this.broadcast({
             type: "player_update",
-            data: this.toPublicPlayer(player),
+            data: toPublicPlayer(player),
           });
         }
         return;
@@ -255,7 +256,7 @@ export class GameWebSocketServer {
         if (player) {
           this.broadcast({
             type: "player_update",
-            data: this.toPublicPlayer(player),
+            data: toPublicPlayer(player),
           });
         }
         this.broadcast({
@@ -271,7 +272,7 @@ export class GameWebSocketServer {
         if (player) {
           this.broadcast({
             type: "player_update",
-            data: this.toPublicPlayer(player),
+            data: toPublicPlayer(player),
           });
         }
         this.broadcast({
@@ -360,27 +361,15 @@ export class GameWebSocketServer {
           },
         });
 
-        const previewPlayer: Player = {
-          id,
-          name: msg.data.name,
-          description: msg.data.description ?? "",
-          isNpc: false,
-          isWaitingForResponse: false,
-          x: spawn.x,
-          y: spawn.y,
-          orientation: "down",
-          pathSpeed: 1.0,
-          state: "idle",
-          vx: 0,
-          vy: 0,
-          inputX: 0,
-          inputY: 0,
-          radius: 0.4,
-          inputSpeed: 5.0,
-        };
         this.send(ws, {
           type: "player_joined",
-          data: this.toPublicPlayer(previewPlayer),
+          data: createJoinPreviewPlayer({
+            id,
+            name: msg.data.name,
+            description: msg.data.description ?? "",
+            x: spawn.x,
+            y: spawn.y,
+          }),
         });
         // Send initial (empty) inventory
         if (this.bearManager) {
@@ -612,9 +601,7 @@ export class GameWebSocketServer {
     return {
       tick: this.game.currentTick,
       world: { width: this.game.world.width, height: this.game.world.height },
-      players: this.game
-        .getPlayers()
-        .map((player) => this.toPublicPlayer(player)),
+      players: this.game.getPlayers().map((player) => toPublicPlayer(player)),
       conversations,
       activities: this.game.world.getActivities(),
       entities,
@@ -630,9 +617,7 @@ export class GameWebSocketServer {
 
     return {
       tick: this.game.currentTick,
-      players: this.game
-        .getPlayers()
-        .map((player) => this.toPublicPlayer(player)),
+      players: this.game.getPlayers().map((player) => toPublicPlayer(player)),
       conversations: this.game.conversations.getAllConversations(),
       autonomyStates,
       recentEvents: [...this.debugEvents],
@@ -798,12 +783,6 @@ export class GameWebSocketServer {
       type: "inventory_update",
       data: { playerId, items, capacity },
     });
-  }
-
-  /** Strip internal input state before sending player data to clients. */
-  private toPublicPlayer(player: Player): Player {
-    const { inputX: _ix, inputY: _iy, ...rest } = player;
-    return rest as Player;
   }
 
   private send(ws: WebSocket, message: ServerMessage): void {

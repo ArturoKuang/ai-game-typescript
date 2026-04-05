@@ -1,6 +1,6 @@
 import type { NpcAutonomyDebugState } from "../autonomy/types.js";
 import type { Conversation } from "../engine/conversation.js";
-import type { Player } from "../engine/types.js";
+import type { PublicPlayer } from "../network/publicPlayer.js";
 
 export type DebugFeedSeverity = "info" | "warning" | "error";
 
@@ -41,7 +41,7 @@ export interface DebugFeedEvent extends DebugFeedEventPayload {
 
 export interface DebugDashboardBootstrap {
   tick: number;
-  players: Player[];
+  players: PublicPlayer[];
   conversations: Conversation[];
   autonomyStates: Record<string, NpcAutonomyDebugState>;
   recentEvents: DebugFeedEvent[];

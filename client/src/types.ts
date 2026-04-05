@@ -15,7 +15,7 @@ export type TileType = "floor" | "wall" | "water";
 export type Orientation = "up" | "down" | "left" | "right";
 export type PlayerState = "idle" | "walking" | "conversing" | "doing_activity";
 
-export interface Player {
+export interface PublicPlayer {
   id: string;
   name: string;
   description: string;
@@ -36,6 +36,8 @@ export interface Player {
   hp?: number;
   maxHp?: number;
 }
+
+export type Player = PublicPlayer;
 
 export interface Activity {
   id: number;
@@ -156,7 +158,7 @@ export interface DebugFeedEvent {
 
 export interface DebugDashboardBootstrap {
   tick: number;
-  players: Player[];
+  players: PublicPlayer[];
   conversations: Conversation[];
   autonomyStates: Record<string, NpcAutonomyDebugState>;
   recentEvents: DebugFeedEvent[];
@@ -177,7 +179,7 @@ export interface FullGameState {
   /** Static world bounds; the client fetches tiles separately from `/data/map.json`. */
   world: { width: number; height: number };
   /** Denormalized player cache used by `main.ts`, `renderer.ts`, and `ui.ts`. */
-  players: Player[];
+  players: PublicPlayer[];
   /** Active and historical conversations streamed from the server. */
   conversations: Conversation[];
   /** Map activities mirrored from the server snapshot for sidebar/rendering use. */
@@ -208,8 +210,8 @@ export interface PlayerSurvivalData {
 export type ServerMessage =
   | { type: "state"; data: FullGameState }
   | { type: "tick"; data: { tick: number } }
-  | { type: "player_update"; data: Player }
-  | { type: "player_joined"; data: Player }
+  | { type: "player_update"; data: PublicPlayer }
+  | { type: "player_joined"; data: PublicPlayer }
   | { type: "player_left"; data: { id: string } }
   | { type: "convo_update"; data: Conversation }
   | { type: "message"; data: Message }
@@ -231,7 +233,7 @@ export type ServerMessage =
 export type MoveDirection = "up" | "down" | "left" | "right";
 
 export type ClientMessage =
-  | { type: "join"; data: { name: string } }
+  | { type: "join"; data: { name: string; description?: string } }
   | { type: "subscribe_debug" }
   | { type: "move"; data: { x: number; y: number } }
   | { type: "move_direction"; data: { direction: MoveDirection } }
@@ -242,6 +244,8 @@ export type ClientMessage =
   | { type: "accept_convo"; data: { convoId: number } }
   | { type: "decline_convo"; data: { convoId: number } }
   | { type: "end_convo" }
+  | { type: "attack"; data: { targetBearId: string } }
+  | { type: "pickup"; data: { entityId: string } }
   | { type: "eat"; data: { item: string } }
   | { type: "pickup_nearby" }
   | { type: "ping" }

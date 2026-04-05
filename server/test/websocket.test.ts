@@ -69,6 +69,15 @@ async function waitForDispatch(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
+function assertNoInternalPlayerFields(player: Record<string, unknown>): void {
+  expect(player).not.toHaveProperty("currentActivityId");
+  expect(player).not.toHaveProperty("inputX");
+  expect(player).not.toHaveProperty("inputY");
+  expect(player).not.toHaveProperty("path");
+  expect(player).not.toHaveProperty("pathIndex");
+  expect(player).not.toHaveProperty("personality");
+}
+
 describe("WebSocket protocol", () => {
   let server: Server | undefined;
   let wsServer: GameWebSocketServer | undefined;
@@ -116,7 +125,7 @@ describe("WebSocket protocol", () => {
   it("client messages have correct structure", () => {
     const joinMsg: ClientMessage = {
       type: "join",
-      data: { name: "Test Player" },
+      data: { name: "Test Player", description: "Debug human" },
     };
     expect(joinMsg.type).toBe("join");
 
@@ -137,6 +146,79 @@ describe("WebSocket protocol", () => {
       data: { convoId: 1 },
     };
     expect(declineConvo.type).toBe("decline_convo");
+
+    const attackMsg: ClientMessage = {
+      type: "attack",
+      data: { targetBearId: "bear_1" },
+    };
+    expect(attackMsg.type).toBe("attack");
+  });
+
+  it("serializes only public player fields in state snapshots and join previews", async () => {
+    try {
+      const probe = createServer();
+      await new Promise<void>((resolve, reject) => {
+        probe.once("error", reject);
+        probe.listen(0, "127.0.0.1", () => {
+          probe.close();
+          resolve();
+        });
+      });
+    } catch {
+      console.log("Skipping: socket binding not permitted in this environment");
+      return;
+    }
+
+    game = new GameLoop({ mode: "stepped", tickRate: 20 });
+    game.loadWorld({
+      width: 5,
+      height: 5,
+      tiles: [
+        ["wall", "wall", "wall", "wall", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "wall", "wall", "wall", "wall"],
+      ],
+      activities: [],
+      spawnPoints: [{ x: 1, y: 1 }],
+    });
+    game.spawnPlayer({
+      id: "npc_alice",
+      name: "Alice NPC",
+      description: "Helpful NPC",
+      personality: "friendly",
+      x: 1,
+      y: 1,
+      isNpc: true,
+    });
+
+    server = createServer();
+    wsServer = new GameWebSocketServer(server, game);
+    game.on("*", (event) => wsServer!.broadcastGameEvent(event));
+
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    sockets = await createHarnesses(1, `ws://127.0.0.1:${port}`);
+
+    const [{ ws, messages }] = sockets;
+    const stateMessage = (await waitForMessage(
+      messages,
+      (message) => message.type === "state",
+    )) as Extract<ServerMessage, { type: "state" }>;
+    const snapshotPlayer = stateMessage.data.players[0] as Record<string, unknown>;
+    assertNoInternalPlayerFields(snapshotPlayer);
+
+    sendMessage(ws, {
+      type: "join",
+      data: { name: "Human", description: "Arrived from the browser" },
+    });
+    const joinedMessage = (await waitForMessage(
+      messages,
+      (message) =>
+        message.type === "player_joined" && message.data.name === "Human",
+    )) as Extract<ServerMessage, { type: "player_joined" }>;
+    assertNoInternalPlayerFields(joinedMessage.data as Record<string, unknown>);
   });
 
   it("delivers conversation updates and messages only to participants", async () => {
