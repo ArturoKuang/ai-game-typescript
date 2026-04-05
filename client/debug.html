@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Town Debug Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08111d;
+      --panel: rgba(10, 23, 39, 0.9);
+      --panel-strong: rgba(7, 18, 31, 0.95);
+      --panel-soft: rgba(16, 35, 57, 0.74);
+      --border: rgba(114, 143, 182, 0.2);
+      --border-strong: rgba(130, 167, 219, 0.34);
+      --text: #edf5ff;
+      --muted: #96afcf;
+      --muted-strong: #bfd0e6;
+      --accent: #57a2ff;
+      --accent-soft: rgba(87, 162, 255, 0.16);
+      --success: #4cc38a;
+      --warning: #f2bb4f;
+      --danger: #ef6b73;
+      --shadow: 0 20px 48px rgba(0, 0, 0, 0.3);
+      --radius: 18px;
+      --radius-sm: 12px;
+      --mono: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+      --sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        radial-gradient(circle at top left, rgba(60, 109, 171, 0.2), transparent 28%),
+        radial-gradient(circle at top right, rgba(31, 128, 106, 0.16), transparent 26%),
+        linear-gradient(180deg, #09111b, #06101a 42%, #050c14 100%);
+      color: var(--text);
+      font-family: var(--sans);
+    }
+    body {
+      min-height: 100vh;
+    }
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+    #debug-dashboard-app {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      min-height: 100vh;
+      padding: 22px;
+    }
+    .dashboard-topbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .dashboard-brand {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+    .dashboard-eyebrow {
+      color: #80a6dc;
+      font-size: 11px;
+      letter-spacing: 1.6px;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .dashboard-title {
+      font-size: clamp(26px, 3vw, 38px);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+    }
+    .dashboard-subtitle {
+      color: var(--muted);
+      max-width: 700px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .dashboard-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .status-pill,
+    .status-tick {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      padding: 0 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(11, 24, 40, 0.78);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      font-size: 12px;
+      color: var(--muted-strong);
+    }
+    .status-pill.is-connected {
+      border-color: rgba(76, 195, 138, 0.3);
+      background: rgba(18, 55, 44, 0.68);
+      color: #d8f9e8;
+    }
+    .status-pill.is-disconnected {
+      border-color: rgba(239, 107, 115, 0.3);
+      background: rgba(64, 19, 24, 0.72);
+      color: #ffd7da;
+    }
+    .status-tick {
+      font-family: var(--mono);
+      letter-spacing: 0.04em;
+    }
+    .counter-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .counter-card {
+      padding: 16px;
+      border-radius: var(--radius);
+      background:
+        linear-gradient(180deg, rgba(16, 33, 53, 0.94), rgba(9, 20, 33, 0.96));
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 112px;
+    }
+    .counter-card[data-tone="warning"] {
+      border-color: rgba(242, 187, 79, 0.28);
+    }
+    .counter-card[data-tone="danger"] {
+      border-color: rgba(239, 107, 115, 0.28);
+    }
+    .counter-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .counter-value {
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      line-height: 1;
+    }
+    .counter-detail {
+      color: var(--muted-strong);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .dashboard-layout {
+      display: grid;
+      grid-template-columns: minmax(360px, 1.4fr) minmax(360px, 1.4fr) minmax(300px, 1fr);
+      gap: 16px;
+      min-height: 0;
+      flex: 1;
+    }
+    .panel-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 0;
+    }
+    .dashboard-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background:
+        linear-gradient(180deg, rgba(9, 21, 35, 0.95), rgba(6, 15, 25, 0.98));
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .dashboard-panel[data-tone="teal"] {
+      border-color: rgba(72, 196, 167, 0.2);
+    }
+    .dashboard-panel[data-tone="amber"] {
+      border-color: rgba(242, 187, 79, 0.2);
+    }
+    .panel-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 18px 12px;
+      border-bottom: 1px solid rgba(112, 143, 186, 0.16);
+    }
+    .panel-title {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .panel-summary {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+    .panel-controls {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 10px;
+      padding: 14px 18px;
+      border-bottom: 1px solid rgba(112, 143, 186, 0.12);
+      background: rgba(10, 25, 41, 0.56);
+    }
+    .panel-controls.single-column {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .control-input,
+    .control-select {
+      width: 100%;
+      min-height: 40px;
+      padding: 0 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(112, 143, 186, 0.2);
+      background: rgba(4, 12, 21, 0.62);
+      color: var(--text);
+      outline: none;
+    }
+    .control-input:focus,
+    .control-select:focus {
+      border-color: rgba(87, 162, 255, 0.55);
+      box-shadow: 0 0 0 3px rgba(87, 162, 255, 0.16);
+    }
+    .panel-main {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+      min-height: 0;
+      flex: 1;
+    }
+    .list-surface {
+      min-height: 0;
+      overflow-y: auto;
+      padding: 14px;
+      border-right: 1px solid rgba(112, 143, 186, 0.12);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .detail-surface {
+      min-height: 0;
+      overflow-y: auto;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .group-block {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .group-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .group-count {
+      color: var(--muted-strong);
+      font-size: 11px;
+    }
+    .row-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .selectable-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(112, 143, 186, 0.16);
+      background: rgba(8, 18, 30, 0.72);
+      cursor: pointer;
+      transition:
+        transform 120ms ease-out,
+        border-color 120ms ease-out,
+        background 120ms ease-out;
+    }
+    .selectable-card:hover {
+      transform: translateY(-1px);
+      border-color: rgba(130, 167, 219, 0.32);
+      background: rgba(11, 22, 37, 0.88);
+    }
+    .selectable-card.is-selected {
+      border-color: rgba(87, 162, 255, 0.46);
+      background: linear-gradient(180deg, rgba(15, 34, 58, 0.94), rgba(9, 19, 31, 0.98));
+      box-shadow: inset 0 0 0 1px rgba(87, 162, 255, 0.16);
+    }
+    .card-head,
+    .detail-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .card-title,
+    .detail-title {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+    .card-meta,
+    .detail-meta,
+    .detail-copy {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(112, 143, 186, 0.18);
+      background: rgba(22, 42, 67, 0.42);
+      color: var(--muted-strong);
+      font-size: 11px;
+      letter-spacing: 0.3px;
+    }
+    .chip[data-tone="active"] {
+      border-color: rgba(76, 195, 138, 0.32);
+      background: rgba(16, 57, 42, 0.5);
+      color: #daf6e8;
+    }
+    .chip[data-tone="ended"] {
+      border-color: rgba(165, 177, 195, 0.22);
+      background: rgba(45, 54, 68, 0.4);
+      color: #d4dce6;
+    }
+    .chip[data-tone="warning"] {
+      border-color: rgba(242, 187, 79, 0.28);
+      background: rgba(67, 47, 14, 0.46);
+      color: #ffeab8;
+    }
+    .chip[data-tone="danger"] {
+      border-color: rgba(239, 107, 115, 0.28);
+      background: rgba(63, 21, 27, 0.46);
+      color: #ffdfe1;
+    }
+    .chip[data-tone="llm"] {
+      border-color: rgba(87, 162, 255, 0.3);
+      background: rgba(20, 44, 76, 0.5);
+      color: #ddebff;
+    }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .metric-card {
+      padding: 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(112, 143, 186, 0.14);
+      background: rgba(9, 21, 34, 0.72);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .metric-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .metric-value {
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .transcript {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(112, 143, 186, 0.14);
+      background: rgba(6, 15, 25, 0.8);
+    }
+    .transcript-line {
+      color: var(--muted-strong);
+      font-size: 13px;
+      line-height: 1.6;
+      word-break: break-word;
+    }
+    .transcript-line strong {
+      color: #f4d88f;
+    }
+    .empty-state {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 14px;
+      border-radius: var(--radius-sm);
+      border: 1px dashed rgba(112, 143, 186, 0.18);
+      background: rgba(8, 18, 30, 0.48);
+    }
+    .need-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .need-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .need-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+    }
+    .need-bar {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+    }
+    .need-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, rgba(87, 162, 255, 0.7), rgba(76, 195, 138, 0.8));
+    }
+    .steps-list,
+    .alerts-list,
+    .event-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .step-item,
+    .alert-card,
+    .event-card {
+      padding: 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(112, 143, 186, 0.16);
+      background: rgba(8, 18, 30, 0.72);
+    }
+    .step-item.is-current {
+      border-color: rgba(87, 162, 255, 0.34);
+      background: rgba(14, 31, 52, 0.9);
+    }
+    .step-title,
+    .alert-title,
+    .event-title {
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+    .step-detail,
+    .alert-meta,
+    .event-meta,
+    .alert-copy,
+    .event-copy {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      margin-top: 4px;
+    }
+    .alert-card {
+      cursor: pointer;
+    }
+    .alert-card[data-severity="warning"] {
+      border-color: rgba(242, 187, 79, 0.24);
+    }
+    .alert-card[data-severity="danger"] {
+      border-color: rgba(239, 107, 115, 0.28);
+    }
+    .event-card {
+      cursor: pointer;
+    }
+    .event-card[data-severity="warning"] {
+      border-color: rgba(242, 187, 79, 0.24);
+    }
+    .event-card[data-severity="error"] {
+      border-color: rgba(239, 107, 115, 0.28);
+    }
+    .side-panel-body {
+      min-height: 0;
+      overflow-y: auto;
+      padding: 16px 18px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex: 1;
+    }
+    .mono {
+      font-family: var(--mono);
+    }
+    @media (max-width: 1500px) {
+      .counter-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .dashboard-layout {
+        grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+      }
+      .dashboard-layout .panel-stack:last-child {
+        grid-column: 1 / -1;
+      }
+    }
+    @media (max-width: 1100px) {
+      #debug-dashboard-app {
+        padding: 16px;
+      }
+      .dashboard-layout {
+        grid-template-columns: 1fr;
+      }
+      .panel-main {
+        grid-template-columns: 1fr;
+      }
+      .list-surface {
+        border-right: none;
+        border-bottom: 1px solid rgba(112, 143, 186, 0.12);
+      }
+      .counter-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 720px) {
+      .dashboard-topbar {
+        flex-direction: column;
+      }
+      .dashboard-meta {
+        justify-content: flex-start;
+      }
+      .panel-controls,
+      .panel-controls.single-column {
+        grid-template-columns: 1fr;
+      }
+      .counter-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="debug-dashboard-app">
+    <header class="dashboard-topbar">
+      <div class="dashboard-brand">
+        <div class="dashboard-eyebrow">Operations view</div>
+        <div class="dashboard-title">AI Town Debug Dashboard</div>
+        <div class="dashboard-subtitle">
+          Live conversation and autonomy monitoring with pushed updates, global event feed, and stuck-state alerts.
+        </div>
+      </div>
+      <div class="dashboard-meta">
+        <div id="dashboard-connection" class="status-pill is-disconnected">Connecting</div>
+        <div id="dashboard-tick" class="status-tick mono">Tick --</div>
+      </div>
+    </header>
+
+    <section id="health-counters" class="counter-grid"></section>
+
+    <main class="dashboard-layout">
+      <section class="dashboard-panel" data-tone="blue">
+        <div class="panel-header">
+          <div class="panel-title">Conversations</div>
+          <div id="conversation-panel-summary" class="panel-summary">Waiting for debug stream</div>
+        </div>
+        <div class="panel-controls">
+          <input id="conversation-search" class="control-input" type="search" placeholder="Search by participant or conversation id" />
+          <select id="conversation-sort" class="control-select">
+            <option value="last_activity_desc">Latest activity</option>
+            <option value="started_desc">Started newest</option>
+            <option value="ended_desc">Ended newest</option>
+            <option value="npc_name_asc">NPC name A-Z</option>
+            <option value="participant_name_asc">Participant A-Z</option>
+            <option value="message_count_desc">Message count</option>
+          </select>
+          <select id="conversation-filter" class="control-select">
+            <option value="all">All conversations</option>
+            <option value="active">Active only</option>
+            <option value="ended">Ended only</option>
+            <option value="npc">Has NPC</option>
+            <option value="human">Has human</option>
+          </select>
+        </div>
+        <div class="panel-main">
+          <div id="conversation-groups" class="list-surface"></div>
+          <div id="conversation-detail" class="detail-surface"></div>
+        </div>
+      </section>
+
+      <section class="dashboard-panel" data-tone="teal">
+        <div class="panel-header">
+          <div class="panel-title">NPC Autonomy</div>
+          <div id="autonomy-panel-summary" class="panel-summary">Waiting for debug stream</div>
+        </div>
+        <div class="panel-controls">
+          <input id="autonomy-search" class="control-input" type="search" placeholder="Search by NPC name or id" />
+          <select id="autonomy-sort" class="control-select">
+            <option value="priority">Priority</option>
+            <option value="name">Name A-Z</option>
+            <option value="need">Lowest need first</option>
+            <option value="failures">Failures</option>
+            <option value="action_age">Action age</option>
+          </select>
+          <select id="autonomy-filter" class="control-select">
+            <option value="all">All NPCs</option>
+            <option value="executing">Executing</option>
+            <option value="planned">Has plan</option>
+            <option value="llm">LLM plan</option>
+            <option value="stalled">Stalled only</option>
+          </select>
+        </div>
+        <div class="panel-main">
+          <div id="autonomy-list" class="list-surface"></div>
+          <div id="autonomy-detail" class="detail-surface"></div>
+        </div>
+      </section>
+
+      <div class="panel-stack">
+        <section class="dashboard-panel" data-tone="amber">
+          <div class="panel-header">
+            <div class="panel-title">Stuck Alerts</div>
+            <div id="alerts-summary" class="panel-summary">Waiting for debug stream</div>
+          </div>
+          <div id="alerts-list" class="side-panel-body"></div>
+        </section>
+
+        <section class="dashboard-panel">
+          <div class="panel-header">
+            <div class="panel-title">Global Event Feed</div>
+            <div id="event-feed-summary" class="panel-summary">Waiting for debug stream</div>
+          </div>
+          <div id="event-feed" class="side-panel-body"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="/src/debugDashboard.ts"></script>
+</body>
+</html>

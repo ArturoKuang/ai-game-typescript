@@ -888,84 +888,15 @@
 <body>
   <div id="game-container">
     <canvas id="game-canvas"></canvas>
-    <div id="debug-overlay" class="hidden">
-      <div class="debug-overlay-header">
-        <div class="debug-overlay-title">Debug Overlay</div>
-        <div id="debug-overlay-summary">Debug mode off</div>
-      </div>
-      <div id="debug-overlay-content">
-        <section id="conversation-debug-section" class="debug-surface-section hidden">
-          <div class="debug-surface-section-header">
-            <div class="debug-surface-section-title">Conversation Debug</div>
-            <div id="conversation-debug-summary" class="debug-surface-section-summary">Off</div>
-          </div>
-          <div id="conversation-debug-list"></div>
-        </section>
-        <section id="autonomy-debug-section" class="debug-surface-section hidden">
-          <div class="debug-surface-section-header">
-            <div class="debug-surface-section-title">NPC Autonomy</div>
-            <div id="autonomy-debug-summary" class="debug-surface-section-summary">Off</div>
-          </div>
-          <div id="autonomy-debug-list"></div>
-        </section>
-      </div>
-    </div>
   </div>
   <div id="sidebar">
     <div id="sidebar-header">
       <h2>AI Town</h2>
-      <button id="debug-menu-visibility-btn" class="sidebar-panel-toggle is-active" type="button" aria-expanded="true">Hide Debug</button>
     </div>
     <div id="join-section">
       <input id="name-input" type="text" placeholder="Your name..." />
       <button id="join-btn">Join</button>
     </div>
-    <details id="debug-menu" open>
-      <summary>
-        <div class="debug-menu-summary">
-          <div class="debug-menu-eyebrow">Live tools</div>
-          <div class="debug-menu-title-row">
-            <span class="debug-menu-title">Debug Control Center</span>
-            <span id="debug-menu-badge" class="debug-menu-badge">Overlay off</span>
-          </div>
-          <div class="debug-menu-hint">Toggle live overlays for conversations and NPC plans, then watch both feeds in the same surface.</div>
-        </div>
-      </summary>
-      <div class="debug-menu-content">
-        <label id="conversation-debug-toggle-card" class="debug-feature-card" for="conversation-debug-checkbox">
-          <span class="debug-feature-copy">
-            <span class="debug-feature-title-row">
-              <span class="debug-feature-title">Conversations</span>
-              <span id="conversation-debug-menu-status" class="debug-feature-status">Off</span>
-            </span>
-            <span class="debug-feature-description">Track active and ended conversations with live transcript updates in the shared overlay.</span>
-            <span id="conversation-debug-menu-detail" class="debug-feature-detail">Turn this on to inspect NPC and player conversations.</span>
-          </span>
-          <span class="debug-switch">
-            <input id="conversation-debug-checkbox" class="debug-switch-input" type="checkbox" />
-            <span class="debug-switch-track">
-              <span class="debug-switch-thumb"></span>
-            </span>
-          </span>
-        </label>
-        <label id="autonomy-debug-toggle-card" class="debug-feature-card" for="autonomy-debug-checkbox">
-          <span class="debug-feature-copy">
-            <span class="debug-feature-title-row">
-              <span class="debug-feature-title">NPC plans</span>
-              <span id="autonomy-debug-menu-status" class="debug-feature-status">Off</span>
-            </span>
-            <span class="debug-feature-description">Show the current plan, executing action, and whether each plan came from an LLM or fallback logic.</span>
-            <span id="autonomy-debug-menu-detail" class="debug-feature-detail">Turn this on to inspect live autonomy state.</span>
-          </span>
-          <span class="debug-switch">
-            <input id="autonomy-debug-checkbox" class="debug-switch-input" type="checkbox" />
-            <span class="debug-switch-track">
-              <span class="debug-switch-thumb"></span>
-            </span>
-          </span>
-        </label>
-      </div>
-    </details>
     <h2>Players</h2>
     <ul id="player-list"></ul>
     <h2>Conversation</h2>

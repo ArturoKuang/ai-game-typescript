@@ -32,14 +32,12 @@ import {
 import { GameRenderer } from "./renderer.js";
 import {
   appendConversationMessage,
-  reconcileDebugConversationSnapshots,
   upsertConversationSnapshot,
 } from "./conversationDebugState.js";
 import type {
   Conversation,
   FullGameState,
   MoveDirection,
-  NpcAutonomyDebugState,
   Player,
   PlayerSurvivalData,
   TileType,
@@ -47,40 +45,11 @@ import type {
 } from "./types.js";
 import { UI } from "./ui.js";
 
-const DEBUG_CONVERSATION_POLL_MS = 750;
-const DEBUG_AUTONOMY_POLL_MS = 750;
-const DEBUG_CONVERSATION_SECTIONS: Array<{
-  key: Conversation["state"];
-  title: string;
-  filter: (conversation: Conversation) => boolean;
-}> = [
-  {
-    key: "active",
-    title: "Active",
-    filter: (conversation) => conversation.state !== "ended",
-  },
-  {
-    key: "ended",
-    title: "Ended",
-    filter: (conversation) => conversation.state === "ended",
-  },
-];
-
 // State
 let gameState: FullGameState | null = null;
 let selfId: string | null = null;
 let mapLoaded = false;
 let mapTiles: TileType[][] | null = null;
-let debugModeEnabled = false;
-let debugConversationPollId: number | null = null;
-let debugConversationFetchInFlight = false;
-let debugConversationError: string | null = null;
-let debugConversations: Conversation[] = [];
-let debugAutonomyModeEnabled = false;
-let debugAutonomyPollId: number | null = null;
-let debugAutonomyFetchInFlight = false;
-let debugAutonomyError: string | null = null;
-let debugAutonomyStates: Record<string, NpcAutonomyDebugState> = {};
 const playerSurvival = new Map<string, PlayerSurvivalData>();
 
 function conversationIncludesPlayer(
@@ -109,22 +78,6 @@ const ui = new UI();
 
 async function start() {
   await renderer.init();
-  ui.renderConversationDebug({
-    enabled: false,
-    summary: "Debug mode off",
-    sections: [],
-    menuStatus: "Off",
-    menuDetail: "Turn this on to inspect NPC and player conversations.",
-    menuTone: "off",
-  });
-  ui.renderAutonomyDebug({
-    enabled: false,
-    summary: "Debug mode off",
-    cards: [],
-    menuStatus: "Off",
-    menuDetail: "Turn this on to inspect live autonomy state.",
-    menuTone: "off",
-  });
 
   // Load map tiles eagerly
   try {
@@ -201,392 +154,6 @@ async function start() {
     return gameState?.players.find((player) => player.id === playerId);
   }
 
-  function sortDebugConversations(
-    left: Conversation,
-    right: Conversation,
-  ): number {
-    if (left.startedTick !== right.startedTick) {
-      return right.startedTick - left.startedTick;
-    }
-    return right.id - left.id;
-  }
-
-  function formatConversationEndReason(
-    reason: Conversation["endedReason"],
-  ): string | null {
-    return reason ? reason.replaceAll("_", " ") : null;
-  }
-
-  function getDebugParticipant(playerId: string): {
-    label: string;
-    role: "npc" | "human" | "unknown";
-  } {
-    const player = getPlayer(playerId);
-    if (!player) {
-      return { label: playerId, role: "unknown" };
-    }
-    return {
-      label: `${player.isNpc ? "NPC" : "Player"}: ${player.name}`,
-      role: player.isNpc ? "npc" : "human",
-    };
-  }
-
-  function buildDebugConversationLines(conversation: Conversation): Array<{
-    speaker?: string;
-    content: string;
-    kind: "message" | "system";
-  }> {
-    if (conversation.messages.length > 0) {
-      return conversation.messages.map((message) => ({
-        speaker: getPlayerName(message.playerId),
-        content: message.content,
-        kind: "message" as const,
-      }));
-    }
-
-    if (conversation.state === "walking") {
-      return [
-        {
-          content: "Participants are walking to their meeting point.",
-          kind: "system",
-        },
-      ];
-    }
-
-    if (conversation.state === "invited") {
-      return [
-        {
-          content: "Invitation sent. Waiting for the invitee to respond.",
-          kind: "system",
-        },
-      ];
-    }
-
-    if (conversation.state === "ended") {
-      const endedReason = formatConversationEndReason(conversation.endedReason);
-      return [
-        {
-          content: endedReason
-            ? `Conversation ended: ${endedReason}.`
-            : "Conversation ended without any transcript messages.",
-          kind: "system",
-        },
-      ];
-    }
-
-    return [
-      {
-        content: "Conversation is active but no messages have been sent yet.",
-        kind: "system",
-      },
-    ];
-  }
-
-  function formatAutonomyGoal(goalId: string): string {
-    return goalId.replaceAll("_", " ");
-  }
-
-  function formatAutonomyPlanSource(
-    state: NpcAutonomyDebugState,
-  ): {
-    label: string;
-    tone: "scripted" | "llm" | "emergency" | "idle";
-  } {
-    if (!state.currentPlan) {
-      return { label: "Idle", tone: "idle" };
-    }
-    if (state.currentPlan.source === "llm") {
-      return { label: "LLM plan", tone: "llm" };
-    }
-    if (state.currentPlan.source === "emergency") {
-      return { label: "Emergency plan", tone: "emergency" };
-    }
-    return { label: "Scripted plan", tone: "scripted" };
-  }
-
-  function formatAutonomyStepDetail(
-    step: NonNullable<NpcAutonomyDebugState["currentPlan"]>["steps"][number],
-  ): string | undefined {
-    if (!step.targetPosition) {
-      return undefined;
-    }
-    return `target (${step.targetPosition.x}, ${step.targetPosition.y})`;
-  }
-
-  function sortAutonomyCards(
-    left: NpcAutonomyDebugState,
-    right: NpcAutonomyDebugState,
-  ): number {
-    const leftPriority = left.currentExecution ? 0 : left.currentPlan ? 1 : 2;
-    const rightPriority = right.currentExecution ? 0 : right.currentPlan ? 1 : 2;
-    if (leftPriority !== rightPriority) {
-      return leftPriority - rightPriority;
-    }
-    return getPlayerName(left.npcId).localeCompare(getPlayerName(right.npcId));
-  }
-
-  function refreshConversationDebugUi(): void {
-    const liveCount = debugConversations.filter(
-      (conversation) => conversation.state !== "ended",
-    ).length;
-    const endedCount = debugConversations.length - liveCount;
-    const liveParticipantIds = new Set<string>();
-
-    for (const conversation of debugConversations) {
-      if (conversation.state === "ended") continue;
-      liveParticipantIds.add(conversation.player1Id);
-      liveParticipantIds.add(conversation.player2Id);
-    }
-
-    ui.renderConversationDebug({
-      enabled: debugModeEnabled,
-      summary: debugConversationError
-        ? debugConversationError
-        : `${liveCount} live conversation${
-            liveCount === 1 ? "" : "s"
-          } across ${liveParticipantIds.size} participant${
-            liveParticipantIds.size === 1 ? "" : "s"
-          }${endedCount > 0 ? ` • ${endedCount} ended` : ""}`,
-      menuStatus: debugConversationError
-        ? "Error"
-        : debugModeEnabled
-          ? "Live"
-          : "Off",
-      menuDetail: debugConversationError
-        ? debugConversationError
-        : debugModeEnabled
-          ? `${liveCount} active • ${endedCount} ended`
-          : "Turn this on to inspect NPC and player conversations.",
-      menuTone: debugConversationError
-        ? "error"
-        : debugModeEnabled
-          ? "live"
-          : "off",
-      sections: DEBUG_CONVERSATION_SECTIONS.map((section) => {
-        const conversations = debugConversations
-          .filter(section.filter)
-          .sort(sortDebugConversations);
-
-        return {
-          key: section.key,
-          title: section.title,
-          summary: `${conversations.length} conversation${
-            conversations.length === 1 ? "" : "s"
-          }`,
-          cards: conversations.map((conversation) => {
-            const endedReason = formatConversationEndReason(
-              conversation.endedReason,
-            );
-            const metaParts = [
-              `started t${conversation.startedTick}`,
-              `${conversation.messages.length} message${
-                conversation.messages.length === 1 ? "" : "s"
-              }`,
-            ];
-
-            if (conversation.endedTick !== undefined) {
-              metaParts.push(`ended t${conversation.endedTick}`);
-            }
-            if (endedReason) {
-              metaParts.push(`reason: ${endedReason}`);
-            }
-
-            return {
-              id: conversation.id,
-              state: conversation.state,
-              title: `${getPlayerName(
-                conversation.player1Id,
-              )} <-> ${getPlayerName(conversation.player2Id)}`,
-              meta: metaParts.join(" • "),
-              participants: [
-                getDebugParticipant(conversation.player1Id),
-                getDebugParticipant(conversation.player2Id),
-              ],
-              lines: buildDebugConversationLines(conversation),
-            };
-          }),
-        };
-      }),
-    });
-  }
-
-  async function fetchDebugConversations(): Promise<void> {
-    if (!debugModeEnabled || debugConversationFetchInFlight) {
-      return;
-    }
-
-    debugConversationFetchInFlight = true;
-    try {
-      const response = await fetch("/api/debug/conversations");
-      if (!response.ok) {
-        throw new Error(`Conversation debug API returned ${response.status}`);
-      }
-      debugConversations = reconcileDebugConversationSnapshots({
-        current: debugConversations,
-        fetched: (await response.json()) as Conversation[],
-        localConversations: gameState?.conversations ?? [],
-      });
-      debugConversationError = null;
-    } catch (error) {
-      debugConversationError =
-        error instanceof Error
-          ? error.message
-          : "Conversation debug API unavailable";
-    } finally {
-      debugConversationFetchInFlight = false;
-      refreshConversationDebugUi();
-    }
-  }
-
-  function stopDebugConversationPolling(): void {
-    if (debugConversationPollId !== null) {
-      window.clearInterval(debugConversationPollId);
-      debugConversationPollId = null;
-    }
-  }
-
-  function setDebugConversationMode(enabled: boolean): void {
-    debugModeEnabled = enabled;
-    stopDebugConversationPolling();
-
-    if (!enabled) {
-      debugConversationError = null;
-      debugConversations = [];
-      refreshConversationDebugUi();
-      return;
-    }
-
-    debugConversationError = null;
-    refreshConversationDebugUi();
-    void fetchDebugConversations();
-    debugConversationPollId = window.setInterval(() => {
-      void fetchDebugConversations();
-    }, DEBUG_CONVERSATION_POLL_MS);
-  }
-
-  function refreshAutonomyDebugUi(): void {
-    const states = Object.values(debugAutonomyStates).sort(sortAutonomyCards);
-    const executingCount = states.filter((state) => state.currentExecution).length;
-    const llmPlanCount = states.filter(
-      (state) => state.currentPlan?.llmGenerated,
-    ).length;
-
-    ui.renderAutonomyDebug({
-      enabled: debugAutonomyModeEnabled,
-      summary: debugAutonomyError
-        ? debugAutonomyError
-        : `${states.length} NPC${states.length === 1 ? "" : "s"} • ${executingCount} executing • ${llmPlanCount} LLM plan${
-            llmPlanCount === 1 ? "" : "s"
-          }`,
-      menuStatus: debugAutonomyError
-        ? "Error"
-        : debugAutonomyModeEnabled
-          ? "Live"
-          : "Off",
-      menuDetail: debugAutonomyError
-        ? debugAutonomyError
-        : debugAutonomyModeEnabled
-          ? `${states.length} NPC${states.length === 1 ? "" : "s"} • ${executingCount} executing • ${llmPlanCount} LLM`
-          : "Turn this on to inspect live autonomy state.",
-      menuTone: debugAutonomyError
-        ? "error"
-        : debugAutonomyModeEnabled
-          ? "live"
-          : "off",
-      cards: states.map((state) => {
-        const source = formatAutonomyPlanSource(state);
-        const executionLabel = state.currentExecution
-          ? `Executing ${state.currentExecution.actionLabel} (${state.currentExecution.status}) since t${state.currentExecution.startedAtTick}`
-          : state.currentPlan
-            ? "Waiting to start next action"
-            : "No action executing";
-        const metaParts = [
-          state.currentPlan
-            ? `goal: ${formatAutonomyGoal(state.currentPlan.goalId)}`
-            : "no active plan",
-          `${state.consecutivePlanFailures} failure${
-            state.consecutivePlanFailures === 1 ? "" : "s"
-          }`,
-        ];
-
-        if (state.goalSelectionInFlight) {
-          metaParts.push("LLM selection pending");
-        }
-
-        return {
-          npcId: state.npcId,
-          title: getPlayerName(state.npcId),
-          sourceLabel: source.label,
-          sourceTone: source.tone,
-          goalLabel: state.currentPlan
-            ? `Plan: ${formatAutonomyGoal(state.currentPlan.goalId)}`
-            : "Plan: idle",
-          executionLabel,
-          meta: metaParts.join(" • "),
-          steps:
-            state.currentPlan?.steps.map((step) => ({
-              label: `${step.index + 1}. ${step.actionLabel}`,
-              detail: formatAutonomyStepDetail(step),
-              isCurrent: step.isCurrent,
-            })) ?? [],
-        };
-      }),
-    });
-  }
-
-  async function fetchAutonomyDebugState(): Promise<void> {
-    if (!debugAutonomyModeEnabled || debugAutonomyFetchInFlight) {
-      return;
-    }
-
-    debugAutonomyFetchInFlight = true;
-    try {
-      const response = await fetch("/api/debug/autonomy/state");
-      if (!response.ok) {
-        throw new Error(`Autonomy debug API returned ${response.status}`);
-      }
-      debugAutonomyStates = (await response.json()) as Record<
-        string,
-        NpcAutonomyDebugState
-      >;
-      debugAutonomyError = null;
-    } catch (error) {
-      debugAutonomyError =
-        error instanceof Error
-          ? error.message
-          : "Autonomy debug API unavailable";
-    } finally {
-      debugAutonomyFetchInFlight = false;
-      refreshAutonomyDebugUi();
-    }
-  }
-
-  function stopAutonomyDebugPolling(): void {
-    if (debugAutonomyPollId !== null) {
-      window.clearInterval(debugAutonomyPollId);
-      debugAutonomyPollId = null;
-    }
-  }
-
-  function setAutonomyDebugMode(enabled: boolean): void {
-    debugAutonomyModeEnabled = enabled;
-    stopAutonomyDebugPolling();
-
-    if (!enabled) {
-      debugAutonomyError = null;
-      debugAutonomyStates = {};
-      refreshAutonomyDebugUi();
-      return;
-    }
-
-    debugAutonomyError = null;
-    refreshAutonomyDebugUi();
-    void fetchAutonomyDebugState();
-    debugAutonomyPollId = window.setInterval(() => {
-      void fetchAutonomyDebugState();
-    }, DEBUG_AUTONOMY_POLL_MS);
-  }
-
   /** Generate system chat messages describing a conversation state change. */
   function describeConversationUpdate(
     previous: Conversation | undefined,
@@ -659,10 +226,7 @@ async function start() {
       if (player.state === "conversing") continue;
       talkablePlayerIds.add(player.id);
     }
-
     ui.updatePlayerList(gameState.players, talkablePlayerIds);
-    refreshConversationDebugUi();
-    refreshAutonomyDebugUi();
 
     if (!selfId || !currentConversation) {
       ui.renderConversationPanel({
@@ -733,11 +297,6 @@ async function start() {
     switch (msg.type) {
       case "state": {
         gameState = msg.data;
-        debugConversations = reconcileDebugConversationSnapshots({
-          current: debugConversations,
-          fetched: [],
-          localConversations: gameState.conversations,
-        });
         ui.setStatus(
           `Connected | Tick: ${gameState.tick} | Players: ${gameState.players.length}`,
         );
@@ -878,10 +437,6 @@ async function start() {
         );
         gameState.conversations = gameStateResult.conversations;
         const previous = gameStateResult.previous;
-        debugConversations = upsertConversationSnapshot(
-          debugConversations,
-          msg.data,
-        ).conversations;
         for (const systemMessage of describeConversationUpdate(
           previous,
           msg.data,
@@ -899,10 +454,6 @@ async function start() {
             msg.data,
           );
         }
-        debugConversations = appendConversationMessage(
-          debugConversations,
-          msg.data,
-        );
         const sender = gameState?.players.find(
           (p) => p.id === msg.data.playerId,
         );
@@ -997,14 +548,6 @@ async function start() {
 
   ui.onTalk((playerId) => {
     client.send({ type: "start_convo", data: { targetId: playerId } });
-  });
-
-  ui.onConversationDebugModeChange((enabled) => {
-    setDebugConversationMode(enabled);
-  });
-
-  ui.onAutonomyDebugModeChange((enabled) => {
-    setAutonomyDebugMode(enabled);
   });
 
   ui.onUseInventoryItem((itemId) => {
