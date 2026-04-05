@@ -105,7 +105,12 @@ export function executeAutonomyTick(
     const error = action.validate(startCtx);
     if (error) {
       invalidatePlan(npcId, state, registry, game, entityManager, error);
-      return { planCompleted: false, planFailed: true, failReason: error };
+      return {
+        planCompleted: false,
+        planFailed: true,
+        failReason: error,
+        transitions,
+      };
     }
 
     state.currentExecution = {
