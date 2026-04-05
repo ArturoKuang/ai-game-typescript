@@ -112,6 +112,7 @@ export const DECLARED_CONTAINERS: DeclaredContainerDef[] = [
     size: { width: 370, height: 230 },
     codePaths: [
       "server/src/index.ts",
+      "server/src/bootstrap/*",
       "server/src/engine/*",
       "server/src/network/*",
       "server/src/debug/*",

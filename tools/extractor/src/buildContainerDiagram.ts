@@ -45,6 +45,11 @@ interface EvidenceDraft {
   detail: string;
 }
 
+const SERVER_RUNTIME_FILES = new Set([
+  "server/src/index.ts",
+  "server/src/bootstrap/runtime.ts",
+]);
+
 class EvidenceBuilder {
   private nextId = 1;
   readonly evidence: ContainerDiagramEvidence[] = [];
@@ -165,7 +170,13 @@ function containerEvidence(
           kind: "container_bootstrap",
           confidence: "exact",
           fileId: "server/src/index.ts",
-          detail: "index.ts wires the Express app, GameLoop, NPC stack, debug router, and WebSocket server.",
+          detail: "index.ts is the thin entrypoint that boots the server runtime.",
+        },
+        {
+          kind: "container_bootstrap",
+          confidence: "exact",
+          fileId: "server/src/bootstrap/runtime.ts",
+          detail: "createGameServerRuntime() wires the Express app, GameLoop, NPC stack, debug router, and WebSocket server.",
         },
         {
           kind: "container_transport",
@@ -336,10 +347,21 @@ function serverToWorldDataEvidence(
 ): EvidenceDraft[] {
   return input.fileAccesses
     .filter((fact) => {
-      if (fact.fileId !== "server/src/index.ts") return false;
-      if (fact.kind === "import" && fact.targetPath === "server/src/data/characters.ts") return true;
-      if (fact.kind === "static_serve" && fact.targetPath === "data/map.json") return true;
-      if ((fact.kind === "read" || fact.kind === "exists_check") && (fact.targetPath.includes("mapPath") || fact.targetPath.includes("candidate"))) {
+      if (!SERVER_RUNTIME_FILES.has(fact.fileId)) return false;
+      if (
+        fact.kind === "import" &&
+        fact.targetPath === "server/src/data/characters.ts"
+      ) {
+        return true;
+      }
+      if (fact.kind === "static_serve" && fact.targetPath === "data/map.json") {
+        return true;
+      }
+      if (
+        (fact.kind === "read" || fact.kind === "exists_check") &&
+        (fact.targetPath.includes("mapPath") ||
+          fact.targetPath.includes("candidate"))
+      ) {
         return true;
       }
       return false;
