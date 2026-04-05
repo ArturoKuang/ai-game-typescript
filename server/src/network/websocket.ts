@@ -621,6 +621,72 @@ export class GameWebSocketServer {
     };
   }
 
+  private buildDebugBootstrap(): DebugDashboardBootstrap {
+    const autonomyStates = Object.fromEntries(
+      Array.from(this.autonomyManager?.getAllDebugStates() ?? []).map(
+        ([npcId, state]) => [npcId, state],
+      ),
+    ) as Record<string, NpcAutonomyDebugState>;
+
+    return {
+      tick: this.game.currentTick,
+      players: this.game
+        .getPlayers()
+        .map((player) => this.toPublicPlayer(player)),
+      conversations: this.game.conversations.getAllConversations(),
+      autonomyStates,
+      recentEvents: [...this.debugEvents],
+    };
+  }
+
+  private sendDebugBootstrap(ws: WebSocket): void {
+    this.send(ws, {
+      type: "debug_bootstrap",
+      data: this.buildDebugBootstrap(),
+    });
+  }
+
+  private broadcastToDebugSubscribers(message: ServerMessage): void {
+    const payload = JSON.stringify(message);
+    for (const [ws, info] of this.clients) {
+      if (!info.debugSubscribed || ws.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      ws.send(payload);
+    }
+  }
+
+  broadcastDebugAutonomyUpsert(state: NpcAutonomyDebugState): void {
+    this.broadcastToDebugSubscribers({
+      type: "debug_autonomy_upsert",
+      data: state,
+    });
+  }
+
+  publishDebugEvent(event: DebugFeedEventPayload): void {
+    const item: DebugFeedEvent = {
+      id: this.nextDebugEventId++,
+      ...event,
+    };
+    this.debugEvents.push(item);
+    if (this.debugEvents.length > DEBUG_EVENT_BUFFER_MAX) {
+      this.debugEvents.splice(0, this.debugEvents.length - DEBUG_EVENT_BUFFER_MAX);
+    }
+    this.broadcastToDebugSubscribers({
+      type: "debug_event",
+      data: item,
+    });
+  }
+
+  private publishDebugEventIfPresent(
+    event: DebugFeedEventPayload | null,
+  ): void {
+    if (!event) {
+      return;
+    }
+    this.publishDebugEvent(event);
+  }
+
   private resolveConversation(event: GameEvent): Conversation | undefined {
     const fromEvent = event.data?.conversation as Conversation | undefined;
     if (fromEvent) return fromEvent;
@@ -645,6 +711,82 @@ export class GameWebSocketServer {
     }
 
     return [conversation.player1Id, conversation.player2Id];
+  }
+
+  private buildDebugEventFromGameEvent(
+    event: GameEvent,
+    conversation: Conversation,
+  ): DebugFeedEventPayload | null {
+    const participantLabel = this.describeConversationParticipants(conversation);
+
+    switch (event.type) {
+      case "convo_started":
+        return {
+          tick: event.tick,
+          type: "conversation_started",
+          severity: "info",
+          subjectType: "conversation",
+          subjectId: String(conversation.id),
+          relatedConversationId: conversation.id,
+          title: "Conversation started",
+          message: `${participantLabel} started a conversation.`,
+        };
+      case "convo_accepted":
+      case "convo_active":
+        return {
+          tick: event.tick,
+          type: "conversation_active",
+          severity: "info",
+          subjectType: "conversation",
+          subjectId: String(conversation.id),
+          relatedConversationId: conversation.id,
+          title: "Conversation active",
+          message: `${participantLabel} are now talking.`,
+        };
+      case "convo_declined":
+      case "convo_ended": {
+        const reason =
+          typeof conversation.endedReason === "string"
+            ? ` (${conversation.endedReason.replaceAll("_", " ")})`
+            : "";
+        return {
+          tick: event.tick,
+          type: "conversation_ended",
+          severity: "info",
+          subjectType: "conversation",
+          subjectId: String(conversation.id),
+          relatedConversationId: conversation.id,
+          title: "Conversation ended",
+          message: `${participantLabel} ended their conversation${reason}.`,
+        };
+      }
+      case "convo_message": {
+        const message = event.data?.message as Message | undefined;
+        if (!message) {
+          return null;
+        }
+        return {
+          tick: event.tick,
+          type: "conversation_message",
+          severity: "info",
+          subjectType: "conversation",
+          subjectId: String(conversation.id),
+          relatedConversationId: conversation.id,
+          title: "Message sent",
+          message: `${this.getPlayerLabel(message.playerId)}: ${message.content}`,
+        };
+      }
+      default:
+        return null;
+    }
+  }
+
+  private describeConversationParticipants(conversation: Conversation): string {
+    return `${this.getPlayerLabel(conversation.player1Id)} and ${this.getPlayerLabel(conversation.player2Id)}`;
+  }
+
+  private getPlayerLabel(playerId: string): string {
+    return this.game.getPlayer(playerId)?.name ?? playerId;
   }
 
   /** Send the current inventory state to a specific player. */
