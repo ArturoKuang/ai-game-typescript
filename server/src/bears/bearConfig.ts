@@ -50,7 +50,7 @@ export const BEAR_POPULATION_CAP = 6;
 export const BEAR_POPULATION_MIN = 1;
 /** Initial bears spawned at boot. */
 export const BEAR_INITIAL_COUNT = 2;
-/** Min Manhattan distance from players when spawning. */
-export const BEAR_SPAWN_PLAYER_BUFFER = 2;
+/** Min Manhattan distance from players and spawn points when spawning. */
+export const BEAR_SPAWN_PLAYER_BUFFER = 5;
 /** Min Manhattan distance from activities for wilderness zones. */
 export const WILDERNESS_ACTIVITY_BUFFER = 2;

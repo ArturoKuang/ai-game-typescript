@@ -6,14 +6,19 @@
 import type {
   EntityManagerInterface,
   GameLoopInterface,
+  NeedConfig,
+  NeedType,
   NpcInventory,
   NpcNeeds,
-  NeedType,
   WorldState,
 } from "./types.js";
 import { DEFAULT_NEED_CONFIGS } from "./types.js";
 
 const PROXIMITY_RADIUS = 2;
+/** Radius for detecting hostile entities (bears). */
+const THREAT_RADIUS = 5;
+/** Entity types considered hostile. */
+const HOSTILE_TYPES = new Set(["bear"]);
 
 const NEED_KEYS: NeedType[] = [
   "hunger",
@@ -29,6 +34,7 @@ export function snapshotWorldState(
   needs: NpcNeeds,
   inventory: NpcInventory,
   entityManager: EntityManagerInterface,
+  needConfigs: Record<NeedType, NeedConfig> = DEFAULT_NEED_CONFIGS,
 ): WorldState {
   const state: WorldState = new Map();
   const npc = game.getPlayer(npcId);
@@ -38,11 +44,8 @@ export function snapshotWorldState(
 
   // Need satisfaction predicates
   for (const key of NEED_KEYS) {
-    const config = DEFAULT_NEED_CONFIGS[key];
-    state.set(
-      `need_${key}_satisfied`,
-      needs[key] >= config.urgencyThreshold,
-    );
+    const config = needConfigs[key];
+    state.set(`need_${key}_satisfied`, needs[key] >= config.urgencyThreshold);
   }
 
   // Inventory predicates
@@ -66,10 +69,38 @@ export function snapshotWorldState(
   const players = game.getPlayers();
   for (const player of players) {
     if (player.id === npcId) continue;
-    const dist =
-      Math.abs(player.x - pos.x) + Math.abs(player.y - pos.y);
+    const dist = Math.abs(player.x - pos.x) + Math.abs(player.y - pos.y);
     if (dist <= PROXIMITY_RADIUS) {
       state.set("near_player", true);
+      break;
+    }
+  }
+
+  // Hostile proximity — check for bears and other threats
+  const hostileEntities = entityManager.getNearby(pos, THREAT_RADIUS);
+  let nearestHostileDist = Number.POSITIVE_INFINITY;
+  for (const entity of hostileEntities) {
+    if (!HOSTILE_TYPES.has(entity.type)) continue;
+    if (entity.destroyed) continue;
+    // Bears that are "dead" should not be threats
+    if (entity.properties.state === "dead") continue;
+    const dist =
+      Math.abs(entity.position.x - pos.x) + Math.abs(entity.position.y - pos.y);
+    if (dist < nearestHostileDist) {
+      nearestHostileDist = dist;
+    }
+  }
+  if (nearestHostileDist <= THREAT_RADIUS) {
+    state.set("near_hostile", true);
+    state.set("hostile_distance", nearestHostileDist);
+  }
+
+  // Check for pickupable items nearby
+  const pickupable = entityManager.getNearby(pos, PROXIMITY_RADIUS);
+  for (const entity of pickupable) {
+    if (entity.destroyed) continue;
+    if (entity.type === "bear_meat" || entity.type === "ground_item") {
+      state.set("near_pickupable", true);
       break;
     }
   }

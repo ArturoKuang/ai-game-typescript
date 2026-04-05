@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { registerBuiltinActions } from "../../src/autonomy/actions/index.js";
 import { EntityManager } from "../../src/autonomy/entityManager.js";
 import { executeAutonomyTick } from "../../src/autonomy/executor.js";
@@ -158,5 +158,35 @@ describe("Action Executor", () => {
 
     expect(result!.planCompleted).toBe(true);
     expect(state.currentPlan).toBeNull();
+  });
+
+  it("queues move_to when starting a goto step", () => {
+    const plan: Plan = {
+      goalId: "test",
+      steps: [{ actionId: "__goto", targetPosition: { x: 7, y: 5 } }],
+      totalCost: 1,
+      createdAtTick: 90,
+    };
+    const state = makeState({ currentPlan: plan });
+    const registry = makeRegistry();
+    const enqueue = vi.fn();
+    const game: GameLoopInterface = {
+      currentTick: 100,
+      enqueue,
+      getPlayer: () => ({ id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true }),
+      getPlayers: () => [{ id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true }],
+      setPlayerTarget: () => {
+        throw new Error("goto should not call setPlayerTarget directly");
+      },
+    };
+    const em = new EntityManager();
+
+    const result = executeAutonomyTick("npc_1", state, registry, game, em);
+    expect(result.planFailed).toBe(false);
+    expect(enqueue).toHaveBeenCalledWith({
+      type: "move_to",
+      playerId: "npc_1",
+      data: { x: 7, y: 5 },
+    });
   });
 });

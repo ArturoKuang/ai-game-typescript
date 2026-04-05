@@ -39,6 +39,7 @@ function makeCtx(overrides?: Partial<PlanningContext>): PlanningContext {
     currentState: new Map(),
     entityManager: new EntityManager(),
     npcPosition: { x: 5, y: 5 },
+    otherPlayers: [],
     ...overrides,
   };
 }

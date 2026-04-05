@@ -512,14 +512,18 @@ export class BearManager {
     if (this.liveBearCount() >= BEAR_POPULATION_CAP) return;
 
     const players = this.game.getPlayers();
+    const spawnPoints = this.game.world.getSpawnPoints();
 
-    // Try up to 10 times to find a spot away from players
+    // Try up to 10 times to find a spot away from players AND spawn points
     for (let attempt = 0; attempt < 10; attempt++) {
       const pos = this.wildernessZones[this.game.rng.nextInt(this.wildernessZones.length)];
       const nearPlayer = players.some(
         (p) => Math.abs(p.x - pos.x) + Math.abs(p.y - pos.y) <= BEAR_SPAWN_PLAYER_BUFFER,
       );
-      if (!nearPlayer) {
+      const nearSpawn = spawnPoints.some(
+        (s) => Math.abs(s.x - pos.x) + Math.abs(s.y - pos.y) <= BEAR_SPAWN_PLAYER_BUFFER,
+      );
+      if (!nearPlayer && !nearSpawn) {
         this.spawnBear(pos, tick);
         return;
       }
@@ -582,6 +586,7 @@ export class BearManager {
       (b) => b.properties.state !== "dead",
     );
     const players = this.game.getPlayers();
+    const spawnPoints = this.game.world.getSpawnPoints();
 
     // Shuffle wilderness zones for fairness (using seeded RNG)
     const candidates = this.game.rng.shuffle([...this.wildernessZones]);
@@ -592,11 +597,14 @@ export class BearManager {
       const key = `${pos.x},${pos.y}`;
       if (occupied.has(key)) continue;
 
-      // Don't spawn on top of players
+      // Don't spawn near players or spawn points
       const nearPlayer = players.some(
         (p) => Math.abs(p.x - pos.x) + Math.abs(p.y - pos.y) <= BEAR_SPAWN_PLAYER_BUFFER,
       );
-      if (nearPlayer) continue;
+      const nearSpawn = spawnPoints.some(
+        (s) => Math.abs(s.x - pos.x) + Math.abs(s.y - pos.y) <= BEAR_SPAWN_PLAYER_BUFFER,
+      );
+      if (nearPlayer || nearSpawn) continue;
 
       const neighbors = this.countChebyshevNeighbors(pos, aliveBears);
       if (neighbors >= GOL_BIRTH_MIN && neighbors <= GOL_BIRTH_MAX) {

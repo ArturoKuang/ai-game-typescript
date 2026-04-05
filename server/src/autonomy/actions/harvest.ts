@@ -2,7 +2,11 @@
  * Harvest action — gather raw_food from a berry bush.
  */
 import { addItem } from "../inventory.js";
-import type { ActionDefinition, ActionTickResult, ExecutionContext } from "../types.js";
+import type {
+  ActionDefinition,
+  ActionTickResult,
+  ExecutionContext,
+} from "../types.js";
 
 const HARVEST_DURATION = 40; // 2 seconds at 20 ticks/sec
 
@@ -58,7 +62,9 @@ export const harvestAction: ActionDefinition = {
     }
 
     // Decrement berries (EntityManager.updateProperty notifies listeners)
-    const mgr = ctx.entityManager as { updateProperty?: (id: string, key: string, value: number) => void };
+    const mgr = ctx.entityManager as {
+      updateProperty?: (id: string, key: string, value: number) => void;
+    };
     if (mgr.updateProperty) {
       mgr.updateProperty(bushId, "berries", berries - 1);
     } else {

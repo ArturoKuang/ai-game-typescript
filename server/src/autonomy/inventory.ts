@@ -7,11 +7,7 @@ export function createInventory(): NpcInventory {
   return new Map();
 }
 
-export function addItem(
-  inv: NpcInventory,
-  item: string,
-  count = 1,
-): void {
+export function addItem(inv: NpcInventory, item: string, count = 1): void {
   inv.set(item, (inv.get(item) ?? 0) + count);
 }
 
@@ -31,11 +27,7 @@ export function removeItem(
   return true;
 }
 
-export function hasItem(
-  inv: NpcInventory,
-  item: string,
-  count = 1,
-): boolean {
+export function hasItem(inv: NpcInventory, item: string, count = 1): boolean {
   return (inv.get(item) ?? 0) >= count;
 }
 

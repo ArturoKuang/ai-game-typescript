@@ -67,7 +67,11 @@ export function tickNeeds(
 }
 
 /** Boost a need (e.g., eating restores hunger). Clamps to 100. */
-export function boostNeed(needs: NpcNeeds, need: NeedType, amount: number): void {
+export function boostNeed(
+  needs: NpcNeeds,
+  need: NeedType,
+  amount: number,
+): void {
   needs[need] = Math.min(100, needs[need] + amount);
 }
 
@@ -85,7 +89,7 @@ export function getMostUrgentNeed(
   configs: Record<NeedType, NeedConfig> = DEFAULT_NEED_CONFIGS,
 ): NeedType | null {
   let worst: NeedType | null = null;
-  let worstRatio = Infinity;
+  let worstRatio = Number.POSITIVE_INFINITY;
 
   for (const key of NEED_KEYS) {
     const config = configs[key];

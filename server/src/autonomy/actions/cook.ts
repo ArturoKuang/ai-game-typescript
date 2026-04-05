@@ -4,7 +4,11 @@
  * Cooked food restores more hunger than raw food when eaten.
  */
 import { addItem, removeItem } from "../inventory.js";
-import type { ActionDefinition, ActionTickResult, ExecutionContext } from "../types.js";
+import type {
+  ActionDefinition,
+  ActionTickResult,
+  ExecutionContext,
+} from "../types.js";
 
 const COOK_DURATION = 60; // 3 seconds at 20 ticks/sec
 
@@ -54,7 +58,10 @@ export const cookAction: ActionDefinition = {
     // Cook complete — convert raw_food to cooked_food
     const removed = removeItem(ctx.inventory, "raw_food");
     if (!removed) {
-      return { status: "failed", reason: "Raw food disappeared from inventory" };
+      return {
+        status: "failed",
+        reason: "Raw food disappeared from inventory",
+      };
     }
 
     addItem(ctx.inventory, "cooked_food");

@@ -238,6 +238,14 @@ export interface MapData {
   entities?: MapEntityDef[];
 }
 
+/** Per-need decay rate overrides for a character. */
+export interface NeedOverrides {
+  hungerDecay?: number;
+  energyDecay?: number;
+  socialDecay?: number;
+  curiosityDecay?: number;
+}
+
 /** Static definition of an NPC loaded from `data/characters.ts`. */
 export interface CharacterDef {
   id: string;
@@ -246,4 +254,6 @@ export interface CharacterDef {
   personality: string;
   spawnPoint: Position;
   emoji: string;
+  /** Per-character need decay overrides. */
+  needOverrides?: NeedOverrides;
 }

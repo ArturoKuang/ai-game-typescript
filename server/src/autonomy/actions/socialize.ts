@@ -6,7 +6,11 @@
  * completes once the NPC enters a conversation, which also boosts
  * social need via the autonomy manager.
  */
-import type { ActionDefinition, ActionTickResult, ExecutionContext } from "../types.js";
+import type {
+  ActionDefinition,
+  ActionTickResult,
+  ExecutionContext,
+} from "../types.js";
 
 const SOCIALIZE_TIMEOUT = 200; // 10 seconds
 
@@ -35,8 +39,7 @@ export const socializeAction: ActionDefinition = {
     const target = players.find((p) => {
       if (p.id === ctx.npcId) return false;
       if (p.state === "conversing") return false;
-      const dist =
-        Math.abs(p.x - pos.x) + Math.abs(p.y - pos.y);
+      const dist = Math.abs(p.x - pos.x) + Math.abs(p.y - pos.y);
       return dist <= 6;
     });
 

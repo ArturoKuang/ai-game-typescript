@@ -44,7 +44,11 @@ export function executeAutonomyTick(
   // Check plan expiry
   if (game.currentTick - plan.createdAtTick > PLAN_EXPIRY_TICKS) {
     invalidatePlan(npcId, state, registry, game, entityManager, "Plan expired");
-    return { planCompleted: false, planFailed: true, failReason: "Plan expired" };
+    return {
+      planCompleted: false,
+      planFailed: true,
+      failReason: "Plan expired",
+    };
   }
 
   // If we've executed all steps, plan is done
@@ -58,16 +62,34 @@ export function executeAutonomyTick(
   const step = plan.steps[state.currentStepIndex];
   const action = registry.get(step.actionId);
   if (!action) {
-    invalidatePlan(npcId, state, registry, game, entityManager, `Unknown action: ${step.actionId}`);
-    return { planCompleted: false, planFailed: true, failReason: `Unknown action: ${step.actionId}` };
+    invalidatePlan(
+      npcId,
+      state,
+      registry,
+      game,
+      entityManager,
+      `Unknown action: ${step.actionId}`,
+    );
+    return {
+      planCompleted: false,
+      planFailed: true,
+      failReason: `Unknown action: ${step.actionId}`,
+    };
   }
 
   const ctx = buildExecutionContext(
-    npcId, state, game, entityManager, step.targetPosition,
+    npcId,
+    state,
+    game,
+    entityManager,
+    step.targetPosition,
   );
 
   // Start new action execution if needed
-  if (!state.currentExecution || state.currentExecution.actionId !== step.actionId) {
+  if (
+    !state.currentExecution ||
+    state.currentExecution.actionId !== step.actionId
+  ) {
     // Validate before starting
     const error = action.validate(ctx);
     if (error) {
@@ -88,7 +110,7 @@ export function executeAutonomyTick(
   }
 
   // Ensure ctx has the correct actionState reference
-  ctx.actionState = state.currentExecution!.actionState;
+  ctx.actionState = state.currentExecution?.actionState;
 
   // Tick the action
   const result = action.onTick(ctx);
@@ -115,7 +137,11 @@ export function executeAutonomyTick(
       state.currentPlan = null;
       state.currentStepIndex = 0;
       state.currentExecution = null;
-      return { planCompleted: false, planFailed: true, failReason: result.reason };
+      return {
+        planCompleted: false,
+        planFailed: true,
+        failReason: result.reason,
+      };
   }
 }
 

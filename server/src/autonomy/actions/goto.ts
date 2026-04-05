@@ -1,7 +1,11 @@
 /**
  * Built-in movement action — walks the NPC to a target position using A* pathfinding.
  */
-import type { ActionDefinition, ActionTickResult, ExecutionContext } from "../types.js";
+import type {
+  ActionDefinition,
+  ActionTickResult,
+  ExecutionContext,
+} from "../types.js";
 
 export const GOTO_ACTION_ID = "__goto";
 
@@ -21,22 +25,17 @@ export const gotoAction: ActionDefinition = {
 
   onStart(ctx: ExecutionContext): void {
     if (!ctx.targetPosition) return;
-    const path = ctx.game.setPlayerTarget(
-      ctx.npcId,
-      ctx.targetPosition.x,
-      ctx.targetPosition.y,
-    );
-    ctx.actionState.set("pathSet", path !== null);
-    if (!path) {
-      ctx.actionState.set("failed", true);
-    }
+    ctx.game.enqueue({
+      type: "move_to",
+      playerId: ctx.npcId,
+      data: { x: ctx.targetPosition.x, y: ctx.targetPosition.y },
+    });
+    ctx.actionState.set("moveQueued", true);
+    ctx.actionState.set("moveStarted", false);
+    ctx.actionState.set("startTick", ctx.currentTick);
   },
 
   onTick(ctx: ExecutionContext): ActionTickResult {
-    if (ctx.actionState.get("failed")) {
-      return { status: "failed", reason: "No path to target" };
-    }
-
     const player = ctx.game.getPlayer(ctx.npcId);
     if (!player || !ctx.targetPosition) {
       return { status: "failed", reason: "Player or target missing" };
@@ -50,6 +49,20 @@ export const gotoAction: ActionDefinition = {
       return { status: "completed" };
     }
 
+    if (player.state === "walking") {
+      ctx.actionState.set("moveStarted", true);
+      return { status: "running" };
+    }
+
+    const startTick = (ctx.actionState.get("startTick") as number) ?? ctx.currentTick;
+    const elapsed = ctx.currentTick - startTick;
+    if (!ctx.actionState.get("moveStarted")) {
+      if (elapsed >= 1) {
+        return { status: "failed", reason: "Move command did not start" };
+      }
+      return { status: "running" };
+    }
+
     // Check if player stopped moving (arrived or blocked)
     if (player.state === "idle") {
       // May have arrived close enough or path was completed
@@ -60,13 +73,8 @@ export const gotoAction: ActionDefinition = {
     }
 
     // Timeout: 500 ticks max for any movement
-    const elapsed = ctx.currentTick - (ctx.actionState.get("startTick") as number ?? ctx.currentTick);
     if (elapsed > 500) {
       return { status: "failed", reason: "Movement timed out" };
-    }
-
-    if (!ctx.actionState.has("startTick")) {
-      ctx.actionState.set("startTick", ctx.currentTick);
     }
 
     return { status: "running" };

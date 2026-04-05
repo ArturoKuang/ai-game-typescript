@@ -5,7 +5,7 @@
  * The autonomy system reads Player state and drives behavior by
  * enqueuing commands on the GameLoop.
  */
-import type { Position } from "../engine/types.js";
+import type { Command, Position } from "../engine/types.js";
 
 // ---------------------------------------------------------------------------
 // Needs / Drives
@@ -77,6 +77,13 @@ export interface PlanningContext {
   currentState: WorldState;
   entityManager: EntityManagerInterface;
   npcPosition: Position;
+  otherPlayers: Array<{
+    id: string;
+    x: number;
+    y: number;
+    state: string;
+    isNpc: boolean;
+  }>;
 }
 
 export interface ExecutionContext {
@@ -116,7 +123,10 @@ export interface ActionDefinition {
   validate(ctx: ExecutionContext): string | null; // null = valid
   onStart(ctx: ExecutionContext): void;
   onTick(ctx: ExecutionContext): ActionTickResult;
-  onEnd(ctx: ExecutionContext, reason: "completed" | "failed" | "interrupted"): void;
+  onEnd(
+    ctx: ExecutionContext,
+    reason: "completed" | "failed" | "interrupted",
+  ): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,9 +200,19 @@ export interface GoalOption {
 
 export interface GameLoopInterface {
   readonly currentTick: number;
-  enqueue(command: unknown): void;
-  getPlayer(id: string): { x: number; y: number; state: string; isNpc: boolean; id: string } | undefined;
-  getPlayers(): { x: number; y: number; state: string; isNpc: boolean; id: string }[];
+  enqueue(command: Command): void;
+  getPlayer(
+    id: string,
+  ):
+    | { x: number; y: number; state: string; isNpc: boolean; id: string }
+    | undefined;
+  getPlayers(): {
+    x: number;
+    y: number;
+    state: string;
+    isNpc: boolean;
+    id: string;
+  }[];
   setPlayerTarget(playerId: string, x: number, y: number): Position[] | null;
 }
 

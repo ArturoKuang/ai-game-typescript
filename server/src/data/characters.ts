@@ -20,6 +20,7 @@ export const CHARACTERS: CharacterDef[] = [
       "Curious, outgoing, analytical, slightly anxious. Loves technology and sci-fi. Tends to bring up interesting facts in conversation.",
     spawnPoint: { x: 3, y: 3 },
     emoji: "A",
+    needOverrides: { curiosityDecay: 0.009 }, // extra curious — explores more
   },
   {
     id: "npc_bob",
@@ -30,6 +31,7 @@ export const CHARACTERS: CharacterDef[] = [
       "Warm, patient, nostalgic, storyteller. Loves history and education. Often gives advice, sometimes unsolicited.",
     spawnPoint: { x: 16, y: 3 },
     emoji: "B",
+    needOverrides: { energyDecay: 0.008 }, // older — tires faster
   },
   {
     id: "npc_carol",
@@ -50,6 +52,7 @@ export const CHARACTERS: CharacterDef[] = [
       "Passionate, idealistic, energetic, sometimes preachy. Cares about the environment. Always planning the next community project.",
     spawnPoint: { x: 5, y: 15 },
     emoji: "D",
+    needOverrides: { hungerDecay: 0.012 }, // young and active — hungrier faster
   },
   {
     id: "npc_eve",
@@ -60,5 +63,6 @@ export const CHARACTERS: CharacterDef[] = [
       "Sociable, nurturing, gossipy, wise. Knows everyone in town. Loves baking and sharing food. The social hub of the community.",
     spawnPoint: { x: 14, y: 15 },
     emoji: "E",
+    needOverrides: { socialDecay: 0.015 }, // social butterfly — gets lonely fast
   },
 ];

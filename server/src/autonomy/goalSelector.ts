@@ -1,13 +1,23 @@
+import { getMostUrgentNeed, getUrgentNeeds } from "./needs.js";
 /**
  * Builds goal options from NPC needs and delegates selection to the
  * model provider (LLM or scripted fallback).
  */
-import type { NeedType, NpcNeeds, GoalOption, NpcInventory, WorldState } from "./types.js";
-import { getUrgentNeeds, getMostUrgentNeed } from "./needs.js";
+import type {
+  GoalOption,
+  NeedConfig,
+  NeedType,
+  NpcInventory,
+  NpcNeeds,
+  WorldState,
+} from "./types.js";
 import { DEFAULT_NEED_CONFIGS } from "./types.js";
 
 /** Maps need types to GOAP goal predicates. */
-const NEED_TO_GOAL: Record<NeedType, { goalId: string; description: string; predicate: [string, boolean] }> = {
+const NEED_TO_GOAL: Record<
+  NeedType,
+  { goalId: string; description: string; predicate: [string, boolean] }
+> = {
   hunger: {
     goalId: "satisfy_hunger",
     description: "Find food to eat (hunger is urgent)",
@@ -42,13 +52,16 @@ export interface GoalSelectionResult {
 }
 
 /** Build the list of available goal options based on current needs. */
-export function buildGoalOptions(needs: NpcNeeds): GoalOption[] {
-  const toOption = (entry: typeof NEED_TO_GOAL[NeedType]): GoalOption => ({
+export function buildGoalOptions(
+  needs: NpcNeeds,
+  configs: Record<NeedType, NeedConfig> = DEFAULT_NEED_CONFIGS,
+): GoalOption[] {
+  const toOption = (entry: (typeof NEED_TO_GOAL)[NeedType]): GoalOption => ({
     id: entry.goalId,
     description: entry.description,
   });
 
-  const urgent = getUrgentNeeds(needs);
+  const urgent = getUrgentNeeds(needs, configs);
   if (urgent.length === 0) {
     // Nothing urgent — offer curiosity as a default
     return [toOption(NEED_TO_GOAL.curiosity)];
@@ -60,8 +73,11 @@ export function buildGoalOptions(needs: NpcNeeds): GoalOption[] {
  * Scripted (deterministic) goal selection — picks the most urgent need.
  * Used as fallback when LLM provider is unavailable or in tests.
  */
-export function selectGoalScripted(needs: NpcNeeds): GoalSelectionResult | null {
-  const mostUrgent = getMostUrgentNeed(needs);
+export function selectGoalScripted(
+  needs: NpcNeeds,
+  configs: Record<NeedType, NeedConfig> = DEFAULT_NEED_CONFIGS,
+): GoalSelectionResult | null {
+  const mostUrgent = getMostUrgentNeed(needs, configs);
   if (!mostUrgent) {
     // Nothing urgent — explore
     const goal = NEED_TO_GOAL.curiosity;
@@ -75,7 +91,7 @@ export function selectGoalScripted(needs: NpcNeeds): GoalSelectionResult | null 
   return {
     goalId: goal.goalId,
     goalState: new Map([goal.predicate]),
-    reasoning: `${mostUrgent} is critically low at ${DEFAULT_NEED_CONFIGS[mostUrgent].urgencyThreshold} threshold`,
+    reasoning: `${mostUrgent} is critically low at ${configs[mostUrgent].urgencyThreshold} threshold`,
   };
 }
 

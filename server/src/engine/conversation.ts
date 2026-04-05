@@ -8,7 +8,8 @@
  *       └──────── declined ────────────┘
  *
  * - **invited**: initiator has requested; target has not yet responded.
- *   NPCs auto-accept (they have no client UI for manual acceptance).
+ *   The invitee may auto-accept if it is an NPC, or wait for an external
+ *   invite-decision provider to respond.
  * - **walking**: both players are navigating toward a rendezvous point
  *   near the midpoint. Once within `CONVERSATION_DISTANCE` tiles, the
  *   conversation activates.
@@ -63,6 +64,14 @@ export interface Conversation {
   /** LLM-generated summary stored after the conversation ends, used for NPC memory. */
   summary?: string;
 }
+
+export type NpcInviteDecision = "accept" | "decline" | "wait";
+export type NpcInviteDecisionProvider = (
+  conversation: Conversation,
+  inviter: Player,
+  invitee: Player,
+  tick: number,
+) => NpcInviteDecision;
 
 /** Manhattan distance (tiles) at which two walking players transition to "active". */
 const CONVERSATION_DISTANCE = 2;
@@ -189,27 +198,54 @@ export class ConversationManager {
     tick: number,
     getPlayer: (id: string) => Player | undefined,
     setTarget: (playerId: string, x: number, y: number) => boolean,
+    resolveNpcInvite?: NpcInviteDecisionProvider,
   ): GameEvent[] {
     const events: GameEvent[] = [];
 
     for (const convo of this.conversations.values()) {
       if (convo.state === "invited") {
-        // Auto-accept when either participant is an NPC. NPCs have no
-        // client UX to manually accept an invitation, so we skip the
-        // "invited" state and go straight to "walking" toward each other.
-        const p1 = getPlayer(convo.player1Id);
-        const p2 = getPlayer(convo.player2Id);
-        if (p1?.isNpc || p2?.isNpc) {
-          this.acceptInvite(convo.id);
-          events.push({
-            tick,
-            type: "convo_accepted",
-            data: {
-              convoId: convo.id,
-              conversation: snapshotConversation(convo),
-              participantIds: this.getParticipantIds(convo),
-            },
-          });
+        // Only auto-handle invites when the invitee is an NPC. Human invitees
+        // keep the conversation in `invited` until their client accepts or declines.
+        const inviter = getPlayer(convo.player1Id);
+        const invitee = getPlayer(convo.player2Id);
+        if (inviter && invitee?.isNpc) {
+          const decision = resolveNpcInvite
+            ? resolveNpcInvite(convo, inviter, invitee, tick)
+            : "accept";
+
+          if (decision === "accept") {
+            this.acceptInvite(convo.id);
+            events.push({
+              tick,
+              type: "convo_accepted",
+              data: {
+                convoId: convo.id,
+                conversation: snapshotConversation(convo),
+                participantIds: this.getParticipantIds(convo),
+              },
+            });
+          } else if (decision === "decline") {
+            const ended = this.endConversation(convo.id, tick, "declined");
+            events.push({
+              tick,
+              type: "convo_declined",
+              data: {
+                convoId: ended.id,
+                conversation: snapshotConversation(ended),
+                participantIds: this.getParticipantIds(ended),
+              },
+            });
+            events.push({
+              tick,
+              type: "convo_ended",
+              data: {
+                convoId: ended.id,
+                reason: ended.endedReason,
+                conversation: snapshotConversation(ended),
+                participantIds: this.getParticipantIds(ended),
+              },
+            });
+          }
         }
       }
 

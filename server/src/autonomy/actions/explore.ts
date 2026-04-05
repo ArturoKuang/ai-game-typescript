@@ -2,7 +2,11 @@
  * Explore action — wander to a random walkable tile to satisfy curiosity.
  */
 import { boostNeed } from "../needs.js";
-import type { ActionDefinition, ActionTickResult, ExecutionContext } from "../types.js";
+import type {
+  ActionDefinition,
+  ActionTickResult,
+  ExecutionContext,
+} from "../types.js";
 
 const EXPLORE_DURATION = 80; // 4 seconds at 20 ticks/sec
 const CURIOSITY_RESTORE = 50;
@@ -32,11 +36,11 @@ export const exploreAction: ActionDefinition = {
     // The executor already handles goto steps, so if there's a targetPosition
     // it was set by the planner. Otherwise just stand and observe.
     if (ctx.targetPosition) {
-      ctx.game.setPlayerTarget(
-        ctx.npcId,
-        ctx.targetPosition.x,
-        ctx.targetPosition.y,
-      );
+      ctx.game.enqueue({
+        type: "move_to",
+        playerId: ctx.npcId,
+        data: { x: ctx.targetPosition.x, y: ctx.targetPosition.y },
+      });
       ctx.actionState.set("moving", true);
     }
   },

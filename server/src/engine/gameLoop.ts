@@ -33,6 +33,7 @@ import {
 import {
   type Conversation,
   ConversationManager,
+  type NpcInviteDecisionProvider,
   snapshotConversation,
 } from "./conversation.js";
 import { GameLogger } from "./logger.js";
@@ -114,6 +115,8 @@ export class GameLoop {
    *  Commands are enqueued from WebSocket handlers and the debug API, then processed
    *  in order so that all mutations happen inside the tick pipeline. */
   private commandQueue_: Command[] = [];
+  /** Optional runtime hook that lets the autonomy system decide how NPC invitees respond. */
+  private npcInviteDecisionProvider_?: NpcInviteDecisionProvider;
   /** Callbacks invoked after every tick completes; used by the NPC controller to schedule AI turns. */
   private afterTickCallbacks: ((result: TickResult) => void)[] = [];
 
@@ -576,6 +579,7 @@ export class GameLoop {
       this.tick_,
       (id) => this.players_.get(id),
       (playerId, x, y) => this.setPlayerTarget(playerId, x, y) !== null,
+      this.npcInviteDecisionProvider_,
     );
     for (const e of convoEvents) this.emit(e);
     events.push(...convoEvents);
@@ -604,6 +608,12 @@ export class GameLoop {
   /** Register a callback that runs after every tick */
   onAfterTick(callback: (result: TickResult) => void): void {
     this.afterTickCallbacks.push(callback);
+  }
+
+  setNpcInviteDecisionProvider(
+    provider: NpcInviteDecisionProvider | undefined,
+  ): void {
+    this.npcInviteDecisionProvider_ = provider;
   }
 
   /**

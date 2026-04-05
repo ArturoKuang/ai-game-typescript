@@ -2,7 +2,11 @@
  * Rest action — sit at a bench or reading nook to restore energy.
  */
 import { boostNeed } from "../needs.js";
-import type { ActionDefinition, ActionTickResult, ExecutionContext } from "../types.js";
+import type {
+  ActionDefinition,
+  ActionTickResult,
+  ExecutionContext,
+} from "../types.js";
 
 const REST_DURATION = 100; // 5 seconds at 20 ticks/sec
 const ENERGY_RESTORE = 60;

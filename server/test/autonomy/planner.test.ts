@@ -20,6 +20,7 @@ function makeCtx(
     currentState: new Map(),
     entityManager: em,
     npcPosition: { x: 5, y: 5 },
+    otherPlayers: [],
     ...overrides,
   };
 }
@@ -119,6 +120,52 @@ describe("GOAP Planner", () => {
     const result = plan(current, goal, registry, ctx);
     expect(result).not.toBeNull();
     expect(result!.steps.some((s) => s.actionId === "rest")).toBe(true);
+  });
+
+  it("plans goto -> socialize when a player is available but far away", () => {
+    const registry = makeRegistry();
+    const current: WorldState = new Map([["need_social_satisfied", false]]);
+    const goal: WorldState = new Map([["need_social_satisfied", true]]);
+    const ctx = makeCtx({
+      currentState: current,
+      otherPlayers: [
+        {
+          id: "human_1",
+          x: 10,
+          y: 5,
+          state: "idle",
+          isNpc: false,
+        },
+      ],
+    });
+
+    const result = plan(current, goal, registry, ctx);
+    expect(result).not.toBeNull();
+    expect(result!.steps.map((step) => step.actionId)).toEqual([
+      "__goto",
+      "socialize",
+    ]);
+  });
+
+  it("plans goto -> pickup for distant ground items", () => {
+    const em = new EntityManager();
+    em.spawn("ground_item", { x: 9, y: 5 }, { itemId: "raw_food", quantity: 1 });
+
+    const registry = makeRegistry();
+    const current: WorldState = new Map();
+    const goal: WorldState = new Map([["has_raw_food", true]]);
+    const ctx = makeCtx({
+      currentState: current,
+      entityManager: em,
+      npcPosition: { x: 5, y: 5 },
+    });
+
+    const result = plan(current, goal, registry, ctx);
+    expect(result).not.toBeNull();
+    expect(result!.steps.map((step) => step.actionId)).toEqual([
+      "__goto",
+      "pickup",
+    ]);
   });
 
   it("picks lower-cost plan between alternatives", () => {

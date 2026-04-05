@@ -71,11 +71,7 @@ export class EntityManager implements EntityManagerInterface {
     return result;
   }
 
-  getNearby(
-    position: Position,
-    radius: number,
-    type?: string,
-  ): WorldEntity[] {
+  getNearby(position: Position, radius: number, type?: string): WorldEntity[] {
     const result: WorldEntity[] = [];
     for (const entity of this.entities.values()) {
       if (entity.destroyed) continue;

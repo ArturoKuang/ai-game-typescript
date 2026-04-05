@@ -12,8 +12,8 @@ import type {
   ActionDefinition,
   EntityManagerInterface,
   Plan,
-  PlanningContext,
   PlannedStep,
+  PlanningContext,
   PredicateValue,
   WorldState,
 } from "./types.js";
@@ -61,8 +61,7 @@ export function plan(
 
     // Pop lowest cost + heuristic
     open.sort(
-      (a, b) =>
-        a.cost + a.unsatisfied.size - (b.cost + b.unsatisfied.size),
+      (a, b) => a.cost + a.unsatisfied.size - (b.cost + b.unsatisfied.size),
     );
     const node = open.shift()!;
 
@@ -101,9 +100,8 @@ export function plan(
         }
       }
 
-      const actionCost = typeof action.cost === "function"
-        ? action.cost(ctx)
-        : action.cost;
+      const actionCost =
+        typeof action.cost === "function" ? action.cost(ctx) : action.cost;
 
       const step: PlannedStep = { actionId: action.id };
 
@@ -113,10 +111,7 @@ export function plan(
       if (action.proximityRequirement) {
         const proximityKey = `near_${action.proximityRequirement.target}`;
         if (currentState.get(proximityKey) !== true) {
-          const targetPos = resolveProximityTarget(
-            action,
-            ctx,
-          );
+          const targetPos = resolveProximityTarget(action, ctx);
           if (targetPos) {
             const dist =
               Math.abs(targetPos.x - ctx.npcPosition.x) +
@@ -165,28 +160,59 @@ function resolveProximityTarget(
 
   if (req.type === "entity") {
     // Special case: "player" means find nearest other player
-    if (req.target === "player") return null; // Handled at execution time
-
-    const entities = ctx.entityManager.getByType(req.target);
-    if (entities.length === 0) return null;
-
-    // Find closest non-destroyed entity
-    let closest: Position | null = null;
-    let minDist = Infinity;
-    for (const entity of entities) {
-      if (entity.destroyed) continue;
-      const dist =
-        Math.abs(entity.position.x - ctx.npcPosition.x) +
-        Math.abs(entity.position.y - ctx.npcPosition.y);
-      if (dist < minDist) {
-        minDist = dist;
-        closest = entity.position;
+    if (req.target === "player") {
+      let closestPlayer: Position | null = null;
+      let minDist = Number.POSITIVE_INFINITY;
+      for (const player of ctx.otherPlayers) {
+        if (player.state === "conversing") continue;
+        const dist =
+          Math.abs(player.x - ctx.npcPosition.x) +
+          Math.abs(player.y - ctx.npcPosition.y);
+        if (dist < minDist) {
+          minDist = dist;
+          closestPlayer = { x: Math.round(player.x), y: Math.round(player.y) };
+        }
       }
+      return closestPlayer;
     }
-    return closest;
+
+    if (req.target === "pickupable") {
+      return findClosestEntityPosition(
+        [
+          ...ctx.entityManager.getByType("bear_meat"),
+          ...ctx.entityManager.getByType("ground_item"),
+        ],
+        ctx,
+      );
+    }
+
+    return findClosestEntityPosition(ctx.entityManager.getByType(req.target), ctx);
   }
 
   return null;
+}
+
+function findClosestEntityPosition(
+  entities: EntityManagerInterface["getByType"] extends (...args: never[]) => infer T
+    ? T
+    : never,
+  ctx: PlanningContext,
+): Position | null {
+  if (entities.length === 0) return null;
+
+  let closest: Position | null = null;
+  let minDist = Number.POSITIVE_INFINITY;
+  for (const entity of entities) {
+    if (entity.destroyed) continue;
+    const dist =
+      Math.abs(entity.position.x - ctx.npcPosition.x) +
+      Math.abs(entity.position.y - ctx.npcPosition.y);
+    if (dist < minDist) {
+      minDist = dist;
+      closest = entity.position;
+    }
+  }
+  return closest;
 }
 
 function goalIdFromPredicates(goal: WorldState): string {

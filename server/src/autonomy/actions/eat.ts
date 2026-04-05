@@ -7,7 +7,11 @@
  */
 import { removeItem } from "../inventory.js";
 import { boostNeed } from "../needs.js";
-import type { ActionDefinition, ActionTickResult, ExecutionContext } from "../types.js";
+import type {
+  ActionDefinition,
+  ActionTickResult,
+  ExecutionContext,
+} from "../types.js";
 
 const EAT_DURATION = 20; // 1 second at 20 ticks/sec
 const RAW_HUNGER_RESTORE = 40;
