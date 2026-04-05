@@ -352,7 +352,18 @@ export class NpcAutonomyManager {
 
       // 1. Once a conversation is active, the social action owns the NPC.
       if (npc.state === "conversing") {
+        const clearedGoalId = state.currentPlan?.goalId;
         this.clearPlanForConversation(state);
+        if (clearedGoalId) {
+          this.emitDebugEvent(
+            this.createNpcDebugEvent(npc.id, {
+              type: "plan_cleared",
+              severity: "info",
+              title: "Plan cleared",
+              message: `${this.getNpcLabel(npc.id)} handed control to an active conversation and cleared ${this.formatGoal(clearedGoalId)}.`,
+            }),
+          );
+        }
         tickNeeds(state.needs, npcConfigs);
         this.replenishWaterAtPond(npc, state.needs);
         if (shouldBroadcast) {
@@ -362,6 +373,7 @@ export class NpcAutonomyManager {
             this.buildNpcSurvivalSnapshot(npc.id, state, npc),
           );
         }
+        this.publishDebugStateIfChanged(npc.id, state);
         continue;
       }
 
@@ -371,6 +383,7 @@ export class NpcAutonomyManager {
 
       // 3. Check for critical need crossing → interrupt current plan
       if (needsResult.newCritical.length > 0 && state.currentPlan) {
+        const interruptedGoalId = state.currentPlan.goalId;
         invalidatePlan(
           npc.id,
           state,
@@ -378,6 +391,14 @@ export class NpcAutonomyManager {
           this.game as unknown as GameLoopInterface,
           this.entityManager,
           `Critical need: ${needsResult.newCritical.join(", ")}`,
+        );
+        this.emitDebugEvent(
+          this.createNpcDebugEvent(npc.id, {
+            type: "plan_cleared",
+            severity: "warning",
+            title: "Plan interrupted",
+            message: `${this.getNpcLabel(npc.id)} interrupted ${this.formatGoal(interruptedGoalId)} because of a critical need.`,
+          }),
         );
       }
 
@@ -387,10 +408,19 @@ export class NpcAutonomyManager {
         (!state.currentPlan || state.currentPlan.goalId !== "escape_danger")
       ) {
         if (state.currentPlan) {
+          const interruptedGoalId = state.currentPlan.goalId;
           invalidatePlan(
             npc.id, state, this.registry,
             this.game as unknown as GameLoopInterface,
             this.entityManager, "Emergency flee",
+          );
+          this.emitDebugEvent(
+            this.createNpcDebugEvent(npc.id, {
+              type: "plan_cleared",
+              severity: "warning",
+              title: "Plan interrupted",
+              message: `${this.getNpcLabel(npc.id)} interrupted ${this.formatGoal(interruptedGoalId)} to flee danger.`,
+            }),
           );
         }
         this.idleCooldowns.delete(npc.id);
@@ -403,6 +433,7 @@ export class NpcAutonomyManager {
             npc.id, state, this.registry,
             this.game as unknown as GameLoopInterface, this.entityManager,
           );
+          this.emitActionTransitions(npc.id, result.transitions);
           if (result.planCompleted) state.consecutivePlanFailures = 0;
         }
         if (shouldBroadcast) {
@@ -412,6 +443,7 @@ export class NpcAutonomyManager {
             this.buildNpcSurvivalSnapshot(npc.id, state, npc),
           );
         }
+        this.publishDebugStateIfChanged(npc.id, state);
         continue;
       }
 
@@ -419,6 +451,7 @@ export class NpcAutonomyManager {
       const cooldownExpiry = this.idleCooldowns.get(npc.id);
       if (cooldownExpiry && this.game.currentTick < cooldownExpiry) {
         if (shouldBroadcast) this.broadcastNeeds(npc.id, state);
+        this.publishDebugStateIfChanged(npc.id, state);
         continue; // Waiting in idle wander
       }
       this.idleCooldowns.delete(npc.id);
@@ -430,6 +463,7 @@ export class NpcAutonomyManager {
 
       // 5. Execute current plan step
       if (state.currentPlan) {
+        const planBeforeExecution = state.currentPlan;
         const result = executeAutonomyTick(
           npc.id,
           state,
@@ -437,9 +471,18 @@ export class NpcAutonomyManager {
           this.game as unknown as GameLoopInterface,
           this.entityManager,
         );
+        this.emitActionTransitions(npc.id, result.transitions);
 
         if (result.planFailed) {
           state.consecutivePlanFailures++;
+          this.emitDebugEvent(
+            this.createNpcDebugEvent(npc.id, {
+              type: "plan_failed",
+              severity: "warning",
+              title: "Plan failed",
+              message: `${this.getNpcLabel(npc.id)} failed ${this.formatGoal(planBeforeExecution.goalId)}${result.failReason ? `: ${result.failReason}` : "."}`,
+            }),
+          );
           if (state.consecutivePlanFailures >= MAX_CONSECUTIVE_FAILURES) {
             // Extended idle
             this.idleCooldowns.set(
@@ -450,6 +493,14 @@ export class NpcAutonomyManager {
           }
         } else if (result.planCompleted) {
           state.consecutivePlanFailures = 0;
+          this.emitDebugEvent(
+            this.createNpcDebugEvent(npc.id, {
+              type: "plan_cleared",
+              severity: "info",
+              title: "Plan completed",
+              message: `${this.getNpcLabel(npc.id)} completed ${this.formatGoal(planBeforeExecution.goalId)}.`,
+            }),
+          );
         }
       }
 
@@ -461,6 +512,7 @@ export class NpcAutonomyManager {
           this.buildNpcSurvivalSnapshot(npc.id, state, npc),
         );
       }
+      this.publishDebugStateIfChanged(npc.id, state);
     }
   }
 
@@ -734,10 +786,20 @@ export class NpcAutonomyManager {
       state.currentStepIndex = 0;
       state.currentExecution = null;
       state.lastPlanTick = this.game.currentTick;
+      this.emitDebugEvent(
+        this.createNpcDebugEvent(npcId, {
+          type: "plan_started",
+          severity: "info",
+          title: "Plan started",
+          message: `${this.getNpcLabel(npcId)} started ${this.formatGoal(goalId)} via ${provenance.source}.`,
+        }),
+      );
+      this.publishDebugStateIfChanged(npcId, state);
     } else {
       state.currentPlanSource = null;
       state.currentPlanReasoning = null;
       this.idleWander(npcId, state);
+      this.publishDebugStateIfChanged(npcId, state);
     }
   }
 

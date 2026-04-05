@@ -1,6 +1,6 @@
 {
   "meta": {
-    "extractedAt": "2026-04-05T18:00:35.226Z",
+    "extractedAt": "2026-04-05T18:00:58.548Z",
     "rootDir": "/Users/arturokuang/ai-game-typescript",
     "fileCount": 65,
     "classCount": 148,
@@ -132,7 +132,7 @@
         "server/src/autonomy/actions/socialize.ts"
       ],
       "color": "#785EF0",
-      "totalLoc": 4091
+      "totalLoc": 4143
     }
   ],
   "files": [
@@ -207,7 +207,7 @@
         "NpcAutonomyManagerOptions",
         "NpcAutonomyManager"
       ],
-      "loc": 955
+      "loc": 1007
     },
     {
       "id": "server/src/autonomy/needs.ts",
@@ -1650,7 +1650,7 @@
           ],
           "visibility": "private",
           "isAsync": false,
-          "loc": 126
+          "loc": 178
         },
         {
           "name": "decideNpcInvite",
@@ -40695,7 +40695,7 @@
       ]
     },
     {
-      "id": "access:server/src/engine/conversation.ts::Conversation:read:decideNpcInvite:468:Conversation",
+      "id": "access:server/src/engine/conversation.ts::Conversation:read:decideNpcInvite:520:Conversation",
       "structureId": "server/src/engine/conversation.ts::Conversation",
       "accessKind": "read",
       "actorName": "decideNpcInvite",
@@ -40704,14 +40704,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter conversation.",
-      "line": 468,
+      "line": 520,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1282"
       ]
     },
     {
-      "id": "access:server/src/engine/conversation.ts::NpcInviteDecision:read:decideNpcInvite:467:NpcInviteDecision",
+      "id": "access:server/src/engine/conversation.ts::NpcInviteDecision:read:decideNpcInvite:519:NpcInviteDecision",
       "structureId": "server/src/engine/conversation.ts::NpcInviteDecision",
       "accessKind": "read",
       "actorName": "decideNpcInvite",
@@ -40720,14 +40720,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Return type.",
-      "line": 467,
+      "line": 519,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1283"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::NeedConfig:read:needPressure:526:NeedConfig",
+      "id": "access:server/src/autonomy/types.ts::NeedConfig:read:needPressure:578:NeedConfig",
       "structureId": "server/src/autonomy/types.ts::NeedConfig",
       "accessKind": "read",
       "actorName": "needPressure",
@@ -40736,14 +40736,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter configs.",
-      "line": 526,
+      "line": 578,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1284"
       ]
     },
     {
-      "id": "access:server/src/engine/types.ts::Position:read:inviteDistanceBoost:549:Position",
+      "id": "access:server/src/engine/types.ts::Position:read:inviteDistanceBoost:601:Position",
       "structureId": "server/src/engine/types.ts::Position",
       "accessKind": "read",
       "actorName": "inviteDistanceBoost",
@@ -40752,14 +40752,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter inviter.",
-      "line": 549,
+      "line": 601,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1285"
       ]
     },
     {
-      "id": "access:server/src/engine/types.ts::Position:read:inviteDistanceBoost:550:Position",
+      "id": "access:server/src/engine/types.ts::Position:read:inviteDistanceBoost:602:Position",
       "structureId": "server/src/engine/types.ts::Position",
       "accessKind": "read",
       "actorName": "inviteDistanceBoost",
@@ -40768,14 +40768,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter invitee.",
-      "line": 550,
+      "line": 602,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1286"
       ]
     },
     {
-      "id": "access:server/src/engine/conversation.ts::Conversation:read:inviteTimedOut:563:Conversation",
+      "id": "access:server/src/engine/conversation.ts::Conversation:read:inviteTimedOut:615:Conversation",
       "structureId": "server/src/engine/conversation.ts::Conversation",
       "accessKind": "read",
       "actorName": "inviteTimedOut",
@@ -40784,14 +40784,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter conversation.",
-      "line": 563,
+      "line": 615,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1287"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:tryPlan:567:NpcAutonomyState",
+      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:tryPlan:619:NpcAutonomyState",
       "structureId": "server/src/autonomy/types.ts::NpcAutonomyState",
       "accessKind": "read",
       "actorName": "tryPlan",
@@ -40800,14 +40800,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter state.",
-      "line": 567,
+      "line": 619,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1288"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:tryLlmGoalSelection:612:NpcAutonomyState",
+      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:tryLlmGoalSelection:664:NpcAutonomyState",
       "structureId": "server/src/autonomy/types.ts::NpcAutonomyState",
       "accessKind": "read",
       "actorName": "tryLlmGoalSelection",
@@ -40816,14 +40816,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter state.",
-      "line": 612,
+      "line": 664,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1289"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:executePlan:690:NpcAutonomyState",
+      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:executePlan:742:NpcAutonomyState",
       "structureId": "server/src/autonomy/types.ts::NpcAutonomyState",
       "accessKind": "read",
       "actorName": "executePlan",
@@ -40832,14 +40832,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter state.",
-      "line": 690,
+      "line": 742,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1290"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::PlanSource:read:executePlan:693:PlanSource",
+      "id": "access:server/src/autonomy/types.ts::PlanSource:read:executePlan:745:PlanSource",
       "structureId": "server/src/autonomy/types.ts::PlanSource",
       "accessKind": "read",
       "actorName": "executePlan",
@@ -40848,14 +40848,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter provenance.",
-      "line": 693,
+      "line": 745,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1291"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:buildDebugState:756:NpcAutonomyState",
+      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:buildDebugState:808:NpcAutonomyState",
       "structureId": "server/src/autonomy/types.ts::NpcAutonomyState",
       "accessKind": "read",
       "actorName": "buildDebugState",
@@ -40864,14 +40864,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "startup",
       "reason": "Parameter state.",
-      "line": 756,
+      "line": 808,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1292"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::NpcAutonomyDebugState:serialize:buildDebugState:754:NpcAutonomyDebugState",
+      "id": "access:server/src/autonomy/types.ts::NpcAutonomyDebugState:serialize:buildDebugState:806:NpcAutonomyDebugState",
       "structureId": "server/src/autonomy/types.ts::NpcAutonomyDebugState",
       "accessKind": "serialize",
       "actorName": "buildDebugState",
@@ -40880,14 +40880,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "startup",
       "reason": "Return type.",
-      "line": 754,
+      "line": 806,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1293"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:idleWander:801:NpcAutonomyState",
+      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:idleWander:853:NpcAutonomyState",
       "structureId": "server/src/autonomy/types.ts::NpcAutonomyState",
       "accessKind": "read",
       "actorName": "idleWander",
@@ -40896,14 +40896,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter _state.",
-      "line": 801,
+      "line": 853,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1294"
       ]
     },
     {
-      "id": "access:server/src/engine/types.ts::Command:create:idleWander:820:Command",
+      "id": "access:server/src/engine/types.ts::Command:create:idleWander:872:Command",
       "structureId": "server/src/engine/types.ts::Command",
       "accessKind": "create",
       "actorName": "idleWander",
@@ -40912,14 +40912,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Local typed value.",
-      "line": 820,
+      "line": 872,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1295"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:clearPlanForConversation:836:NpcAutonomyState",
+      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:clearPlanForConversation:888:NpcAutonomyState",
       "structureId": "server/src/autonomy/types.ts::NpcAutonomyState",
       "accessKind": "read",
       "actorName": "clearPlanForConversation",
@@ -40928,14 +40928,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter state.",
-      "line": 836,
+      "line": 888,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1296"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::SurvivalSnapshot:read:getOrCreateHumanSurvival:849:SurvivalSnapshot",
+      "id": "access:server/src/autonomy/types.ts::SurvivalSnapshot:read:getOrCreateHumanSurvival:901:SurvivalSnapshot",
       "structureId": "server/src/autonomy/types.ts::SurvivalSnapshot",
       "accessKind": "read",
       "actorName": "getOrCreateHumanSurvival",
@@ -40944,14 +40944,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Return type.",
-      "line": 849,
+      "line": 901,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1297"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:buildNpcSurvivalSnapshot:869:NpcAutonomyState",
+      "id": "access:server/src/autonomy/types.ts::NpcAutonomyState:read:buildNpcSurvivalSnapshot:921:NpcAutonomyState",
       "structureId": "server/src/autonomy/types.ts::NpcAutonomyState",
       "accessKind": "read",
       "actorName": "buildNpcSurvivalSnapshot",
@@ -40960,14 +40960,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "startup",
       "reason": "Parameter state.",
-      "line": 869,
+      "line": 921,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1298"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::SurvivalSnapshot:serialize:buildNpcSurvivalSnapshot:867:SurvivalSnapshot",
+      "id": "access:server/src/autonomy/types.ts::SurvivalSnapshot:serialize:buildNpcSurvivalSnapshot:919:SurvivalSnapshot",
       "structureId": "server/src/autonomy/types.ts::SurvivalSnapshot",
       "accessKind": "serialize",
       "actorName": "buildNpcSurvivalSnapshot",
@@ -40976,14 +40976,14 @@
       "componentId": "Bootstrap",
       "lifecycle": "startup",
       "reason": "Return type.",
-      "line": 867,
+      "line": 919,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1299"
       ]
     },
     {
-      "id": "access:server/src/autonomy/types.ts::NpcNeeds:read:replenishWaterAtPond:888:NpcNeeds",
+      "id": "access:server/src/autonomy/types.ts::NpcNeeds:read:replenishWaterAtPond:940:NpcNeeds",
       "structureId": "server/src/autonomy/types.ts::NpcNeeds",
       "accessKind": "read",
       "actorName": "replenishWaterAtPond",
@@ -40992,7 +40992,7 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Parameter needs.",
-      "line": 888,
+      "line": 940,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1300"
@@ -46655,7 +46655,7 @@
       "accessPath": "this.playerSurvival.get",
       "lifecycle": "unknown",
       "reason": "Keyed lookup.",
-      "line": 849,
+      "line": 901,
       "confidence": "exact",
       "evidenceIds": [
         "data-model-evidence-1656"
@@ -46672,7 +46672,7 @@
       "accessPath": "this.playerSurvival.set",
       "lifecycle": "unknown",
       "reason": "Store write.",
-      "line": 849,
+      "line": 901,
       "confidence": "exact",
       "evidenceIds": [
         "data-model-evidence-1657"
@@ -46752,7 +46752,7 @@
       "componentId": "Bootstrap",
       "lifecycle": "unknown",
       "reason": "Method touches the runtime store.",
-      "line": 849,
+      "line": 901,
       "confidence": "derived",
       "evidenceIds": [
         "data-model-evidence-1662"
@@ -46803,7 +46803,7 @@
       "accessPath": "this.goalSelectionInFlight.has",
       "lifecycle": "unknown",
       "reason": "Membership lookup.",
-      "line": 567,
+      "line": 619,
       "confidence": "exact",
       "evidenceIds": [
         "data-model-evidence-1665"
@@ -46820,7 +46820,7 @@
       "accessPath": "this.goalSelectionInFlight.delete",
       "lifecycle": "unknown",
       "reason": "Store delete.",
-      "line": 610,
+      "line": 662,
       "confidence": "exact",
       "evidenceIds": [
         "data-model-evidence-1666"
@@ -46837,7 +46837,7 @@
       "accessPath": "this.goalSelectionInFlight.has",
       "lifecycle": "startup",
       "reason": "Membership lookup.",
-      "line": 754,
+      "line": 806,
       "confidence": "exact",
       "evidenceIds": [
         "data-model-evidence-1667"
@@ -46905,7 +46905,7 @@
       "accessPath": "this.idleCooldowns.set",
       "lifecycle": "unknown",
       "reason": "Store write.",
-      "line": 801,
+      "line": 853,
       "confidence": "exact",
       "evidenceIds": [
         "data-model-evidence-1671"
@@ -61014,7 +61014,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 468,
+      "line": 520,
       "symbol": "decideNpcInvite",
       "detail": "decideNpcInvite uses Conversation in a typed signature."
     },
@@ -61023,7 +61023,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 467,
+      "line": 519,
       "symbol": "decideNpcInvite",
       "detail": "decideNpcInvite uses NpcInviteDecision in a typed signature."
     },
@@ -61032,7 +61032,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 526,
+      "line": 578,
       "symbol": "needPressure",
       "detail": "needPressure uses NeedConfig in a typed signature."
     },
@@ -61041,7 +61041,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 549,
+      "line": 601,
       "symbol": "inviteDistanceBoost",
       "detail": "inviteDistanceBoost uses Position in a typed signature."
     },
@@ -61050,7 +61050,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 550,
+      "line": 602,
       "symbol": "inviteDistanceBoost",
       "detail": "inviteDistanceBoost uses Position in a typed signature."
     },
@@ -61059,7 +61059,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 563,
+      "line": 615,
       "symbol": "inviteTimedOut",
       "detail": "inviteTimedOut uses Conversation in a typed signature."
     },
@@ -61068,7 +61068,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 567,
+      "line": 619,
       "symbol": "tryPlan",
       "detail": "tryPlan uses NpcAutonomyState in a typed signature."
     },
@@ -61077,7 +61077,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 612,
+      "line": 664,
       "symbol": "tryLlmGoalSelection",
       "detail": "tryLlmGoalSelection uses NpcAutonomyState in a typed signature."
     },
@@ -61086,7 +61086,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 690,
+      "line": 742,
       "symbol": "executePlan",
       "detail": "executePlan uses NpcAutonomyState in a typed signature."
     },
@@ -61095,7 +61095,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 693,
+      "line": 745,
       "symbol": "executePlan",
       "detail": "executePlan uses PlanSource in a typed signature."
     },
@@ -61104,7 +61104,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 756,
+      "line": 808,
       "symbol": "buildDebugState",
       "detail": "buildDebugState uses NpcAutonomyState in a typed signature."
     },
@@ -61113,7 +61113,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 754,
+      "line": 806,
       "symbol": "buildDebugState",
       "detail": "buildDebugState uses NpcAutonomyDebugState in a typed signature."
     },
@@ -61122,7 +61122,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 801,
+      "line": 853,
       "symbol": "idleWander",
       "detail": "idleWander uses NpcAutonomyState in a typed signature."
     },
@@ -61131,7 +61131,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 820,
+      "line": 872,
       "symbol": "idleWander",
       "detail": "idleWander uses Command in a typed signature."
     },
@@ -61140,7 +61140,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 836,
+      "line": 888,
       "symbol": "clearPlanForConversation",
       "detail": "clearPlanForConversation uses NpcAutonomyState in a typed signature."
     },
@@ -61149,7 +61149,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 849,
+      "line": 901,
       "symbol": "getOrCreateHumanSurvival",
       "detail": "getOrCreateHumanSurvival uses SurvivalSnapshot in a typed signature."
     },
@@ -61158,7 +61158,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 869,
+      "line": 921,
       "symbol": "buildNpcSurvivalSnapshot",
       "detail": "buildNpcSurvivalSnapshot uses NpcAutonomyState in a typed signature."
     },
@@ -61167,7 +61167,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 867,
+      "line": 919,
       "symbol": "buildNpcSurvivalSnapshot",
       "detail": "buildNpcSurvivalSnapshot uses SurvivalSnapshot in a typed signature."
     },
@@ -61176,7 +61176,7 @@
       "kind": "typed_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 888,
+      "line": 940,
       "symbol": "replenishWaterAtPond",
       "detail": "replenishWaterAtPond uses NpcNeeds in a typed signature."
     },
@@ -64380,7 +64380,7 @@
       "kind": "runtime_store_access",
       "confidence": "exact",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 849,
+      "line": 901,
       "symbol": "getOrCreateHumanSurvival",
       "detail": "getOrCreateHumanSurvival uses this.playerSurvival.get."
     },
@@ -64389,7 +64389,7 @@
       "kind": "runtime_store_access",
       "confidence": "exact",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 849,
+      "line": 901,
       "symbol": "getOrCreateHumanSurvival",
       "detail": "getOrCreateHumanSurvival uses this.playerSurvival.set."
     },
@@ -64434,7 +64434,7 @@
       "kind": "runtime_store_access",
       "confidence": "derived",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 849,
+      "line": 901,
       "symbol": "getOrCreateHumanSurvival",
       "detail": "getOrCreateHumanSurvival touches this.needConfigs."
     },
@@ -64461,7 +64461,7 @@
       "kind": "runtime_store_access",
       "confidence": "exact",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 567,
+      "line": 619,
       "symbol": "tryPlan",
       "detail": "tryPlan uses this.goalSelectionInFlight.has."
     },
@@ -64470,7 +64470,7 @@
       "kind": "runtime_store_access",
       "confidence": "exact",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 610,
+      "line": 662,
       "symbol": "tryLlmGoalSelection",
       "detail": "tryLlmGoalSelection uses this.goalSelectionInFlight.delete."
     },
@@ -64479,7 +64479,7 @@
       "kind": "runtime_store_access",
       "confidence": "exact",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 754,
+      "line": 806,
       "symbol": "buildDebugState",
       "detail": "buildDebugState uses this.goalSelectionInFlight.has."
     },
@@ -64515,7 +64515,7 @@
       "kind": "runtime_store_access",
       "confidence": "exact",
       "fileId": "server/src/autonomy/manager.ts",
-      "line": 801,
+      "line": 853,
       "symbol": "idleWander",
       "detail": "idleWander uses this.idleCooldowns.set."
     },
@@ -72462,7 +72462,7 @@
         "label": "Bootstrap",
         "componentId": "Bootstrap",
         "fileCount": 23,
-        "totalLoc": 4091,
+        "totalLoc": 4143,
         "fanIn": 2,
         "fanOut": 5,
         "instability": 0.7142857142857143,
