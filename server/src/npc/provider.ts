@@ -42,7 +42,7 @@ export interface NpcModelResponse {
 /** Input context for NPC goal selection in the autonomy system. */
 export interface NpcGoalRequest {
   npc: Player;
-  needs: { hunger: number; energy: number; social: number; safety: number; curiosity: number };
+  needs: { health: number; food: number; water: number; social: number };
   inventory: Record<string, number>;
   nearbyEntities: { type: string; distance: number; name?: string }[];
   recentMemories: Memory[];

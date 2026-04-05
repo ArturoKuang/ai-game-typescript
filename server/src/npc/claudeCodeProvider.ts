@@ -98,7 +98,7 @@ export class ClaudeCodeProvider implements NpcModelProvider {
     const response = await this.runPrompt(prompt, request.sessionId);
 
     // Parse the JSON response
-    let goalId = request.availableGoals[0]?.id ?? "satisfy_curiosity";
+    let goalId = request.availableGoals[0]?.id ?? "satisfy_social";
     let reasoning: string | undefined;
     try {
       const parsed = JSON.parse(response.content);

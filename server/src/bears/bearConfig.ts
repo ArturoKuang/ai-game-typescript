@@ -3,10 +3,10 @@
  */
 
 // --- Bear stats ---
-export const BEAR_HP = 30;
-export const BEAR_DAMAGE = 10;
-/** Ticks between bear attacks (2s at 20 tps). */
-export const BEAR_ATTACK_COOLDOWN = 40;
+export const BEAR_HP = 20;
+export const BEAR_DAMAGE = 5;
+/** Ticks between bear attacks (3s at 20 tps). */
+export const BEAR_ATTACK_COOLDOWN = 60;
 /** Manhattan distance at which a bear notices a player. */
 export const BEAR_AGGRO_RADIUS = 4;
 /** Manhattan distance required to land an attack. */
@@ -16,10 +16,10 @@ export const BEAR_WANDER_INTERVAL = 20;
 
 // --- Player combat ---
 export const PLAYER_DEFAULT_HP = 100;
-export const PLAYER_ATTACK_DAMAGE = 15;
+export const PLAYER_ATTACK_DAMAGE = 10;
 export const PLAYER_ATTACK_RANGE = 1;
-/** Ticks between player attacks (0.5s at 20 tps). */
-export const PLAYER_ATTACK_COOLDOWN = 10;
+/** Ticks between player attacks (0.25s at 20 tps). */
+export const PLAYER_ATTACK_COOLDOWN = 5;
 
 // --- Bear meat ---
 /** HP restored by eating one bear meat. */

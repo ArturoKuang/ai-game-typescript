@@ -37,6 +37,7 @@ function makeCtx(overrides?: Partial<PlanningContext>): PlanningContext {
   return {
     npcId: "npc_1",
     currentState: new Map(),
+    world: { isWalkable: () => true },
     entityManager: new EntityManager(),
     npcPosition: { x: 5, y: 5 },
     otherPlayers: [],
@@ -53,9 +54,9 @@ describe("Cook Action", () => {
     const current: WorldState = new Map([
       ["near_berry_bush", true],
       ["near_campfire", true],
-      ["need_hunger_satisfied", false],
+      ["need_food_satisfied", false],
     ]);
-    const goal: WorldState = new Map([["need_hunger_satisfied", true]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const registry = makeRegistry();
     const ctx = makeCtx({ currentState: current, entityManager: em });
 
@@ -83,9 +84,9 @@ describe("Cook Action", () => {
     const current: WorldState = new Map([
       ["has_raw_food", true],
       ["near_campfire", true],
-      ["need_hunger_satisfied", false],
+      ["need_food_satisfied", false],
     ]);
-    const goal: WorldState = new Map([["need_hunger_satisfied", true]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const registry = makeRegistry();
     const ctx = makeCtx({ currentState: current, entityManager: em });
 
@@ -104,9 +105,9 @@ describe("Cook Action", () => {
   it("prefers eat_cooked when NPC has cooked_food", () => {
     const current: WorldState = new Map([
       ["has_cooked_food", true],
-      ["need_hunger_satisfied", false],
+      ["need_food_satisfied", false],
     ]);
-    const goal: WorldState = new Map([["need_hunger_satisfied", true]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const registry = makeRegistry();
     const ctx = makeCtx({ currentState: current });
 
@@ -162,12 +163,12 @@ describe("Cook Action", () => {
     expect(inv.get("cooked_food")).toBe(1); // produced
   });
 
-  it("eat_cooked restores more hunger than eat raw", () => {
+  it("eat_cooked restores more food than eat raw", () => {
     // Test cooked food
     const invCooked = createInventory();
     addItem(invCooked, "cooked_food", 1);
     const needsCooked = createDefaultNeeds();
-    needsCooked.hunger = 20;
+    needsCooked.food = 20;
 
     const cookedPlan: Plan = {
       goalId: "test",
@@ -191,7 +192,7 @@ describe("Cook Action", () => {
     const invRaw = createInventory();
     addItem(invRaw, "raw_food", 1);
     const needsRaw = createDefaultNeeds();
-    needsRaw.hunger = 20;
+    needsRaw.food = 20;
 
     const rawPlan: Plan = {
       goalId: "test",
@@ -224,7 +225,7 @@ describe("Cook Action", () => {
       executeAutonomyTick("npc_1", stateRaw, registry, game, em);
     }
 
-    // Cooked should restore more hunger (70 vs 40)
-    expect(needsCooked.hunger).toBeGreaterThan(needsRaw.hunger);
+    // Cooked should restore more food (70 vs 40)
+    expect(needsCooked.food).toBeGreaterThan(needsRaw.food);
   });
 });

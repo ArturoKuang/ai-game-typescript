@@ -98,10 +98,10 @@ describe("Action Executor", () => {
     inv.set("raw_food", 1);
 
     const needs = createDefaultNeeds();
-    needs.hunger = 20; // low hunger
+    needs.food = 20; // low food
 
     const plan: Plan = {
-      goalId: "satisfy_hunger",
+      goalId: "satisfy_food",
       steps: [{ actionId: "eat" }],
       totalCost: 1,
       createdAtTick: 90,
@@ -129,18 +129,20 @@ describe("Action Executor", () => {
     }
 
     expect(result!.planCompleted).toBe(true);
-    expect(needs.hunger).toBeGreaterThan(20); // hunger was boosted
+    expect(needs.food).toBeGreaterThan(20); // food was boosted
     expect(inv.has("raw_food")).toBe(false); // food consumed
   });
 
   it("completes plan when all steps are done", () => {
+    const inv = createInventory();
+    inv.set("cooked_food", 1);
     const plan: Plan = {
-      goalId: "test",
-      steps: [{ actionId: "explore" }],
-      totalCost: 3,
+      goalId: "satisfy_food",
+      steps: [{ actionId: "eat_cooked" }],
+      totalCost: 1,
       createdAtTick: 90,
     };
-    const state = makeState({ currentPlan: plan });
+    const state = makeState({ currentPlan: plan, inventory: inv });
     const registry = makeRegistry();
     const game = makeMockGame(
       [{ id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true }],
@@ -148,9 +150,9 @@ describe("Action Executor", () => {
     );
     const em = new EntityManager();
 
-    // Tick through explore duration (80 ticks)
+    // Tick through eat duration (20 ticks)
     let result;
-    for (let i = 0; i < 85; i++) {
+    for (let i = 0; i < 25; i++) {
       (game as any).currentTick = 100 + i;
       result = executeAutonomyTick("npc_1", state, registry, game, em);
       if (result.planCompleted) break;
@@ -187,6 +189,41 @@ describe("Action Executor", () => {
       type: "move_to",
       playerId: "npc_1",
       data: { x: 7, y: 5 },
+    });
+  });
+
+  it("preserves validate action state when starting socialize", () => {
+    const plan: Plan = {
+      goalId: "satisfy_social",
+      steps: [{ actionId: "socialize" }],
+      totalCost: 1,
+      createdAtTick: 90,
+    };
+    const state = makeState({ currentPlan: plan });
+    const registry = makeRegistry();
+    const enqueue = vi.fn();
+    const game: GameLoopInterface = {
+      currentTick: 100,
+      enqueue,
+      getPlayer: (id: string) =>
+        [
+          { id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true },
+          { id: "human_1", x: 6, y: 5, state: "idle", isNpc: false },
+        ].find((player) => player.id === id),
+      getPlayers: () => [
+        { id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true },
+        { id: "human_1", x: 6, y: 5, state: "idle", isNpc: false },
+      ],
+      setPlayerTarget: () => [{ x: 6, y: 5 }],
+    };
+    const em = new EntityManager();
+
+    const result = executeAutonomyTick("npc_1", state, registry, game, em);
+    expect(result.planFailed).toBe(false);
+    expect(enqueue).toHaveBeenCalledWith({
+      type: "start_convo",
+      playerId: "npc_1",
+      data: { targetId: "human_1" },
     });
   });
 });

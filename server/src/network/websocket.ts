@@ -238,6 +238,12 @@ export class GameWebSocketServer {
         }
         return;
       }
+      case "item_consumed": {
+        if (event.playerId && this.bearManager) {
+          this.sendInventoryUpdate(event.playerId);
+        }
+        return;
+      }
     }
   }
 
@@ -474,8 +480,8 @@ export class GameWebSocketServer {
       }
 
       case "attack": {
-        if (!info.playerId || !this.bearManager) return;
-        this.bearManager.enqueue({
+        if (!info.playerId) return;
+        this.game.enqueue({
           type: "attack",
           playerId: info.playerId,
           data: { targetBearId: msg.data.targetBearId },
@@ -484,8 +490,8 @@ export class GameWebSocketServer {
       }
 
       case "pickup": {
-        if (!info.playerId || !this.bearManager) return;
-        this.bearManager.enqueue({
+        if (!info.playerId) return;
+        this.game.enqueue({
           type: "pickup",
           playerId: info.playerId,
           data: { entityId: msg.data.entityId },
@@ -497,7 +503,7 @@ export class GameWebSocketServer {
         if (!info.playerId || !this.bearManager) return;
         const nearestId = this.bearManager.findNearestPickupable(info.playerId);
         if (nearestId) {
-          this.bearManager.enqueue({
+          this.game.enqueue({
             type: "pickup",
             playerId: info.playerId,
             data: { entityId: nearestId },
@@ -507,8 +513,8 @@ export class GameWebSocketServer {
       }
 
       case "eat": {
-        if (!info.playerId || !this.bearManager) return;
-        this.bearManager.enqueue({
+        if (!info.playerId) return;
+        this.game.enqueue({
           type: "eat",
           playerId: info.playerId,
           data: { item: msg.data.item },

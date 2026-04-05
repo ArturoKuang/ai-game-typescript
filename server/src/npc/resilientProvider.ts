@@ -244,7 +244,7 @@ export class ResilientNpcProvider
     }
     // Absolute fallback: pick first goal
     return {
-      goalId: request.availableGoals[0]?.id ?? "satisfy_curiosity",
+      goalId: request.availableGoals[0]?.id ?? "satisfy_social",
       prompt: "",
       latencyMs: 0,
     };

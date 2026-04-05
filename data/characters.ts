@@ -28,7 +28,7 @@ export const CHARACTERS: CharacterDef[] = [
       "A 35-year-old artist who runs a small gallery from her home. She is creative, spontaneous, and deeply emotional. She draws inspiration from nature and people-watching.",
     personality:
       "Creative, spontaneous, emotional, observant. Loves art and nature. Speaks in metaphors and sees beauty everywhere.",
-    spawnPoint: { x: 10, y: 10 },
+    spawnPoint: { x: 8, y: 10 },
     emoji: "C",
   },
   {

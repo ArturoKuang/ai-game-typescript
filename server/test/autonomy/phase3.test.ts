@@ -18,6 +18,7 @@ function makeCtx(overrides?: Partial<PlanningContext>): PlanningContext {
   return {
     npcId: "npc_1",
     currentState: new Map(),
+    world: { isWalkable: () => true },
     entityManager: new EntityManager(),
     npcPosition: { x: 5, y: 5 },
     otherPlayers: [],
@@ -37,14 +38,13 @@ function makeMockGame(
   };
 }
 
-describe("Phase 3: Safety & Flee", () => {
+describe("Phase 3: Hostiles & Flee", () => {
   it("plans flee when near hostile", () => {
     const registry = makeRegistry();
     const current: WorldState = new Map([
       ["near_hostile", true],
-      ["need_safety_satisfied", false],
     ]);
-    const goal: WorldState = new Map([["need_safety_satisfied", true]]);
+    const goal: WorldState = new Map([["escaped_hostile", true]]);
     const ctx = makeCtx({ currentState: current });
 
     const result = plan(current, goal, registry, ctx);
@@ -117,7 +117,7 @@ describe("Phase 3: Pickup", () => {
     const registry = makeRegistry();
     const current: WorldState = new Map([
       ["near_pickupable", true],
-      ["need_hunger_satisfied", false],
+      ["need_food_satisfied", false],
     ]);
     const goal: WorldState = new Map([["has_raw_food", true]]);
     const ctx = makeCtx({ currentState: current, entityManager: em });
@@ -131,6 +131,6 @@ describe("Phase 3: Pickup", () => {
     const registry = makeRegistry();
     expect(registry.get("flee")).toBeDefined();
     expect(registry.get("pickup")).toBeDefined();
-    expect(registry.getAll().length).toBe(10); // goto, harvest, cook, eat, eat_cooked, rest, socialize, explore, flee, pickup
+    expect(registry.getAll().length).toBe(9); // goto, harvest, cook, drink, eat, eat_cooked, socialize, flee, pickup
   });
 });

@@ -68,7 +68,7 @@ export class ScriptedNpcProvider implements NpcModelProvider {
     request: NpcGoalRequest,
   ): Promise<NpcGoalResponse> {
     // Deterministic: pick the first available goal (most urgent need)
-    const goalId = request.availableGoals[0]?.id ?? "satisfy_curiosity";
+    const goalId = request.availableGoals[0]?.id ?? "satisfy_social";
     return {
       goalId,
       reasoning: `Choosing ${goalId} as most urgent need`,

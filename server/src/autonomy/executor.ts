@@ -17,10 +17,18 @@ import type {
 /** Max plan age before forced invalidation. */
 const PLAN_EXPIRY_TICKS = 2000;
 
+export interface ExecutorTransition {
+  type: "action_started" | "action_completed" | "action_failed";
+  actionId: string;
+  stepIndex: number;
+  reason?: string;
+}
+
 export interface ExecutorTickResult {
   planCompleted: boolean;
   planFailed: boolean;
   failReason?: string;
+  transitions: ExecutorTransition[];
 }
 
 /**
@@ -35,8 +43,9 @@ export function executeAutonomyTick(
   game: GameLoopInterface,
   entityManager: EntityManagerInterface,
 ): ExecutorTickResult {
+  const transitions: ExecutorTransition[] = [];
   if (!state.currentPlan) {
-    return { planCompleted: false, planFailed: false };
+    return { planCompleted: false, planFailed: false, transitions };
   }
 
   const plan = state.currentPlan;
@@ -48,15 +57,14 @@ export function executeAutonomyTick(
       planCompleted: false,
       planFailed: true,
       failReason: "Plan expired",
+      transitions,
     };
   }
 
   // If we've executed all steps, plan is done
   if (state.currentStepIndex >= plan.steps.length) {
-    state.currentPlan = null;
-    state.currentStepIndex = 0;
-    state.currentExecution = null;
-    return { planCompleted: true, planFailed: false };
+    clearCurrentPlanState(state);
+    return { planCompleted: true, planFailed: false, transitions };
   }
 
   const step = plan.steps[state.currentStepIndex];
@@ -74,24 +82,27 @@ export function executeAutonomyTick(
       planCompleted: false,
       planFailed: true,
       failReason: `Unknown action: ${step.actionId}`,
+      transitions,
     };
   }
-
-  const ctx = buildExecutionContext(
-    npcId,
-    state,
-    game,
-    entityManager,
-    step.targetPosition,
-  );
 
   // Start new action execution if needed
   if (
     !state.currentExecution ||
     state.currentExecution.actionId !== step.actionId
   ) {
+    const actionState = new Map<string, unknown>();
+    const startCtx = buildExecutionContext(
+      npcId,
+      state,
+      game,
+      entityManager,
+      step.targetPosition,
+      actionState,
+    );
+
     // Validate before starting
-    const error = action.validate(ctx);
+    const error = action.validate(startCtx);
     if (error) {
       invalidatePlan(npcId, state, registry, game, entityManager, error);
       return { planCompleted: false, planFailed: true, failReason: error };
@@ -100,47 +111,68 @@ export function executeAutonomyTick(
     state.currentExecution = {
       actionId: step.actionId,
       startedAtTick: game.currentTick,
-      actionState: new Map(),
+      actionState,
       status: "running",
     };
+    transitions.push({
+      type: "action_started",
+      actionId: step.actionId,
+      stepIndex: state.currentStepIndex,
+    });
 
-    // Update ctx with the new action state
-    ctx.actionState = state.currentExecution.actionState;
-    action.onStart(ctx);
+    action.onStart(startCtx);
   }
 
-  // Ensure ctx has the correct actionState reference
-  ctx.actionState = state.currentExecution?.actionState;
+  const ctx = buildExecutionContext(
+    npcId,
+    state,
+    game,
+    entityManager,
+    step.targetPosition,
+    state.currentExecution?.actionState ?? new Map(),
+  );
 
   // Tick the action
   const result = action.onTick(ctx);
 
   switch (result.status) {
     case "running":
-      return { planCompleted: false, planFailed: false };
+      return { planCompleted: false, planFailed: false, transitions };
 
     case "completed":
       action.onEnd(ctx, "completed");
+      transitions.push({
+        type: "action_completed",
+        actionId: step.actionId,
+        stepIndex: state.currentStepIndex,
+      });
       state.currentExecution = null;
       state.currentStepIndex++;
 
       // Check if plan is now complete
       if (state.currentStepIndex >= plan.steps.length) {
         state.currentPlan = null;
+        state.currentPlanSource = null;
+        state.currentPlanReasoning = null;
         state.currentStepIndex = 0;
-        return { planCompleted: true, planFailed: false };
+        return { planCompleted: true, planFailed: false, transitions };
       }
-      return { planCompleted: false, planFailed: false };
+      return { planCompleted: false, planFailed: false, transitions };
 
     case "failed":
       action.onEnd(ctx, "failed");
-      state.currentPlan = null;
-      state.currentStepIndex = 0;
-      state.currentExecution = null;
+      transitions.push({
+        type: "action_failed",
+        actionId: step.actionId,
+        stepIndex: state.currentStepIndex,
+        reason: result.reason,
+      });
+      clearCurrentPlanState(state);
       return {
         planCompleted: false,
         planFailed: true,
         failReason: result.reason,
+        transitions,
       };
   }
 }
@@ -163,7 +195,13 @@ export function invalidatePlan(
       action.onEnd(ctx, "interrupted");
     }
   }
+  clearCurrentPlanState(state);
+}
+
+function clearCurrentPlanState(state: NpcAutonomyState): void {
   state.currentPlan = null;
+  state.currentPlanSource = null;
+  state.currentPlanReasoning = null;
   state.currentStepIndex = 0;
   state.currentExecution = null;
 }
@@ -174,6 +212,7 @@ function buildExecutionContext(
   game: GameLoopInterface,
   entityManager: EntityManagerInterface,
   targetPosition?: { x: number; y: number },
+  actionState: Map<string, unknown> = state.currentExecution?.actionState ?? new Map(),
 ): ExecutionContext {
   return {
     npcId,
@@ -182,7 +221,7 @@ function buildExecutionContext(
     inventory: state.inventory,
     needs: state.needs,
     currentTick: game.currentTick,
-    actionState: state.currentExecution?.actionState ?? new Map(),
+    actionState,
     targetPosition,
   };
 }

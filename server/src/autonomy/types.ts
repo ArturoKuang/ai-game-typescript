@@ -12,14 +12,16 @@ import type { Command, Position } from "../engine/types.js";
 // ---------------------------------------------------------------------------
 
 export interface NpcNeeds {
-  hunger: number; // 0 = starving, 100 = full
-  energy: number; // 0 = exhausted, 100 = rested
-  social: number; // 0 = lonely, 100 = fulfilled
-  safety: number; // 0 = terrified, 100 = secure
-  curiosity: number; // 0 = bored, 100 = stimulated
+  food: number; // 0 = starving, 100 = full
+  water: number; // 0 = dehydrated, 100 = hydrated
+  social: number; // 0 = isolated, 100 = fulfilled
 }
 
 export type NeedType = keyof NpcNeeds;
+
+export interface SurvivalSnapshot extends NpcNeeds {
+  health: number; // 0 = downed, 100 = full health
+}
 
 export interface NeedConfig {
   decayPerTick: number;
@@ -29,35 +31,23 @@ export interface NeedConfig {
 }
 
 export const DEFAULT_NEED_CONFIGS: Record<NeedType, NeedConfig> = {
-  hunger: {
+  food: {
     decayPerTick: 0.008,
     urgencyThreshold: 40,
     criticalThreshold: 15,
     initialValue: 80,
   },
-  energy: {
-    decayPerTick: 0.005,
-    urgencyThreshold: 30,
-    criticalThreshold: 10,
-    initialValue: 90,
+  water: {
+    decayPerTick: 0.012,
+    urgencyThreshold: 45,
+    criticalThreshold: 20,
+    initialValue: 85,
   },
   social: {
     decayPerTick: 0.01,
     urgencyThreshold: 35,
     criticalThreshold: 15,
     initialValue: 70,
-  },
-  safety: {
-    decayPerTick: 0.0,
-    urgencyThreshold: 50,
-    criticalThreshold: 20,
-    initialValue: 100,
-  },
-  curiosity: {
-    decayPerTick: 0.006,
-    urgencyThreshold: 25,
-    criticalThreshold: 10,
-    initialValue: 60,
   },
 };
 
@@ -75,6 +65,9 @@ export type WorldState = Map<string, PredicateValue>;
 export interface PlanningContext {
   npcId: string;
   currentState: WorldState;
+  world: {
+    isWalkable(x: number, y: number): boolean;
+  };
   entityManager: EntityManagerInterface;
   npcPosition: Position;
   otherPlayers: Array<{
@@ -145,6 +138,8 @@ export interface Plan {
   createdAtTick: number;
 }
 
+export type PlanSource = "scripted" | "llm" | "emergency";
+
 // ---------------------------------------------------------------------------
 // Inventory
 // ---------------------------------------------------------------------------
@@ -178,11 +173,52 @@ export interface NpcAutonomyState {
   needs: NpcNeeds;
   inventory: NpcInventory;
   currentPlan: Plan | null;
+  currentPlanSource: PlanSource | null;
+  currentPlanReasoning: string | null;
   currentStepIndex: number;
   currentExecution: ActionExecution | null;
   lastPlanTick: number;
   lastGoalSelectionTick: number;
   consecutivePlanFailures: number;
+  goalSelectionStartedAtTick: number | null;
+}
+
+export interface NpcAutonomyDebugPlanStep {
+  index: number;
+  actionId: string;
+  actionLabel: string;
+  targetPosition?: Position;
+  isCurrent: boolean;
+}
+
+export interface NpcAutonomyDebugPlan {
+  goalId: string;
+  totalCost: number;
+  createdAtTick: number;
+  source: PlanSource;
+  llmGenerated: boolean;
+  reasoning?: string;
+  steps: NpcAutonomyDebugPlanStep[];
+}
+
+export interface NpcAutonomyDebugExecution {
+  actionId: string;
+  actionLabel: string;
+  startedAtTick: number;
+  status: ActionExecution["status"];
+  stepIndex: number;
+}
+
+export interface NpcAutonomyDebugState {
+  npcId: string;
+  needs: SurvivalSnapshot;
+  inventory: Record<string, number>;
+  currentPlan: NpcAutonomyDebugPlan | null;
+  currentStepIndex: number;
+  currentExecution: NpcAutonomyDebugExecution | null;
+  consecutivePlanFailures: number;
+  goalSelectionInFlight: boolean;
+  goalSelectionStartedAtTick: number | null;
 }
 
 // ---------------------------------------------------------------------------

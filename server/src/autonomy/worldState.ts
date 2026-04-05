@@ -21,11 +21,9 @@ const THREAT_RADIUS = 5;
 const HOSTILE_TYPES = new Set(["bear"]);
 
 const NEED_KEYS: NeedType[] = [
-  "hunger",
-  "energy",
+  "food",
+  "water",
   "social",
-  "safety",
-  "curiosity",
 ];
 
 export function snapshotWorldState(

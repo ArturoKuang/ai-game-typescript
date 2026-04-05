@@ -47,7 +47,7 @@ describe("BearManager", () => {
       const bears = bm.getBears();
       expect(bears.length).toBe(2);
       for (const bear of bears) {
-        expect(bear.properties.hp).toBe(30);
+        expect(bear.properties.hp).toBe(20);
         expect(bear.properties.state).toBe("idle");
       }
     });
@@ -118,15 +118,15 @@ describe("BearManager", () => {
       const bearId = bm.debugSpawnBear(2, 3);
       tg.spawn("attacker", 2, 2); // adjacent
 
-      // Attack: 15 damage per hit, bear has 30 HP → 2 hits to kill
+      // Attack: 10 damage per hit, bear has 20 HP -> 2 hits to kill
       bm.enqueue({ type: "attack", playerId: "attacker", data: { targetBearId: bearId } });
       tg.tick(1);
 
       const bear = em.get(bearId)!;
-      expect(bear.properties.hp).toBe(15);
+      expect(bear.properties.hp).toBe(10);
 
-      // Wait for cooldown (10 ticks) then attack again
-      tg.tick(10);
+      // Wait for the player attack cooldown then attack again
+      tg.tick(PLAYER_ATTACK_COOLDOWN);
       bm.enqueue({ type: "attack", playerId: "attacker", data: { targetBearId: bearId } });
       tg.tick(1);
 
@@ -154,18 +154,58 @@ describe("BearManager", () => {
       expect(player.hp!).toBeLessThan(100);
     });
 
+    it("bear attacks NPCs when in range", () => {
+      bm.debugSpawnBear(3, 3);
+      tg.spawn("npc_victim", 3, 4, true); // adjacent NPC
+      const npc = tg.getPlayer("npc_victim");
+      expect(npc.hp).toBe(100);
+
+      tg.tick(1); // aggro
+      tg.tick(BEAR_ATTACK_COOLDOWN);
+
+      expect(npc.hp!).toBeLessThan(100);
+    });
+
+    it("attack commands queued through the game loop reach the bear manager", () => {
+      const bearId = bm.debugSpawnBear(2, 3);
+      tg.spawn("attacker", 2, 2);
+
+      tg.game.enqueue({
+        type: "attack",
+        playerId: "attacker",
+        data: { targetBearId: bearId },
+      });
+      tg.tick(1);
+
+      expect((em.get(bearId)!.properties.hp as number)).toBe(10);
+    });
+
+    it("nearby NPCs automatically attack and kill bears", () => {
+      const bearId = bm.debugSpawnBear(3, 3);
+      tg.spawn("npc_hunter", 3, 4, true);
+
+      tg.tick(1);
+      expect((em.get(bearId)!.properties.hp as number)).toBe(20);
+
+      tg.tick(1);
+      expect((em.get(bearId)!.properties.hp as number)).toBe(10);
+
+      tg.tick(PLAYER_ATTACK_COOLDOWN);
+      expect(em.get(bearId)).toBeUndefined();
+    });
+
     it("attack respects cooldown", () => {
       const bearId = bm.debugSpawnBear(2, 3);
       tg.spawn("attacker", 2, 2);
 
       bm.enqueue({ type: "attack", playerId: "attacker", data: { targetBearId: bearId } });
       tg.tick(1);
-      expect((em.get(bearId)!.properties.hp as number)).toBe(15);
+      expect((em.get(bearId)!.properties.hp as number)).toBe(10);
 
       // Attack again immediately (should be on cooldown)
       bm.enqueue({ type: "attack", playerId: "attacker", data: { targetBearId: bearId } });
       tg.tick(1);
-      expect((em.get(bearId)!.properties.hp as number)).toBe(15); // unchanged
+      expect((em.get(bearId)!.properties.hp as number)).toBe(10); // unchanged
     });
 
     it("attack fails when out of range", () => {
@@ -174,7 +214,7 @@ describe("BearManager", () => {
 
       bm.enqueue({ type: "attack", playerId: "attacker", data: { targetBearId: bearId } });
       tg.tick(1);
-      expect((em.get(bearId)!.properties.hp as number)).toBe(30); // unchanged
+      expect((em.get(bearId)!.properties.hp as number)).toBe(20); // unchanged
     });
   });
 
@@ -312,4 +352,7 @@ describe("BearManager", () => {
 });
 
 // Import the constant used in the test
-import { BEAR_ATTACK_COOLDOWN } from "../src/bears/bearConfig.js";
+import {
+  BEAR_ATTACK_COOLDOWN,
+  PLAYER_ATTACK_COOLDOWN,
+} from "../src/bears/bearConfig.js";

@@ -1,9 +1,9 @@
 /**
- * Eat actions — consume food to restore hunger.
+ * Eat actions — consume food to restore the food survival meter.
  *
  * Two variants:
- * - `eat` consumes raw_food, restores 40 hunger
- * - `eat_cooked` consumes cooked_food, restores 70 hunger (lower cost so planner prefers it)
+ * - `eat` consumes raw_food, restores 40 food
+ * - `eat_cooked` consumes cooked_food, restores 70 food (lower cost so planner prefers it)
  */
 import { removeItem } from "../inventory.js";
 import { boostNeed } from "../needs.js";
@@ -14,8 +14,8 @@ import type {
 } from "../types.js";
 
 const EAT_DURATION = 20; // 1 second at 20 ticks/sec
-const RAW_HUNGER_RESTORE = 40;
-const COOKED_HUNGER_RESTORE = 70;
+const RAW_FOOD_RESTORE = 40;
+const COOKED_FOOD_RESTORE = 70;
 
 /** Eat raw food — available whenever NPC has raw_food. */
 export const eatAction: ActionDefinition = {
@@ -23,7 +23,7 @@ export const eatAction: ActionDefinition = {
   displayName: "Eat raw food",
 
   preconditions: new Map([["has_raw_food", true]]),
-  effects: new Map([["need_hunger_satisfied", true]]),
+  effects: new Map([["need_food_satisfied", true]]),
   cost: 2, // slightly higher than eat_cooked so planner prefers cooking
   estimatedDurationTicks: EAT_DURATION,
 
@@ -44,7 +44,7 @@ export const eatAction: ActionDefinition = {
     if (!removeItem(ctx.inventory, "raw_food")) {
       return { status: "failed", reason: "Raw food disappeared" };
     }
-    boostNeed(ctx.needs, "hunger", RAW_HUNGER_RESTORE);
+    boostNeed(ctx.needs, "food", RAW_FOOD_RESTORE);
     return { status: "completed" };
   },
 
@@ -57,7 +57,7 @@ export const eatCookedAction: ActionDefinition = {
   displayName: "Eat cooked food",
 
   preconditions: new Map([["has_cooked_food", true]]),
-  effects: new Map([["need_hunger_satisfied", true]]),
+  effects: new Map([["need_food_satisfied", true]]),
   cost: 1, // cheaper than raw — planner will prefer this path
   estimatedDurationTicks: EAT_DURATION,
 
@@ -78,7 +78,7 @@ export const eatCookedAction: ActionDefinition = {
     if (!removeItem(ctx.inventory, "cooked_food")) {
       return { status: "failed", reason: "Cooked food disappeared" };
     }
-    boostNeed(ctx.needs, "hunger", COOKED_HUNGER_RESTORE);
+    boostNeed(ctx.needs, "food", COOKED_FOOD_RESTORE);
     return { status: "completed" };
   },
 

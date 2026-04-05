@@ -54,6 +54,7 @@ import { World } from "./world.js";
 export type GameMode = "stepped" | "realtime";
 
 type EventHandler = (event: GameEvent) => void;
+type CommandHandler = (command: Command) => void;
 /** Tolerance when comparing player-to-player distance (avoids false positives from float rounding). */
 const PLAYER_COLLISION_EPSILON = 1e-6;
 type InputDirection = "up" | "down" | "left" | "right";
@@ -115,6 +116,8 @@ export class GameLoop {
    *  Commands are enqueued from WebSocket handlers and the debug API, then processed
    *  in order so that all mutations happen inside the tick pipeline. */
   private commandQueue_: Command[] = [];
+  /** Optional handlers for commands owned by subsystems outside the core engine. */
+  private commandHandlers_: Map<Command["type"], CommandHandler[]> = new Map();
   /** Optional runtime hook that lets the autonomy system decide how NPC invitees respond. */
   private npcInviteDecisionProvider_?: NpcInviteDecisionProvider;
   /** Callbacks invoked after every tick completes; used by the NPC controller to schedule AI turns. */
@@ -359,6 +362,16 @@ export class GameLoop {
     this.commandQueue_.push(command);
   }
 
+  /** Register a handler for commands implemented by external subsystems. */
+  onCommand<T extends Command["type"]>(
+    type: T,
+    handler: (command: Extract<Command, { type: T }>) => void,
+  ): void {
+    const handlers = this.commandHandlers_.get(type) ?? [];
+    handlers.push(handler as CommandHandler);
+    this.commandHandlers_.set(type, handlers);
+  }
+
   private processCommands(): void {
     const commands = this.commandQueue_;
     this.commandQueue_ = [];
@@ -512,7 +525,21 @@ export class GameLoop {
           }
           break;
         }
+        case "attack":
+        case "pickup":
+        case "eat": {
+          this.dispatchExternalCommand(cmd);
+          break;
+        }
       }
+    }
+  }
+
+  private dispatchExternalCommand(command: Command): void {
+    const handlers = this.commandHandlers_.get(command.type);
+    if (!handlers) return;
+    for (const handler of handlers) {
+      handler(command);
     }
   }
 

@@ -8,8 +8,8 @@
     ["wall","floor","floor","floor","floor","wall","floor","floor","floor","floor","floor","floor","floor","floor","wall","floor","floor","floor","floor","wall"],
     ["wall","floor","floor","floor","floor","wall","floor","floor","floor","floor","floor","floor","floor","floor","wall","floor","floor","floor","floor","wall"],
     ["wall","wall","floor","wall","wall","wall","floor","floor","floor","floor","floor","floor","floor","floor","wall","wall","floor","wall","wall","wall"],
-    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
-    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","water","water","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
+    ["wall","floor","floor","floor","floor","floor","floor","floor","floor","water","water","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
     ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
     ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
     ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
@@ -27,15 +27,14 @@
     { "id": 1, "name": "cafe counter", "description": "A cozy cafe counter with steaming coffee", "x": 3, "y": 3, "capacity": 2, "emoji": "☕" },
     { "id": 2, "name": "reading nook", "description": "A quiet corner with comfortable chairs and bookshelves", "x": 16, "y": 3, "capacity": 2, "emoji": "📚" },
     { "id": 3, "name": "park bench west", "description": "A wooden bench under an oak tree", "x": 5, "y": 15, "capacity": 2, "emoji": "🪑" },
-    { "id": 4, "name": "park bench east", "description": "A bench overlooking the pond", "x": 14, "y": 15, "capacity": 2, "emoji": "🪑" },
-    { "id": 5, "name": "town fountain", "description": "A stone fountain in the center of town", "x": 10, "y": 10, "capacity": 4, "emoji": "⛲" }
+    { "id": 4, "name": "park bench east", "description": "A bench overlooking the pond", "x": 14, "y": 15, "capacity": 2, "emoji": "🪑" }
   ],
   "spawnPoints": [
     { "x": 2, "y": 8 },
     { "x": 17, "y": 8 },
     { "x": 10, "y": 2 },
     { "x": 10, "y": 17 },
-    { "x": 10, "y": 10 }
+    { "x": 10, "y": 12 }
   ],
   "entities": [
     { "type": "berry_bush", "x": 7, "y": 5, "properties": { "berries": 5 }, "emoji": "🫐" },
@@ -48,7 +47,15 @@
     { "type": "ground_item", "x": 16, "y": 8, "properties": { "itemId": "raw_food", "quantity": 1 }, "emoji": "🫐" },
     { "type": "ground_item", "x": 12, "y": 11, "properties": { "itemId": "raw_food", "quantity": 3 }, "emoji": "🫐" },
     { "type": "ground_item", "x": 6, "y": 9, "properties": { "itemId": "raw_food", "quantity": 1 }, "emoji": "🫐" },
-    { "type": "campfire", "x": 9, "y": 7, "properties": { "lit": true }, "emoji": "🔥" },
+    { "type": "water_source", "x": 9, "y": 8, "properties": {}, "emoji": "" },
+    { "type": "water_source", "x": 10, "y": 8, "properties": {}, "emoji": "" },
+    { "type": "water_source", "x": 8, "y": 9, "properties": {}, "emoji": "" },
+    { "type": "water_source", "x": 11, "y": 9, "properties": {}, "emoji": "" },
+    { "type": "water_source", "x": 8, "y": 10, "properties": {}, "emoji": "" },
+    { "type": "water_source", "x": 11, "y": 10, "properties": {}, "emoji": "" },
+    { "type": "water_source", "x": 9, "y": 11, "properties": {}, "emoji": "" },
+    { "type": "water_source", "x": 10, "y": 11, "properties": {}, "emoji": "" },
+    { "type": "campfire", "x": 7, "y": 7, "properties": { "lit": true }, "emoji": "🔥" },
     { "type": "campfire", "x": 12, "y": 16, "properties": { "lit": true }, "emoji": "🔥" }
   ]
 }

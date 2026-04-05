@@ -20,7 +20,7 @@ export const CHARACTERS: CharacterDef[] = [
       "Curious, outgoing, analytical, slightly anxious. Loves technology and sci-fi. Tends to bring up interesting facts in conversation.",
     spawnPoint: { x: 3, y: 3 },
     emoji: "A",
-    needOverrides: { curiosityDecay: 0.009 }, // extra curious — explores more
+    needOverrides: { socialDecay: 0.012 }, // outgoing — social meter falls a bit faster
   },
   {
     id: "npc_bob",
@@ -31,7 +31,7 @@ export const CHARACTERS: CharacterDef[] = [
       "Warm, patient, nostalgic, storyteller. Loves history and education. Often gives advice, sometimes unsolicited.",
     spawnPoint: { x: 16, y: 3 },
     emoji: "B",
-    needOverrides: { energyDecay: 0.008 }, // older — tires faster
+    needOverrides: { waterDecay: 0.014 }, // lingers outdoors and gets thirsty faster
   },
   {
     id: "npc_carol",
@@ -40,7 +40,7 @@ export const CHARACTERS: CharacterDef[] = [
       "A 35-year-old artist who runs a small gallery from her home. She is creative, spontaneous, and deeply emotional. She draws inspiration from nature and people-watching.",
     personality:
       "Creative, spontaneous, emotional, observant. Loves art and nature. Speaks in metaphors and sees beauty everywhere.",
-    spawnPoint: { x: 10, y: 10 },
+    spawnPoint: { x: 8, y: 10 },
     emoji: "C",
   },
   {
@@ -52,7 +52,7 @@ export const CHARACTERS: CharacterDef[] = [
       "Passionate, idealistic, energetic, sometimes preachy. Cares about the environment. Always planning the next community project.",
     spawnPoint: { x: 5, y: 15 },
     emoji: "D",
-    needOverrides: { hungerDecay: 0.012 }, // young and active — hungrier faster
+    needOverrides: { foodDecay: 0.012 }, // young and active — hungrier faster
   },
   {
     id: "npc_eve",

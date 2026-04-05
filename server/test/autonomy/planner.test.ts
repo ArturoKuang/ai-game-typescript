@@ -18,6 +18,7 @@ function makeCtx(
   return {
     npcId: "npc_1",
     currentState: new Map(),
+    world: { isWalkable: () => true },
     entityManager: em,
     npcPosition: { x: 5, y: 5 },
     otherPlayers: [],
@@ -28,21 +29,21 @@ function makeCtx(
 describe("GOAP Planner", () => {
   it("returns null when goal is already satisfied", () => {
     const registry = makeRegistry();
-    const current: WorldState = new Map([["need_hunger_satisfied", true]]);
-    const goal: WorldState = new Map([["need_hunger_satisfied", true]]);
+    const current: WorldState = new Map([["need_food_satisfied", true]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const ctx = makeCtx({ currentState: current });
 
     const result = plan(current, goal, registry, ctx);
     expect(result).toBeNull();
   });
 
-  it("plans eat when NPC has food and hunger is unsatisfied", () => {
+  it("plans eat when NPC has food and food is unsatisfied", () => {
     const registry = makeRegistry();
     const current: WorldState = new Map([
       ["has_raw_food", true],
-      ["need_hunger_satisfied", false],
+      ["need_food_satisfied", false],
     ]);
-    const goal: WorldState = new Map([["need_hunger_satisfied", true]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const ctx = makeCtx({ currentState: current });
 
     const result = plan(current, goal, registry, ctx);
@@ -56,9 +57,9 @@ describe("GOAP Planner", () => {
 
     const current: WorldState = new Map([
       ["near_berry_bush", true],
-      ["need_hunger_satisfied", false],
+      ["need_food_satisfied", false],
     ]);
-    const goal: WorldState = new Map([["need_hunger_satisfied", true]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const registry = makeRegistry();
     const ctx = makeCtx({ currentState: current, entityManager: em });
 
@@ -76,9 +77,9 @@ describe("GOAP Planner", () => {
     em.spawn("berry_bush", { x: 10, y: 10 }, { berries: 5 });
 
     const current: WorldState = new Map([
-      ["need_hunger_satisfied", false],
+      ["need_food_satisfied", false],
     ]);
-    const goal: WorldState = new Map([["need_hunger_satisfied", true]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const registry = makeRegistry();
     const ctx = makeCtx({
       currentState: current,
@@ -94,32 +95,44 @@ describe("GOAP Planner", () => {
     expect(actionIds).toContain("eat");
   });
 
-  it("plans explore for curiosity", () => {
+  it("plans goto -> drink when water is low and the pond is distant", () => {
+    const em = new EntityManager();
+    em.spawn("water_source", { x: 9, y: 8 });
     const registry = makeRegistry();
-    const current: WorldState = new Map([["need_curiosity_satisfied", false]]);
-    const goal: WorldState = new Map([["need_curiosity_satisfied", true]]);
-    const ctx = makeCtx({ currentState: current });
+    const current: WorldState = new Map([["need_water_satisfied", false]]);
+    const goal: WorldState = new Map([["need_water_satisfied", true]]);
+    const ctx = makeCtx({
+      currentState: current,
+      entityManager: em,
+      npcPosition: { x: 1, y: 1 },
+      world: {
+        isWalkable: (x, y) => !(x === 9 && y === 9) && !(x === 10 && y === 9),
+      },
+    });
 
     const result = plan(current, goal, registry, ctx);
     expect(result).not.toBeNull();
-    expect(result!.steps.some((s) => s.actionId === "explore")).toBe(true);
+    expect(result!.steps.map((step) => step.actionId)).toEqual([
+      "__goto",
+      "drink",
+    ]);
   });
 
-  it("plans rest when near bench", () => {
+  it("plans drink when already near the pond", () => {
     const em = new EntityManager();
-    em.spawn("bench", { x: 5, y: 5 });
+    em.spawn("water_source", { x: 5, y: 6 });
 
     const current: WorldState = new Map([
-      ["near_bench", true],
-      ["need_energy_satisfied", false],
+      ["near_water_source", true],
+      ["need_water_satisfied", false],
     ]);
-    const goal: WorldState = new Map([["need_energy_satisfied", true]]);
+    const goal: WorldState = new Map([["need_water_satisfied", true]]);
     const registry = makeRegistry();
     const ctx = makeCtx({ currentState: current, entityManager: em });
 
     const result = plan(current, goal, registry, ctx);
     expect(result).not.toBeNull();
-    expect(result!.steps.some((s) => s.actionId === "rest")).toBe(true);
+    expect(result!.steps.some((s) => s.actionId === "drink")).toBe(true);
   });
 
   it("plans goto -> socialize when a player is available but far away", () => {
@@ -174,9 +187,9 @@ describe("GOAP Planner", () => {
     const current: WorldState = new Map([
       ["has_raw_food", true],
       ["near_berry_bush", true],
-      ["need_hunger_satisfied", false],
+      ["need_food_satisfied", false],
     ]);
-    const goal: WorldState = new Map([["need_hunger_satisfied", true]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const ctx = makeCtx({ currentState: current });
 
     const result = plan(current, goal, registry, ctx);

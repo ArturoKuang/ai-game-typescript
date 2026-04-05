@@ -204,15 +204,47 @@ function findClosestEntityPosition(
   let minDist = Number.POSITIVE_INFINITY;
   for (const entity of entities) {
     if (entity.destroyed) continue;
+    const target = toApproachPosition(entity.position, ctx);
+    if (!target) continue;
     const dist =
-      Math.abs(entity.position.x - ctx.npcPosition.x) +
-      Math.abs(entity.position.y - ctx.npcPosition.y);
+      Math.abs(target.x - ctx.npcPosition.x) +
+      Math.abs(target.y - ctx.npcPosition.y);
     if (dist < minDist) {
       minDist = dist;
-      closest = entity.position;
+      closest = target;
     }
   }
   return closest;
+}
+
+function toApproachPosition(
+  target: Position,
+  ctx: PlanningContext,
+): Position | null {
+  if (ctx.world.isWalkable(target.x, target.y)) {
+    return target;
+  }
+
+  const candidates: Position[] = [
+    { x: target.x, y: target.y - 1 },
+    { x: target.x + 1, y: target.y },
+    { x: target.x, y: target.y + 1 },
+    { x: target.x - 1, y: target.y },
+  ].filter((pos) => ctx.world.isWalkable(pos.x, pos.y));
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((a, b) => {
+    const da =
+      Math.abs(a.x - ctx.npcPosition.x) + Math.abs(a.y - ctx.npcPosition.y);
+    const db =
+      Math.abs(b.x - ctx.npcPosition.x) + Math.abs(b.y - ctx.npcPosition.y);
+    return da - db;
+  });
+
+  return candidates[0];
 }
 
 function goalIdFromPredicates(goal: WorldState): string {

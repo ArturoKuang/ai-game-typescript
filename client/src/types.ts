@@ -72,6 +72,46 @@ export interface Conversation {
   startedTick: number;
   endedTick?: number;
   endedReason?: ConversationEndReason;
+  summary?: string;
+}
+
+export type PlanSource = "scripted" | "llm" | "emergency";
+
+export interface NpcAutonomyDebugPlanStep {
+  index: number;
+  actionId: string;
+  actionLabel: string;
+  targetPosition?: Position;
+  isCurrent: boolean;
+}
+
+export interface NpcAutonomyDebugPlan {
+  goalId: string;
+  totalCost: number;
+  createdAtTick: number;
+  source: PlanSource;
+  llmGenerated: boolean;
+  reasoning?: string;
+  steps: NpcAutonomyDebugPlanStep[];
+}
+
+export interface NpcAutonomyDebugExecution {
+  actionId: string;
+  actionLabel: string;
+  startedAtTick: number;
+  status: "running" | "completed" | "failed" | "interrupted";
+  stepIndex: number;
+}
+
+export interface NpcAutonomyDebugState {
+  npcId: string;
+  needs: PlayerSurvivalData;
+  inventory: Record<string, number>;
+  currentPlan: NpcAutonomyDebugPlan | null;
+  currentStepIndex: number;
+  currentExecution: NpcAutonomyDebugExecution | null;
+  consecutivePlanFailures: number;
+  goalSelectionInFlight: boolean;
 }
 
 /** A dynamic world entity (berry bush, bench, etc.) rendered on the map. */
@@ -101,11 +141,19 @@ export interface FullGameState {
 /** NPC needs data for client-side visualization. */
 export interface NpcNeedsData {
   npcId: string;
-  hunger: number;
-  energy: number;
+  health: number;
+  food: number;
+  water: number;
   social: number;
-  safety: number;
-  curiosity: number;
+}
+
+/** Player survival data for the local sidebar display. */
+export interface PlayerSurvivalData {
+  playerId: string;
+  health: number;
+  food: number;
+  water: number;
+  social: number;
 }
 
 // Server -> Client
@@ -120,6 +168,7 @@ export type ServerMessage =
   | { type: "entity_update"; data: WorldEntity }
   | { type: "entity_removed"; data: { entityId: string } }
   | { type: "npc_needs"; data: NpcNeedsData }
+  | { type: "player_survival"; data: PlayerSurvivalData }
   | { type: "combat_event"; data: { eventType: string; [key: string]: unknown } }
   | { type: "inventory_update"; data: { playerId: string; items: Record<string, number>; capacity: number } }
   | { type: "error"; data: { message: string } }
@@ -139,6 +188,7 @@ export type ClientMessage =
   | { type: "accept_convo"; data: { convoId: number } }
   | { type: "decline_convo"; data: { convoId: number } }
   | { type: "end_convo" }
+  | { type: "eat"; data: { item: string } }
   | { type: "pickup_nearby" }
   | { type: "ping" }
   | { type: "screenshot_data"; data: { png: string } };

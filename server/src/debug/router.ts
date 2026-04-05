@@ -414,56 +414,33 @@ export function createDebugRouter(
   if (autonomyManager) {
     router.get("/autonomy/state", (_req, res) => {
       const states: Record<string, unknown> = {};
-      for (const [npcId, state] of autonomyManager.getAllStates()) {
-        states[npcId] = {
-          needs: state.needs,
-          inventory: Object.fromEntries(state.inventory),
-          currentPlan: state.currentPlan,
-          currentStepIndex: state.currentStepIndex,
-          currentExecution: state.currentExecution
-            ? {
-                actionId: state.currentExecution.actionId,
-                startedAtTick: state.currentExecution.startedAtTick,
-                status: state.currentExecution.status,
-              }
-            : null,
-          consecutivePlanFailures: state.consecutivePlanFailures,
-        };
+      for (const [npcId, state] of autonomyManager.getAllDebugStates()) {
+        states[npcId] = state;
       }
       res.json(states);
     });
 
     router.get("/autonomy/:npcId", (req, res) => {
-      const state = autonomyManager.getAllStates().get(req.params.npcId);
+      const state = autonomyManager.getDebugState(req.params.npcId);
       if (!state) {
         res.status(404).json({ error: "NPC autonomy state not found" });
         return;
       }
-      res.json({
-        needs: state.needs,
-        inventory: Object.fromEntries(state.inventory),
-        currentPlan: state.currentPlan,
-        currentStepIndex: state.currentStepIndex,
-        currentExecution: state.currentExecution
-          ? {
-              actionId: state.currentExecution.actionId,
-              startedAtTick: state.currentExecution.startedAtTick,
-              status: state.currentExecution.status,
-            }
-          : null,
-        consecutivePlanFailures: state.consecutivePlanFailures,
-      });
+      res.json(state);
     });
 
     router.post("/autonomy/:npcId/needs", (req, res) => {
       const state = autonomyManager.getState(req.params.npcId);
-      const { hunger, energy, social, safety, curiosity } = req.body;
-      if (hunger !== undefined) state.needs.hunger = hunger;
-      if (energy !== undefined) state.needs.energy = energy;
+      const player = game.getPlayer(req.params.npcId);
+      const { health, food, water, social } = req.body;
+      if (health !== undefined && player) {
+        const maxHp = player.maxHp ?? 100;
+        player.hp = Math.max(0, Math.min(maxHp, (health / 100) * maxHp));
+      }
+      if (food !== undefined) state.needs.food = food;
+      if (water !== undefined) state.needs.water = water;
       if (social !== undefined) state.needs.social = social;
-      if (safety !== undefined) state.needs.safety = safety;
-      if (curiosity !== undefined) state.needs.curiosity = curiosity;
-      res.json(state.needs);
+      res.json(autonomyManager.getDebugState(req.params.npcId)?.needs ?? state.needs);
     });
 
     router.get("/entities", (_req, res) => {

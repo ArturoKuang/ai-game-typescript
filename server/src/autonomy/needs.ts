@@ -9,22 +9,18 @@ import type { NeedConfig, NeedType, NpcNeeds } from "./types.js";
 import { DEFAULT_NEED_CONFIGS } from "./types.js";
 
 const NEED_KEYS: NeedType[] = [
-  "hunger",
-  "energy",
+  "food",
+  "water",
   "social",
-  "safety",
-  "curiosity",
 ];
 
 export function createDefaultNeeds(
   configs: Record<NeedType, NeedConfig> = DEFAULT_NEED_CONFIGS,
 ): NpcNeeds {
   return {
-    hunger: configs.hunger.initialValue,
-    energy: configs.energy.initialValue,
+    food: configs.food.initialValue,
+    water: configs.water.initialValue,
     social: configs.social.initialValue,
-    safety: configs.safety.initialValue,
-    curiosity: configs.curiosity.initialValue,
   };
 }
 

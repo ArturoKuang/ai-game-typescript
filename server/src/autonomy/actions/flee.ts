@@ -2,9 +2,8 @@
  * Flee action — NPC runs away from the nearest hostile entity (bear).
  *
  * Picks the direction opposite to the nearest threat and moves to a
- * tile at least FLEE_DISTANCE away. Restores safety need on completion.
+ * tile at least FLEE_DISTANCE away.
  */
-import { boostNeed } from "../needs.js";
 import type {
   ActionDefinition,
   ActionTickResult,
@@ -13,7 +12,6 @@ import type {
 
 const FLEE_DISTANCE = 6;
 const FLEE_TIMEOUT = 200; // 10 seconds max
-const SAFETY_RESTORE = 50;
 
 function queueMove(ctx: ExecutionContext, x: number, y: number): void {
   ctx.game.enqueue({
@@ -28,7 +26,7 @@ export const fleeAction: ActionDefinition = {
   displayName: "Flee from danger",
 
   preconditions: new Map([["near_hostile", true]]),
-  effects: new Map([["need_safety_satisfied", true]]),
+  effects: new Map([["escaped_hostile", true]]),
   cost: 1, // low cost — survival is priority
   estimatedDurationTicks: 60,
 
@@ -78,7 +76,6 @@ export const fleeAction: ActionDefinition = {
 
   onTick(ctx: ExecutionContext): ActionTickResult {
     if (ctx.actionState.get("noThreat")) {
-      boostNeed(ctx.needs, "safety", SAFETY_RESTORE);
       return { status: "completed" };
     }
 
@@ -91,7 +88,6 @@ export const fleeAction: ActionDefinition = {
     // Check timeout
     const startTick = ctx.actionState.get("startTick") as number;
     if (ctx.currentTick - startTick > FLEE_TIMEOUT) {
-      boostNeed(ctx.needs, "safety", SAFETY_RESTORE / 2); // partial restore
       return { status: "completed" };
     }
 
@@ -103,8 +99,6 @@ export const fleeAction: ActionDefinition = {
     );
 
     if (!activeThreat) {
-      // Safe! No nearby hostiles
-      boostNeed(ctx.needs, "safety", SAFETY_RESTORE);
       return { status: "completed" };
     }
 
@@ -116,7 +110,6 @@ export const fleeAction: ActionDefinition = {
       const dist = Math.abs(dx) + Math.abs(dy);
 
       if (dist >= FLEE_DISTANCE) {
-        boostNeed(ctx.needs, "safety", SAFETY_RESTORE);
         return { status: "completed" };
       }
 

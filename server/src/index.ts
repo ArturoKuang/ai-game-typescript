@@ -145,6 +145,13 @@ autonomyManager.onNeedsUpdate((npcId, needs) => {
   });
 });
 
+autonomyManager.onPlayerSurvivalUpdate((playerId, needs) => {
+  wsServer.broadcast({
+    type: "player_survival",
+    data: { playerId, ...needs },
+  });
+});
+
 // Start the realtime loop
 game.start();
 

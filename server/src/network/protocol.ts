@@ -5,6 +5,11 @@
  * The server sends a full `state` snapshot on connect, then streams incremental
  * updates (`player_update`, `convo_update`, `message`, etc.) in real time.
  */
+import type { NpcAutonomyDebugState } from "../autonomy/types.js";
+import type {
+  DebugDashboardBootstrap,
+  DebugFeedEvent,
+} from "../debug/streamTypes.js";
 import type { Conversation, Message } from "../engine/conversation.js";
 import type { Activity, Player } from "../engine/types.js";
 
@@ -23,11 +28,19 @@ export interface WorldEntityData {
 /** NPC needs data broadcast for client visualization. */
 export interface NpcNeedsData {
   npcId: string;
-  hunger: number;
-  energy: number;
+  health: number;
+  food: number;
+  water: number;
   social: number;
-  safety: number;
-  curiosity: number;
+}
+
+/** Player survival data broadcast for sidebar status rendering. */
+export interface PlayerSurvivalData {
+  playerId: string;
+  health: number;
+  food: number;
+  water: number;
+  social: number;
 }
 
 export type ServerMessage =
@@ -41,8 +54,14 @@ export type ServerMessage =
   | { type: "entity_update"; data: WorldEntityData }
   | { type: "entity_removed"; data: { entityId: string } }
   | { type: "npc_needs"; data: NpcNeedsData }
+  | { type: "player_survival"; data: PlayerSurvivalData }
   | { type: "combat_event"; data: { eventType: string; [key: string]: unknown } }
   | { type: "inventory_update"; data: { playerId: string; items: Record<string, number>; capacity: number } }
+  | { type: "debug_bootstrap"; data: DebugDashboardBootstrap }
+  | { type: "debug_conversation_upsert"; data: Conversation }
+  | { type: "debug_conversation_message"; data: Message }
+  | { type: "debug_autonomy_upsert"; data: NpcAutonomyDebugState }
+  | { type: "debug_event"; data: DebugFeedEvent }
   | { type: "error"; data: { message: string } }
   | { type: "capture_screenshot" };
 
@@ -67,6 +86,7 @@ export type MoveDirection = "up" | "down" | "left" | "right";
 
 export type ClientMessage =
   | { type: "join"; data: { name: string; description?: string } }
+  | { type: "subscribe_debug" }
   | { type: "move"; data: { x: number; y: number } }
   | { type: "move_direction"; data: { direction: MoveDirection } }
   | { type: "input_start"; data: { direction: MoveDirection } }

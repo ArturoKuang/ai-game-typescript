@@ -18,30 +18,20 @@ const NEED_TO_GOAL: Record<
   NeedType,
   { goalId: string; description: string; predicate: [string, boolean] }
 > = {
-  hunger: {
-    goalId: "satisfy_hunger",
+  food: {
+    goalId: "satisfy_food",
     description: "Find food to eat (hunger is urgent)",
-    predicate: ["need_hunger_satisfied", true],
+    predicate: ["need_food_satisfied", true],
   },
-  energy: {
-    goalId: "satisfy_energy",
-    description: "Find a place to rest (energy is low)",
-    predicate: ["need_energy_satisfied", true],
+  water: {
+    goalId: "satisfy_water",
+    description: "Find water to drink (thirst is urgent)",
+    predicate: ["need_water_satisfied", true],
   },
   social: {
     goalId: "satisfy_social",
     description: "Talk to someone nearby (feeling lonely)",
     predicate: ["need_social_satisfied", true],
-  },
-  safety: {
-    goalId: "satisfy_safety",
-    description: "Find safety (feeling threatened)",
-    predicate: ["need_safety_satisfied", true],
-  },
-  curiosity: {
-    goalId: "satisfy_curiosity",
-    description: "Explore the area (feeling bored)",
-    predicate: ["need_curiosity_satisfied", true],
   },
 };
 
@@ -62,10 +52,6 @@ export function buildGoalOptions(
   });
 
   const urgent = getUrgentNeeds(needs, configs);
-  if (urgent.length === 0) {
-    // Nothing urgent — offer curiosity as a default
-    return [toOption(NEED_TO_GOAL.curiosity)];
-  }
   return urgent.map((need) => toOption(NEED_TO_GOAL[need]));
 }
 
@@ -79,19 +65,14 @@ export function selectGoalScripted(
 ): GoalSelectionResult | null {
   const mostUrgent = getMostUrgentNeed(needs, configs);
   if (!mostUrgent) {
-    // Nothing urgent — explore
-    const goal = NEED_TO_GOAL.curiosity;
-    return {
-      goalId: goal.goalId,
-      goalState: new Map([goal.predicate]),
-    };
+    return null;
   }
 
   const goal = NEED_TO_GOAL[mostUrgent];
   return {
     goalId: goal.goalId,
     goalState: new Map([goal.predicate]),
-    reasoning: `${mostUrgent} is critically low at ${configs[mostUrgent].urgencyThreshold} threshold`,
+    reasoning: `${mostUrgent} dropped below the urgency threshold`,
   };
 }
 

@@ -12,75 +12,74 @@ import { DEFAULT_NEED_CONFIGS } from "../../src/autonomy/types.js";
 describe("NPC Needs System", () => {
   it("creates default needs with initial values", () => {
     const needs = createDefaultNeeds();
-    expect(needs.hunger).toBe(80);
-    expect(needs.energy).toBe(90);
+    expect(needs.food).toBe(80);
+    expect(needs.water).toBe(85);
     expect(needs.social).toBe(70);
-    expect(needs.safety).toBe(100);
-    expect(needs.curiosity).toBe(60);
   });
 
   it("decays needs each tick", () => {
     const needs = createDefaultNeeds();
-    const initialHunger = needs.hunger;
+    const initialFood = needs.food;
+    const initialWater = needs.water;
     tickNeeds(needs);
-    expect(needs.hunger).toBe(initialHunger - DEFAULT_NEED_CONFIGS.hunger.decayPerTick);
-    expect(needs.safety).toBe(100); // zero decay
+    expect(needs.food).toBe(initialFood - DEFAULT_NEED_CONFIGS.food.decayPerTick);
+    expect(needs.water).toBe(initialWater - DEFAULT_NEED_CONFIGS.water.decayPerTick);
   });
 
   it("clamps needs at zero", () => {
     const needs = createDefaultNeeds();
-    needs.hunger = 0.001;
+    needs.food = 0.001;
     tickNeeds(needs);
-    expect(needs.hunger).toBe(0);
+    expect(needs.food).toBe(0);
   });
 
   it("detects urgency threshold crossing", () => {
     const needs = createDefaultNeeds();
-    needs.hunger = 40; // exactly at threshold
+    needs.food = 40; // exactly at threshold
     const result = tickNeeds(needs);
-    expect(result.newUrgent).toContain("hunger");
+    expect(result.newUrgent).toContain("food");
   });
 
   it("does not flag urgency if already below threshold", () => {
     const needs = createDefaultNeeds();
-    needs.hunger = 30; // already below
+    needs.food = 30; // already below
     const result = tickNeeds(needs);
-    expect(result.newUrgent).not.toContain("hunger");
+    expect(result.newUrgent).not.toContain("food");
   });
 
   it("detects critical threshold crossing", () => {
     const needs = createDefaultNeeds();
-    needs.hunger = 15; // exactly at critical
+    needs.food = 15; // exactly at critical
     const result = tickNeeds(needs);
-    expect(result.newCritical).toContain("hunger");
+    expect(result.newCritical).toContain("food");
   });
 
   it("boosts a need and clamps at 100", () => {
     const needs = createDefaultNeeds();
-    needs.hunger = 30;
-    boostNeed(needs, "hunger", 50);
-    expect(needs.hunger).toBe(80);
+    needs.food = 30;
+    boostNeed(needs, "food", 50);
+    expect(needs.food).toBe(80);
 
-    boostNeed(needs, "hunger", 50);
-    expect(needs.hunger).toBe(100);
+    boostNeed(needs, "food", 50);
+    expect(needs.food).toBe(100);
   });
 
   it("returns urgent needs below threshold", () => {
     const needs = createDefaultNeeds();
-    needs.hunger = 20;
-    needs.energy = 10;
+    needs.food = 20;
+    needs.water = 10;
     const urgent = getUrgentNeeds(needs);
-    expect(urgent).toContain("hunger");
-    expect(urgent).toContain("energy");
-    expect(urgent).not.toContain("safety");
+    expect(urgent).toContain("food");
+    expect(urgent).toContain("water");
+    expect(urgent).not.toContain("social");
   });
 
   it("finds the most urgent need", () => {
     const needs = createDefaultNeeds();
-    needs.hunger = 10;
-    needs.energy = 20;
+    needs.food = 10;
+    needs.water = 20;
     const most = getMostUrgentNeed(needs);
-    expect(most).toBe("hunger"); // 10/40 < 20/30
+    expect(most).toBe("food"); // 10/40 < 20/45
   });
 
   it("returns null when no need is urgent", () => {
@@ -91,7 +90,7 @@ describe("NPC Needs System", () => {
   it("detects critical needs", () => {
     const needs = createDefaultNeeds();
     expect(hasCriticalNeed(needs)).toBe(false);
-    needs.hunger = 5;
+    needs.food = 5;
     expect(hasCriticalNeed(needs)).toBe(true);
   });
 });

@@ -26,8 +26,8 @@ describe("snapshotWorldState", () => {
 
     const state = snapshotWorldState("npc_1", game, needs, inv, em);
     // Default needs are all above urgency thresholds
-    expect(state.get("need_hunger_satisfied")).toBe(true);
-    expect(state.get("need_energy_satisfied")).toBe(true);
+    expect(state.get("need_food_satisfied")).toBe(true);
+    expect(state.get("need_water_satisfied")).toBe(true);
   });
 
   it("marks need as unsatisfied when below threshold", () => {
@@ -35,12 +35,12 @@ describe("snapshotWorldState", () => {
       { id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true },
     ]);
     const needs = createDefaultNeeds();
-    needs.hunger = 10; // below urgency threshold (40)
+    needs.food = 10; // below urgency threshold (40)
     const inv = createInventory();
     const em = new EntityManager();
 
     const state = snapshotWorldState("npc_1", game, needs, inv, em);
-    expect(state.get("need_hunger_satisfied")).toBe(false);
+    expect(state.get("need_food_satisfied")).toBe(false);
   });
 
   it("includes inventory predicates", () => {

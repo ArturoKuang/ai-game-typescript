@@ -125,6 +125,7 @@ export type GameEventType =
   | "player_damage"
   | "player_death"
   | "player_heal"
+  | "item_consumed"
   | "item_drop"
   | "item_pickup";
 
@@ -240,10 +241,9 @@ export interface MapData {
 
 /** Per-need decay rate overrides for a character. */
 export interface NeedOverrides {
-  hungerDecay?: number;
-  energyDecay?: number;
+  foodDecay?: number;
+  waterDecay?: number;
   socialDecay?: number;
-  curiosityDecay?: number;
 }
 
 /** Static definition of an NPC loaded from `data/characters.ts`. */

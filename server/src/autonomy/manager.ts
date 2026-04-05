@@ -17,6 +17,7 @@ import type { GameLoop } from "../engine/gameLoop.js";
 import type { CharacterDef, Command, Position, TickResult } from "../engine/types.js";
 import type { MemoryManager } from "../npc/memory.js";
 import type { NpcModelProvider } from "../npc/provider.js";
+import type { DebugFeedEventPayload } from "../debug/streamTypes.js";
 import { registerBuiltinActions } from "./actions/index.js";
 import type { EntityManager } from "./entityManager.js";
 import { executeAutonomyTick, invalidatePlan } from "./executor.js";
@@ -39,8 +40,12 @@ import type {
   GameLoopInterface,
   GoalOption,
   NeedConfig,
+  NpcAutonomyDebugState,
+  NpcNeeds,
   NeedType,
   NpcAutonomyState,
+  PlanSource,
+  SurvivalSnapshot,
   WorldState,
 } from "./types.js";
 import { DEFAULT_NEED_CONFIGS } from "./types.js";
@@ -59,18 +64,22 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 const EXTENDED_IDLE_WAIT = 200;
 /** Social need boost when conversation ends. */
 const SOCIAL_CONVERSATION_BOOST = 40;
+/** Food restored when a player consumes raw food. */
+const PLAYER_RAW_FOOD_RESTORE = 40;
+/** Food restored when a player consumes cooked food. */
+const PLAYER_COOKED_FOOD_RESTORE = 70;
+/** Food restored when a player consumes bear meat. */
+const PLAYER_BEAR_MEAT_FOOD_RESTORE = 55;
 /** How often to broadcast needs to clients (ticks). */
 const NEEDS_BROADCAST_INTERVAL = 40;
-/** Safety drop when a bear is detected nearby. */
-const SAFETY_THREAT_DROP = 20;
-/** Safety drop when NPC takes damage. */
-const SAFETY_DAMAGE_DROP = 40;
-/** Safety recovery per tick when no threats are nearby. */
-const SAFETY_RECOVERY_PER_TICK = 0.05;
-/** Radius to scan for bears. */
-const BEAR_DETECTION_RADIUS = 5;
 /** Max ticks an NPC will leave a player invite pending before declining it. */
 const INVITE_DECISION_TIMEOUT = 120;
+/** Passive water refill when standing by the pond edge. */
+const POND_WATER_RESTORE_PER_TICK = 2;
+/** NPC flee trigger radius for aggressive bears. */
+const AGGRESSIVE_BEAR_RADIUS = 4;
+/** Default health scale used by the survival UI. */
+const DEFAULT_PLAYER_MAX_HP = 100;
 
 export interface NpcAutonomyManagerOptions {
   needConfigs?: Record<NeedType, NeedConfig>;
@@ -81,6 +90,7 @@ export interface NpcAutonomyManagerOptions {
 
 export class NpcAutonomyManager {
   private states: Map<string, NpcAutonomyState> = new Map();
+  private playerSurvival: Map<string, SurvivalSnapshot> = new Map();
   private registry: ActionRegistry;
   private needConfigs: Record<NeedType, NeedConfig>;
   private game: GameLoop;
@@ -95,15 +105,22 @@ export class NpcAutonomyManager {
   private needsListeners: Array<
     (
       npcId: string,
-      needs: {
-        hunger: number;
-        energy: number;
-        social: number;
-        safety: number;
-        curiosity: number;
-      },
+      needs: SurvivalSnapshot,
     ) => void
   > = [];
+  private playerSurvivalListeners: Array<
+    (
+      playerId: string,
+      needs: SurvivalSnapshot,
+    ) => void
+  > = [];
+  private debugStateListeners: Array<
+    (state: NpcAutonomyDebugState) => void
+  > = [];
+  private debugEventListeners: Array<
+    (event: DebugFeedEventPayload) => void
+  > = [];
+  private debugStateHashes: Map<string, string> = new Map();
 
   constructor(
     game: GameLoop,
@@ -122,17 +139,12 @@ export class NpcAutonomyManager {
         if (char.needOverrides) {
           const config = { ...this.needConfigs };
           const o = char.needOverrides;
-          if (o.hungerDecay !== undefined)
-            config.hunger = { ...config.hunger, decayPerTick: o.hungerDecay };
-          if (o.energyDecay !== undefined)
-            config.energy = { ...config.energy, decayPerTick: o.energyDecay };
+          if (o.foodDecay !== undefined)
+            config.food = { ...config.food, decayPerTick: o.foodDecay };
+          if (o.waterDecay !== undefined)
+            config.water = { ...config.water, decayPerTick: o.waterDecay };
           if (o.socialDecay !== undefined)
             config.social = { ...config.social, decayPerTick: o.socialDecay };
-          if (o.curiosityDecay !== undefined)
-            config.curiosity = {
-              ...config.curiosity,
-              decayPerTick: o.curiosityDecay,
-            };
           this.perNpcConfigs.set(char.id, config);
         }
       }
@@ -149,16 +161,19 @@ export class NpcAutonomyManager {
       this.processAutonomyTick(result);
     });
 
-    // Drop safety when NPC takes damage
     this.game.on("player_damage", (event) => {
       if (!event.playerId) return;
-      const state = this.states.get(event.playerId);
-      if (state) {
-        state.needs.safety = Math.max(
-          0,
-          state.needs.safety - SAFETY_DAMAGE_DROP,
-        );
-      }
+      this.broadcastCurrentSurvival(event.playerId);
+    });
+
+    this.game.on("player_heal", (event) => {
+      if (!event.playerId) return;
+      this.broadcastCurrentSurvival(event.playerId);
+    });
+
+    this.game.on("player_death", (event) => {
+      if (!event.playerId) return;
+      this.broadcastCurrentSurvival(event.playerId);
     });
 
     // Boost social need when conversations end
@@ -173,11 +188,26 @@ export class NpcAutonomyManager {
       if (!conversation) return;
       for (const pid of [conversation.player1Id, conversation.player2Id]) {
         if (!pid) continue;
-        const state = this.states.get(pid);
-        if (state) {
-          boostNeed(state.needs, "social", SOCIAL_CONVERSATION_BOOST);
-        }
+        this.boostPlayerNeed(pid, "social", SOCIAL_CONVERSATION_BOOST);
       }
+    });
+
+    // Restore food when a player consumes an edible item.
+    this.game.on("item_consumed", (event) => {
+      if (!event.playerId || typeof event.data?.item !== "string") return;
+      const restore = this.foodRestoreForItem(event.data.item);
+      if (restore <= 0) return;
+      this.boostPlayerNeed(event.playerId, "food", restore);
+    });
+
+    this.game.on("spawn", (event) => {
+      if (!event.playerId) return;
+      this.broadcastCurrentSurvival(event.playerId);
+    });
+
+    this.game.on("despawn", (event) => {
+      if (!event.playerId) return;
+      this.playerSurvival.delete(event.playerId);
     });
   }
 
@@ -189,11 +219,14 @@ export class NpcAutonomyManager {
         needs: createDefaultNeeds(this.needConfigs),
         inventory: createInventory(),
         currentPlan: null,
+        currentPlanSource: null,
+        currentPlanReasoning: null,
         currentStepIndex: 0,
         currentExecution: null,
         lastPlanTick: 0,
         lastGoalSelectionTick: 0,
         consecutivePlanFailures: 0,
+        goalSelectionStartedAtTick: null,
       };
       this.states.set(npcId, state);
     }
@@ -205,6 +238,21 @@ export class NpcAutonomyManager {
     return this.states;
   }
 
+  /** Serialize one NPC autonomy state with readable action labels for debug UI. */
+  getDebugState(npcId: string): NpcAutonomyDebugState | undefined {
+    const state = this.states.get(npcId);
+    return state ? this.buildDebugState(npcId, state) : undefined;
+  }
+
+  /** Serialize all NPC autonomy states for the debug API. */
+  getAllDebugStates(): Map<string, NpcAutonomyDebugState> {
+    const result = new Map<string, NpcAutonomyDebugState>();
+    for (const [npcId, state] of this.states) {
+      result.set(npcId, this.buildDebugState(npcId, state));
+    }
+    return result;
+  }
+
   /** Get the entity manager (for debug API). */
   getEntityManager(): EntityManager {
     return this.entityManager;
@@ -214,16 +262,43 @@ export class NpcAutonomyManager {
   onNeedsUpdate(
     listener: (
       npcId: string,
-      needs: {
-        hunger: number;
-        energy: number;
-        social: number;
-        safety: number;
-        curiosity: number;
-      },
+      needs: SurvivalSnapshot,
     ) => void,
   ): void {
     this.needsListeners.push(listener);
+  }
+
+  /** Register a listener for player survival updates (used for sidebar status). */
+  onPlayerSurvivalUpdate(
+    listener: (
+      playerId: string,
+      needs: SurvivalSnapshot,
+    ) => void,
+  ): void {
+    this.playerSurvivalListeners.push(listener);
+  }
+
+  onDebugStateUpdate(
+    listener: (state: NpcAutonomyDebugState) => void,
+  ): void {
+    this.debugStateListeners.push(listener);
+  }
+
+  onDebugEvent(
+    listener: (event: DebugFeedEventPayload) => void,
+  ): void {
+    this.debugEventListeners.push(listener);
+  }
+
+  /** Get the shared survival values for any spawned player. */
+  getPlayerSurvival(playerId: string): SurvivalSnapshot | undefined {
+    const player = this.game.getPlayer(playerId);
+    if (!player) return undefined;
+    if (player.isNpc) {
+      return this.buildNpcSurvivalSnapshot(playerId, this.getState(playerId), player);
+    }
+
+    return this.getOrCreateHumanSurvival(playerId, player);
   }
 
   /** Get need configs for an NPC (per-character or default). */
@@ -231,49 +306,44 @@ export class NpcAutonomyManager {
     return this.perNpcConfigs.get(npcId) ?? this.needConfigs;
   }
 
-  private updateSafetyFromThreats(
-    npc: { id: string; x: number; y: number },
-    state: NpcAutonomyState,
-  ): void {
-    const pos = { x: Math.round(npc.x), y: Math.round(npc.y) };
-    const bears = this.entityManager.getNearby(
-      pos,
-      BEAR_DETECTION_RADIUS,
-      "bear",
-    );
-    const activeBear = bears.find(
-      (b) => !b.destroyed && b.properties.state !== "dead",
-    );
-
-    if (activeBear) {
-      // Threat detected — drop safety based on proximity
-      const dist =
-        Math.abs(activeBear.position.x - pos.x) +
-        Math.abs(activeBear.position.y - pos.y);
-      // Closer = bigger drop. At dist 1: full drop. At dist 5: small drop.
-      const proximityFactor = 1 - (dist - 1) / BEAR_DETECTION_RADIUS;
-      const drop = SAFETY_THREAT_DROP * Math.max(0.2, proximityFactor);
-      state.needs.safety = Math.max(0, state.needs.safety - drop * 0.1); // per-tick rate
-    } else if (state.needs.safety < 100) {
-      // No threats — slowly recover safety
-      state.needs.safety = Math.min(
-        100,
-        state.needs.safety + SAFETY_RECOVERY_PER_TICK,
-      );
+  private broadcastNeeds(npcId: string, state: NpcAutonomyState): void {
+    const snapshot = this.buildNpcSurvivalSnapshot(npcId, state);
+    for (const listener of this.needsListeners) {
+      listener(npcId, snapshot);
     }
   }
 
-  private broadcastNeeds(npcId: string, state: NpcAutonomyState): void {
-    const { hunger, energy, social, safety, curiosity } = state.needs;
-    for (const listener of this.needsListeners) {
-      listener(npcId, { hunger, energy, social, safety, curiosity });
+  private broadcastPlayerSurvival(
+    playerId: string,
+    needs: SurvivalSnapshot,
+  ): void {
+    for (const listener of this.playerSurvivalListeners) {
+      listener(playerId, { ...needs });
+    }
+  }
+
+  private processHumanSurvivalTick(
+    players: Array<{ id: string; x: number; y: number; isNpc: boolean }>,
+    shouldBroadcast: boolean,
+  ): void {
+    for (const player of players) {
+      if (player.isNpc) continue;
+      const needs = this.getOrCreateHumanSurvival(player.id);
+      tickNeeds(needs, this.needConfigs);
+      this.replenishWaterAtPond(player, needs);
+      if (shouldBroadcast) {
+        this.broadcastPlayerSurvival(player.id, needs);
+      }
     }
   }
 
   private processAutonomyTick(_result: TickResult): void {
-    const npcs = this.game.getPlayers().filter((p) => p.isNpc);
+    const players = this.game.getPlayers();
+    const npcs = players.filter((p) => p.isNpc);
     const shouldBroadcast =
       this.game.currentTick % NEEDS_BROADCAST_INTERVAL === 0;
+
+    this.processHumanSurvivalTick(players, shouldBroadcast);
 
     for (const npc of npcs) {
       const state = this.getState(npc.id);
@@ -282,16 +352,22 @@ export class NpcAutonomyManager {
 
       // 1. Once a conversation is active, the social action owns the NPC.
       if (npc.state === "conversing") {
+        this.clearPlanForConversation(state);
         tickNeeds(state.needs, npcConfigs);
-        if (shouldBroadcast) this.broadcastNeeds(npc.id, state);
+        this.replenishWaterAtPond(npc, state.needs);
+        if (shouldBroadcast) {
+          this.broadcastNeeds(npc.id, state);
+          this.broadcastPlayerSurvival(
+            npc.id,
+            this.buildNpcSurvivalSnapshot(npc.id, state, npc),
+          );
+        }
         continue;
       }
 
       // 2. Decay needs
       const needsResult = tickNeeds(state.needs, npcConfigs);
-
-      // 2b. Safety threat detection — scan for nearby bears
-      this.updateSafetyFromThreats(npc, state);
+      this.replenishWaterAtPond(npc, state.needs);
 
       // 3. Check for critical need crossing → interrupt current plan
       if (needsResult.newCritical.length > 0 && state.currentPlan) {
@@ -305,13 +381,11 @@ export class NpcAutonomyManager {
         );
       }
 
-      // 3b. Emergency flee — bypass all cooldowns when safety is critical
-      //     and NPC is not already fleeing
+      // 3b. Emergency flee — bypass normal planning when a bear is actively aggressive nearby.
       if (
-        state.needs.safety < npcConfigs.safety.criticalThreshold &&
-        (!state.currentPlan || state.currentPlan.goalId !== "satisfy_safety")
+        this.hasAggressiveBearNearby(npc) &&
+        (!state.currentPlan || state.currentPlan.goalId !== "escape_danger")
       ) {
-        // Cancel current plan and immediately plan a flee
         if (state.currentPlan) {
           invalidatePlan(
             npc.id, state, this.registry,
@@ -320,9 +394,10 @@ export class NpcAutonomyManager {
           );
         }
         this.idleCooldowns.delete(npc.id);
-        const fleeGoal: WorldState = new Map([["need_safety_satisfied", true]]);
-        this.executePlan(npc.id, state, fleeGoal, "satisfy_safety");
-        // Skip normal planning — go straight to execution
+        const fleeGoal: WorldState = new Map([["escaped_hostile", true]]);
+        this.executePlan(npc.id, state, fleeGoal, "escape_danger", {
+          source: "emergency",
+        });
         if (state.currentPlan) {
           const result = executeAutonomyTick(
             npc.id, state, this.registry,
@@ -330,7 +405,13 @@ export class NpcAutonomyManager {
           );
           if (result.planCompleted) state.consecutivePlanFailures = 0;
         }
-        if (shouldBroadcast) this.broadcastNeeds(npc.id, state);
+        if (shouldBroadcast) {
+          this.broadcastNeeds(npc.id, state);
+          this.broadcastPlayerSurvival(
+            npc.id,
+            this.buildNpcSurvivalSnapshot(npc.id, state, npc),
+          );
+        }
         continue;
       }
 
@@ -373,7 +454,13 @@ export class NpcAutonomyManager {
       }
 
       // 6. Broadcast needs to clients periodically
-      if (shouldBroadcast) this.broadcastNeeds(npc.id, state);
+      if (shouldBroadcast) {
+        this.broadcastNeeds(npc.id, state);
+        this.broadcastPlayerSurvival(
+          npc.id,
+          this.buildNpcSurvivalSnapshot(npc.id, state, npc),
+        );
+      }
     }
   }
 
@@ -422,16 +509,12 @@ export class NpcAutonomyManager {
 
   private needTypeForGoal(goalId: string | undefined): NeedType | null {
     switch (goalId) {
-      case "satisfy_hunger":
-        return "hunger";
-      case "satisfy_energy":
-        return "energy";
+      case "satisfy_food":
+        return "food";
+      case "satisfy_water":
+        return "water";
       case "satisfy_social":
         return "social";
-      case "satisfy_safety":
-        return "safety";
-      case "satisfy_curiosity":
-        return "curiosity";
       default:
         return null;
     }
@@ -509,7 +592,9 @@ export class NpcAutonomyManager {
     // Start executing the scripted goal immediately so the NPC isn't idle.
     // If an LLM provider is available, fire off an async goal selection that
     // may replace this plan once it resolves (see tryLlmGoalSelection).
-    this.executePlan(npcId, state, goalResult.goalState, goalResult.goalId);
+    this.executePlan(npcId, state, goalResult.goalState, goalResult.goalId, {
+      source: "scripted",
+    });
 
     if (this.provider && !this.goalSelectionInFlight.has(npcId)) {
       this.tryLlmGoalSelection(npcId, state, tick);
@@ -530,6 +615,8 @@ export class NpcAutonomyManager {
     if (!this.provider?.generateGoalSelection) return;
 
     this.goalSelectionInFlight.add(npcId);
+    state.goalSelectionStartedAtTick = this.game.currentTick;
+    this.publishDebugStateIfChanged(npcId, state);
     try {
       const npc = this.game.getPlayer(npcId);
       if (!npc) return;
@@ -547,7 +634,7 @@ export class NpcAutonomyManager {
 
       const response = await this.provider.generateGoalSelection({
         npc,
-        needs: state.needs,
+        needs: this.buildNpcSurvivalSnapshot(npcId, state, npc),
         inventory: Object.fromEntries(state.inventory),
         nearbyEntities,
         recentMemories: [],
@@ -584,12 +671,17 @@ export class NpcAutonomyManager {
 
       const goalState = goalIdToState(response.goalId);
       if (goalState) {
-        this.executePlan(npcId, state, goalState, response.goalId);
+        this.executePlan(npcId, state, goalState, response.goalId, {
+          source: "llm",
+          reasoning: response.reasoning,
+        });
       }
     } catch (error) {
       console.warn(`LLM goal selection failed for ${npcId}:`, error);
     } finally {
       this.goalSelectionInFlight.delete(npcId);
+      state.goalSelectionStartedAtTick = null;
+      this.publishDebugStateIfChanged(npcId, state);
     }
   }
 
@@ -598,6 +690,10 @@ export class NpcAutonomyManager {
     state: NpcAutonomyState,
     goalState: WorldState,
     goalId: string,
+    provenance: {
+      source: PlanSource;
+      reasoning?: string;
+    },
   ): void {
     const npc = this.game.getPlayer(npcId);
     if (!npc) return;
@@ -614,6 +710,7 @@ export class NpcAutonomyManager {
     const result = plan(currentState, goalState, this.registry, {
       npcId,
       currentState,
+      world: this.game.world,
       entityManager: this.entityManager,
       npcPosition: { x: Math.round(npc.x), y: Math.round(npc.y) },
       otherPlayers: this.game
@@ -632,12 +729,63 @@ export class NpcAutonomyManager {
       result.createdAtTick = this.game.currentTick;
       result.goalId = goalId;
       state.currentPlan = result;
+      state.currentPlanSource = provenance.source;
+      state.currentPlanReasoning = provenance.reasoning ?? null;
       state.currentStepIndex = 0;
       state.currentExecution = null;
       state.lastPlanTick = this.game.currentTick;
     } else {
+      state.currentPlanSource = null;
+      state.currentPlanReasoning = null;
       this.idleWander(npcId, state);
     }
+  }
+
+  private buildDebugState(
+    npcId: string,
+    state: NpcAutonomyState,
+  ): NpcAutonomyDebugState {
+    const currentPlan = state.currentPlan
+      ? {
+          goalId: state.currentPlan.goalId,
+          totalCost: state.currentPlan.totalCost,
+          createdAtTick: state.currentPlan.createdAtTick,
+          source: state.currentPlanSource ?? "scripted",
+          llmGenerated: state.currentPlanSource === "llm",
+          reasoning: state.currentPlanReasoning ?? undefined,
+          steps: state.currentPlan.steps.map((step, index) => ({
+            index,
+            actionId: step.actionId,
+            actionLabel: this.registry.get(step.actionId)?.displayName ?? step.actionId,
+            targetPosition: step.targetPosition,
+            isCurrent: index === state.currentStepIndex,
+          })),
+        }
+      : null;
+
+    const currentExecution = state.currentExecution
+      ? {
+          actionId: state.currentExecution.actionId,
+          actionLabel:
+            this.registry.get(state.currentExecution.actionId)?.displayName ??
+            state.currentExecution.actionId,
+          startedAtTick: state.currentExecution.startedAtTick,
+          status: state.currentExecution.status,
+          stepIndex: state.currentStepIndex,
+        }
+      : null;
+
+    return {
+      npcId,
+      needs: this.buildNpcSurvivalSnapshot(npcId, state),
+      inventory: Object.fromEntries(state.inventory),
+      currentPlan,
+      currentStepIndex: state.currentStepIndex,
+      currentExecution,
+      consecutivePlanFailures: state.consecutivePlanFailures,
+      goalSelectionInFlight: this.goalSelectionInFlight.has(npcId),
+      goalSelectionStartedAtTick: state.goalSelectionStartedAtTick,
+    };
   }
 
   private idleWander(npcId: string, _state: NpcAutonomyState): void {
@@ -673,5 +821,124 @@ export class NpcAutonomyManager {
     const wait =
       IDLE_WAIT_MIN + rng.nextInt(IDLE_WAIT_MAX - IDLE_WAIT_MIN);
     this.idleCooldowns.set(npcId, this.game.currentTick + wait);
+  }
+
+  private clearPlanForConversation(state: NpcAutonomyState): void {
+    if (!state.currentPlan && !state.currentExecution) {
+      return;
+    }
+
+    state.currentPlan = null;
+    state.currentPlanSource = null;
+    state.currentPlanReasoning = null;
+    state.currentStepIndex = 0;
+    state.currentExecution = null;
+    state.consecutivePlanFailures = 0;
+  }
+
+  private getOrCreateHumanSurvival(
+    playerId: string,
+    player = this.game.getPlayer(playerId),
+  ): SurvivalSnapshot {
+    let survival = this.playerSurvival.get(playerId);
+    if (!survival) {
+      survival = {
+        health: 100,
+        ...createDefaultNeeds(this.needConfigs),
+      };
+      this.playerSurvival.set(playerId, survival);
+    }
+    if (player) {
+      survival.health = this.healthFromPlayer(player);
+    }
+    return survival;
+  }
+
+  private buildNpcSurvivalSnapshot(
+    npcId: string,
+    state: NpcAutonomyState,
+    player = this.game.getPlayer(npcId),
+  ): SurvivalSnapshot {
+    return {
+      health: player ? this.healthFromPlayer(player) : 100,
+      food: state.needs.food,
+      water: state.needs.water,
+      social: state.needs.social,
+    };
+  }
+
+  private healthFromPlayer(player: { hp?: number; maxHp?: number }): number {
+    const maxHp = player.maxHp ?? DEFAULT_PLAYER_MAX_HP;
+    const currentHp = player.hp ?? maxHp;
+    return Math.max(0, Math.min(100, (currentHp / maxHp) * 100));
+  }
+
+  private replenishWaterAtPond(
+    player: { x: number; y: number },
+    needs: NpcNeeds,
+  ): void {
+    const pos = { x: Math.round(player.x), y: Math.round(player.y) };
+    const waterSources = this.entityManager.getNearby(pos, 1, "water_source");
+    if (waterSources.length === 0) return;
+    boostNeed(needs, "water", POND_WATER_RESTORE_PER_TICK);
+  }
+
+  private hasAggressiveBearNearby(player: { x: number; y: number }): boolean {
+    const pos = { x: Math.round(player.x), y: Math.round(player.y) };
+    const bears = this.entityManager.getNearby(pos, AGGRESSIVE_BEAR_RADIUS, "bear");
+    return bears.some(
+      (bear) =>
+        !bear.destroyed &&
+        (bear.properties.state === "aggro" || bear.properties.state === "attacking"),
+    );
+  }
+
+  private boostPlayerNeed(
+    playerId: string,
+    need: NeedType,
+    amount: number,
+  ): void {
+    const player = this.game.getPlayer(playerId);
+    if (!player) return;
+
+    if (player.isNpc) {
+      const state = this.getState(playerId);
+      boostNeed(state.needs, need, amount);
+      this.broadcastNeeds(playerId, state);
+      this.broadcastPlayerSurvival(
+        playerId,
+        this.buildNpcSurvivalSnapshot(playerId, state, player),
+      );
+      return;
+    }
+
+    const survival = this.getOrCreateHumanSurvival(playerId, player);
+    boostNeed(survival, need, amount);
+    this.broadcastPlayerSurvival(playerId, survival);
+  }
+
+  private foodRestoreForItem(item: string): number {
+    switch (item) {
+      case "raw_food":
+        return PLAYER_RAW_FOOD_RESTORE;
+      case "cooked_food":
+        return PLAYER_COOKED_FOOD_RESTORE;
+      case "bear_meat":
+        return PLAYER_BEAR_MEAT_FOOD_RESTORE;
+      default:
+        return 0;
+    }
+  }
+
+  private broadcastCurrentSurvival(playerId: string): void {
+    const player = this.game.getPlayer(playerId);
+    if (!player) return;
+    const snapshot = this.getPlayerSurvival(playerId);
+    if (!snapshot) return;
+    if (player.isNpc) {
+      const state = this.getState(playerId);
+      this.broadcastNeeds(playerId, state);
+    }
+    this.broadcastPlayerSurvival(playerId, snapshot);
   }
 }
