@@ -17,6 +17,7 @@ import type {
   ComponentDiagramSection,
   ComponentDiagramSystem,
   ComponentDiagramView,
+  DiagramPoint,
   EventInfo,
   FileAccessFact,
   HttpRequestFact,

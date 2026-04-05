@@ -1,0 +1,5 @@
+{
+  "name": "@aitown/graph-schema",
+  "private": true,
+  "type": "module"
+}
