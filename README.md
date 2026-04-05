@@ -1,21 +1,26 @@
 # AI Town
 
-AI Town is a multiplayer social-simulation sandbox built around an authoritative TypeScript game loop, a PixiJS browser client, a WebSocket transport layer, and a debug-first local workflow.
+AI Town is a multiplayer social-simulation sandbox with an authoritative
+TypeScript server, a PixiJS browser client, survival-driven NPC autonomy,
+conversation memory, and a debug-heavy local workflow.
 
-The current codebase includes:
+The current runtime includes:
 
-- a deterministic `GameLoop` running at 20 ticks/sec in realtime mode
-- a `20 x 20` town loaded from [`data/map.json`](data/map.json)
-- five default NPCs spawned on boot from [`server/src/data/characters.ts`](server/src/data/characters.ts)
-- continuous keyboard movement, A* click-to-move, and player collision
-- conversations that move through `invited -> walking -> active -> ended`
-- NPC memory and generation persistence backed by PostgreSQL when available, with in-memory fallback when it is not
-- a Claude CLI NPC provider with a deterministic scripted fallback
-- a Vitest suite and headless movement harness that run fully in memory
+- a single-process `GameLoop` running at 20 ticks/sec in realtime mode
+- a `20 x 20` map loaded from [`data/map.json`](data/map.json)
+- five default NPCs loaded from
+  [`server/src/data/characters.ts`](server/src/data/characters.ts)
+- continuous input movement, click-to-move pathfinding, conversations, combat,
+  items, and world entities
+- NPC autonomy built around food, water, and social pressure plus GOAP-style
+  action planning
+- PostgreSQL-backed persistence when available, with in-memory fallback when it
+  is not
+- a local Claude CLI provider with scripted fallback
+- a Vitest suite and harnesses that cover most runtime behavior without needing
+  a database
 
-## One-Time Setup
-
-Install dependencies in the repo root plus the two app packages:
+## Install
 
 ```bash
 npm install
@@ -25,22 +30,11 @@ cd ../client && npm install
 
 ## Quick Start
 
-### Run the tests
+### Recommended: host-mode server without PostgreSQL
 
-```bash
-cd server
-npm test
-```
+This is the fastest path for gameplay checks, browser work, and debug API use.
 
-Or from the repo root:
-
-```bash
-npm test
-```
-
-### Run the host-only stack without PostgreSQL
-
-This is enough for local gameplay, browser checks, WebSocket probes, and debug API inspection:
+Server:
 
 ```bash
 cd server
@@ -48,21 +42,18 @@ unset DATABASE_URL
 npm run dev
 ```
 
-In a second terminal:
+Client:
 
 ```bash
 cd client
 npm run dev -- --host 0.0.0.0
 ```
 
-### Run the Docker-backed stack with PostgreSQL
+Then open `http://localhost:5173`.
 
-```bash
-docker compose up --build -d
-cd client && npm run dev
-```
+For the dedicated live debug dashboard, open `http://localhost:5173/debug.html`.
 
-Verify the runtime:
+Useful health checks:
 
 ```bash
 curl localhost:3001/health
@@ -70,29 +61,63 @@ curl localhost:3001/api/debug/state
 curl localhost:3001/api/debug/map
 ```
 
-Useful repo-level shortcuts:
+### Optional: run with PostgreSQL
 
-- `npm run dev`: Docker DB + Docker game server + local Vite client
-- `npm run dev:host-server`: Docker DB + host game server + local Vite client
+If you want database-backed persistence, start the DB container and run the
+server on the host:
+
+```bash
+docker compose up -d db
+cd server
+export DATABASE_URL=postgres://aitown:aitown_dev@localhost:5432/aitown
+npm run dev
+```
+
+Or use the repo helper:
+
+```bash
+npm run dev:host-server
+```
+
+`npm run dev` still runs the game server inside Docker. That is fine for some
+UI work, but host-mode is usually better if you want the local `claude` CLI to
+be available to the NPC provider.
+
+## Useful Commands
+
+```bash
+npm test
+cd server && npm test
+cd server && npx tsc --noEmit
+cd client && npm run build
+cd server && npm run debug:movement -- --list
+cd server && npm run debug:conversation -- --list
+```
 
 ## Runtime Notes
 
-- The server can start without PostgreSQL. If `DATABASE_URL` is unset or the DB is unreachable, it falls back to in-memory NPC persistence and `/health` reports `status: "degraded"`.
-- The browser fetches `/api/*` and `/data/*` through the Vite proxy, but opens its WebSocket directly to port `3001`.
-- The server does not auto-load `.env`; environment variables must come from Docker Compose or the shell.
+- The server can start without PostgreSQL. If `DATABASE_URL` is missing or the
+  database is unreachable, it falls back to in-memory persistence and `/health`
+  reports `status: "degraded"`.
+- The browser fetches `/api/*` and `/data/*` through Vite, but opens its
+  WebSocket directly to port `3001`.
+- The server does not auto-load `.env`; environment variables must come from
+  Docker Compose or the shell.
 
 ## Project Layout
 
 ```text
-client/              PixiJS browser client
-data/                Shared map and NPC definitions
-docs/                Architecture, API, testing, and workflow docs
+client/              Browser client, debug dashboard, and UI shell
+data/                Shared map data and stable top-level data re-exports
+docs/                Maintained project docs
+server/src/autonomy/ NPC autonomy, entities, and survival state
+server/src/bears/    Bear combat and item interactions
+server/src/debug/    Debug API, ASCII rendering, and harnesses
+server/src/db/       PostgreSQL and in-memory persistence
 server/src/engine/   Authoritative simulation core
 server/src/network/  WebSocket protocol and server
-server/src/debug/    Debug API, ASCII map, scenarios, movement harness
-server/src/npc/      NPC memory, provider stack, and orchestration
-server/src/db/       PostgreSQL + in-memory persistence implementations
-server/test/         Vitest suite and stepped runtime helpers
+server/src/npc/      NPC memory, provider stack, and dialogue orchestration
+server/test/         Vitest suites and stepped runtime helpers
 ```
 
 ## Documentation

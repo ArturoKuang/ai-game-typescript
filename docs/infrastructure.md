@@ -1,41 +1,41 @@
 # Infrastructure
 
-This document covers runtime topology, scripts, Docker, ports, and environment variables.
+This document covers runtime topologies, scripts, ports, Docker, and environment
+variables.
 
-## Topologies
+## Runtime Shapes
 
-### Test Topology
+### Test Mode
 
 - no Docker required
 - no PostgreSQL required
 - stepped in-memory `GameLoop`
 - Vitest runs entirely in process
 
-### Host Runtime Topology
+### Host Runtime
 
 - browser dev server on `:5173`
 - game server on `:3001`
 - optional PostgreSQL on `:5432`
 
-### Docker Runtime Topology
+This is the most practical local workflow because the server can use a host
+`claude` CLI.
 
-`docker-compose.yml` starts:
+### Docker-Assisted Runtime
 
-- `db`: `pgvector/pgvector:pg16`
-- `game-server`: Node 20 container running `tsx watch src/index.ts`
+The repo still supports Docker-backed development:
 
-Mounted volumes:
+- `db`: PostgreSQL with pgvector
+- `game-server`: Node 20 container
 
-- `./server/src -> /app/src`
-- `./server/test -> /app/test`
-- `./server/vitest.config.ts -> /app/vitest.config.ts`
-- `./data -> /app/data`
+Useful paths:
 
-This is set up for live-edit development inside the container.
+- `npm run dev`: Docker server plus local client
+- `npm run dev:host-server`: Docker DB, host server, local client
 
 ## Ports
 
-- `3001`: Express + WebSocket server
+- `3001`: Express plus WebSocket server
 - `5173`: Vite dev server
 - `5432`: PostgreSQL with pgvector
 
@@ -43,29 +43,24 @@ This is set up for live-edit development inside the container.
 
 ### Repo Root
 
-From `package.json`:
-
-- `npm test`: run `server` tests
-- `npm run test:perf`: run performance-only tests
-- `npm run check`: Biome check
-- `npm run check:fix`: Biome fix
-- `npm run dev`: Docker server plus local client via `concurrently`
-- `npm run dev:host-server`: Docker DB, host server, local client
+- `npm test`
+- `npm run test:perf`
+- `npm run check`
+- `npm run check:fix`
+- `npm run dev`
+- `npm run dev:host-server`
 
 ### Server
 
-From `server/package.json`:
-
-- `npm run dev`: `tsx watch src/index.ts`
-- `npm run start`: one-shot server start
-- `npm run debug:movement`: movement harness CLI
-- `npm test`: full Vitest suite
-- `npm run test:perf`: performance tests only
-- `npm run test:watch`: Vitest watch mode
+- `npm run dev`
+- `npm run start`
+- `npm run debug:movement`
+- `npm run debug:conversation`
+- `npm test`
+- `npm run test:perf`
+- `npm run test:watch`
 
 ### Client
-
-From `client/package.json`:
 
 - `npm run dev`
 - `npm run build`
@@ -73,43 +68,23 @@ From `client/package.json`:
 
 ## Environment Variables
 
-Recognized runtime environment variables:
+Recognized runtime variables:
 
-- `DATABASE_URL`: enables PostgreSQL-backed persistence when reachable
-- `PORT`: server listen port, default `3001`
-- `NPC_MODEL`: optional model name forwarded to the Claude CLI provider
-- `CLAUDE_COMMAND`: optional absolute path or command name for the Claude CLI binary
+- `DATABASE_URL`
+- `PORT`
+- `NPC_MODEL`
+- `CLAUDE_COMMAND`
 
-Important note:
+Important caveat:
 
-- The repo includes a `dotenv` dependency, but `server/src/index.ts` does not load `.env` automatically. Environment variables must currently come from Docker Compose or the shell.
-
-## Docker Files
-
-### `docker-compose.yml`
-
-Current Compose behavior:
-
-- starts PostgreSQL and waits for health before starting the server
-- passes `DATABASE_URL` pointing at the Compose DB service
-- binds source directories for live reload
-
-### `server/Dockerfile`
-
-Current image behavior:
-
-- based on `node:20-slim`
-- installs dependencies
-- copies `tsconfig.json` and `src/`
-- exposes `3001`
-- runs `npx tsx watch src/index.ts`
-
-Notable limitation:
-
-- the Dockerfile does not copy `data/`; Compose relies on a volume mount instead
+- the repo includes a `dotenv` dependency, but `server/src/index.ts` does not
+  auto-load `.env`
 
 ## Operational Notes
 
-- The runtime server can start without PostgreSQL if `DATABASE_URL` is omitted or the database is unavailable.
-- The browser client always expects the game server on port `3001`.
-- In Docker mode, the game server uses database-backed persistence by default.
+- The server starts without PostgreSQL and falls back to in-memory persistence
+  when the DB is unavailable.
+- The browser expects the authoritative server on port `3001`.
+- Running the game server inside Docker is convenient, but it usually cannot
+  access a host-installed `claude` CLI, so NPC dialogue may fall back to the
+  scripted provider.
