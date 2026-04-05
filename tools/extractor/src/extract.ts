@@ -16,6 +16,7 @@ import { writeFileSync } from "node:fs";
 import { getComponentDefs, type ComponentDef } from "./componentGrouper.js";
 import { buildContainerDiagram } from "./buildContainerDiagram.js";
 import { buildComponentDiagram } from "./buildComponentDiagram.js";
+import { classifyBoundaries } from "./extractBoundaries.js";
 import { extractDataModel } from "./extractDataModel.js";
 import { extractMessageFlows, extractMessageFlowGroups } from "./extractMessageFlows.js";
 import { extractStateMachines } from "./extractStateMachines.js";
@@ -54,135 +55,6 @@ import type {
 
 const ROOT = resolve(import.meta.dirname, "..", "..", "..");
 const OUTPUT = resolve(import.meta.dirname, "..", "graph.json");
-
-// ---------------------------------------------------------------------------
-// 5. Classify cross-component boundaries
-// ---------------------------------------------------------------------------
-
-const MUTATION_METHODS = new Set([
-  "spawnPlayer", "removePlayer", "setPlayerTarget", "movePlayerDirection",
-  "setPlayerInput", "setPlayerWaitingForResponse", "enqueue", "loadWorld",
-  "reset", "startConversation", "endConversation", "acceptInvite",
-  "declineInvite", "addMessage", "clear",
-]);
-
-function classifyBoundaries(
-  files: FileNode[],
-  imports: ImportEdge[],
-  events: EventInfo[],
-  commands: CommandInfo[],
-): BoundaryEdge[] {
-  const fileToComponent = new Map(files.map((f) => [f.id, f.componentId]));
-  const boundaryMap = new Map<string, BoundaryEdge>();
-
-  function getOrCreate(source: string, target: string): BoundaryEdge {
-    const key = `${source}->${target}`;
-    if (!boundaryMap.has(key)) {
-      boundaryMap.set(key, {
-        source,
-        target,
-        eventCount: 0,
-        callCount: 0,
-        mutationCount: 0,
-        couplingType: "call",
-        details: [],
-      });
-    }
-    return boundaryMap.get(key)!;
-  }
-
-  // Event-based coupling
-  for (const event of events) {
-    for (const emitter of event.emitters) {
-      for (const sub of event.subscribers) {
-        const srcComp = fileToComponent.get(emitter.fileId);
-        const tgtComp = fileToComponent.get(sub.fileId);
-        if (!srcComp || !tgtComp || srcComp === tgtComp) continue;
-
-        const edge = getOrCreate(srcComp, tgtComp);
-        edge.eventCount++;
-        edge.details.push({
-          kind: "event",
-          description: `event "${event.eventType}"`,
-          sourceFile: emitter.fileId,
-          targetFile: sub.fileId,
-          line: sub.line,
-        });
-      }
-    }
-  }
-
-  // Command-based coupling (producer → Engine)
-  for (const cmd of commands) {
-    for (const producer of cmd.producers) {
-      const srcComp = fileToComponent.get(producer.fileId);
-      const tgtComp = fileToComponent.get(cmd.consumer);
-      if (!srcComp || !tgtComp || srcComp === tgtComp) continue;
-
-      const edge = getOrCreate(srcComp, tgtComp);
-      edge.mutationCount++;
-      edge.details.push({
-        kind: "mutation",
-        description: `enqueue "${cmd.commandType}"`,
-        sourceFile: producer.fileId,
-        targetFile: cmd.consumer,
-        line: producer.line,
-      });
-    }
-  }
-
-  // Import-based coupling (classify as call or mutation)
-  for (const imp of imports) {
-    const srcComp = fileToComponent.get(imp.source);
-    const tgtComp = fileToComponent.get(imp.target);
-    if (!srcComp || !tgtComp || srcComp === tgtComp) continue;
-
-    for (const sym of imp.symbols) {
-      const isMutation = MUTATION_METHODS.has(sym);
-      const edge = getOrCreate(srcComp, tgtComp);
-      if (isMutation) {
-        edge.mutationCount++;
-        edge.details.push({
-          kind: "mutation",
-          description: `imports ${sym}`,
-          sourceFile: imp.source,
-          targetFile: imp.target,
-        });
-      } else {
-        edge.callCount++;
-        edge.details.push({
-          kind: "call",
-          description: `imports ${sym}`,
-          sourceFile: imp.source,
-          targetFile: imp.target,
-        });
-      }
-    }
-  }
-
-  // Deduplicate details and set coupling type
-  for (const edge of boundaryMap.values()) {
-    const seen = new Set<string>();
-    edge.details = edge.details.filter((d) => {
-      const key = `${d.kind}:${d.description}:${d.sourceFile}:${d.targetFile}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-    if (edge.mutationCount > 0 && edge.eventCount > 0) {
-      edge.couplingType = "mixed";
-    } else if (edge.mutationCount > 0) {
-      edge.couplingType = "mutation";
-    } else if (edge.eventCount > 0) {
-      edge.couplingType = "event";
-    } else {
-      edge.couplingType = "call";
-    }
-  }
-
-  return Array.from(boundaryMap.values());
-}
 
 // ---------------------------------------------------------------------------
 // 6. Detect internal component architecture (ownership, state, utilities)
