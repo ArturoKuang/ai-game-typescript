@@ -88,6 +88,7 @@ Primary provider that shells out to the `claude` CLI.
 Current execution shape:
 
 - command defaults to `claude`
+- command can be overridden with `CLAUDE_COMMAND`
 - passes `--permission-mode dontAsk`
 - disables tool usage with `--tools ""`
 - requests JSON output

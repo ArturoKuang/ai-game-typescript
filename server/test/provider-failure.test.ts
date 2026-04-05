@@ -106,6 +106,59 @@ describe("Provider failure behavior", () => {
     // NPC should have replied (via scripted fallback)
     expect(convo?.messages.length).toBeGreaterThanOrEqual(1);
     expect(failing.callCount).toBe(1);
+
+    const diagnostics = resilient.getDiagnostics();
+    expect(diagnostics.primaryAvailable).toBe(false);
+    expect(diagnostics.lastError?.message).toContain("provider unavailable");
+    expect(
+      diagnostics.events.some(
+        (event) =>
+          event.phase === "reply" &&
+          event.outcome === "primary_failure" &&
+          event.conversationId === convo?.id &&
+          event.npcId === "npc_1",
+      ),
+    ).toBe(true);
+    expect(
+      diagnostics.events.some(
+        (event) =>
+          event.phase === "reply" &&
+          event.outcome === "fallback_used" &&
+          event.conversationId === convo?.id,
+      ),
+    ).toBe(true);
+  });
+
+  it("records cooldown skip diagnostics after a primary failure", async () => {
+    tg = new TestGame();
+    tg.spawn("human_1", 1, 1, false);
+    tg.spawn("npc_1", 2, 1, true);
+
+    const failing = new FailingProvider();
+    const resilient = new ResilientNpcProvider(failing, new ScriptedNpcProvider());
+    const request: NpcReplyRequest = {
+      conversationId: 42,
+      npc: tg.getPlayer("npc_1"),
+      partner: tg.getPlayer("human_1"),
+      messages: [],
+      memories: [],
+      currentTick: tg.game.currentTick,
+    };
+
+    await resilient.generateReply(request);
+    await resilient.generateReply(request);
+
+    const diagnostics = resilient.getDiagnostics();
+    expect(failing.callCount).toBe(1);
+    expect(
+      diagnostics.events.some(
+        (event) =>
+          event.phase === "reply" &&
+          event.outcome === "primary_skipped" &&
+          event.conversationId === 42 &&
+          typeof event.cooldownRemainingMs === "number",
+      ),
+    ).toBe(true);
   });
 
   it("orchestrator does not crash when provider rejects", async () => {

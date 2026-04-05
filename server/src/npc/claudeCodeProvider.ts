@@ -24,10 +24,45 @@ export interface ClaudeCodeProviderOptions {
   maxTurns?: number;
 }
 
+export interface ClaudeCodeProcessErrorDetails {
+  command: string;
+  args: string[];
+  cwd?: string;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  failureCode?: string;
+  stdout?: string;
+  stderr?: string;
+}
+
 interface ClaudeJsonResult {
   result?: string;
   session_id?: string;
   duration_ms?: number;
+}
+
+export class ClaudeCodeProcessError extends Error {
+  readonly command: string;
+  readonly args: string[];
+  readonly cwd?: string;
+  readonly exitCode?: number | null;
+  readonly signal?: NodeJS.Signals | null;
+  readonly failureCode?: string;
+  readonly stdout?: string;
+  readonly stderr?: string;
+
+  constructor(message: string, details: ClaudeCodeProcessErrorDetails) {
+    super(message);
+    this.name = "ClaudeCodeProcessError";
+    this.command = details.command;
+    this.args = [...details.args];
+    this.cwd = details.cwd;
+    this.exitCode = details.exitCode;
+    this.signal = details.signal;
+    this.failureCode = details.failureCode;
+    this.stdout = details.stdout;
+    this.stderr = details.stderr;
+  }
 }
 
 export class ClaudeCodeProvider implements NpcModelProvider {
@@ -148,16 +183,41 @@ async function runProcess(
       stderr += chunk.toString();
     });
     child.on("error", (error) => {
-      reject(error);
+      reject(
+        new ClaudeCodeProcessError(
+          `Failed to spawn Claude Code command "${command}": ${error.message}`,
+          {
+            command,
+            args,
+            cwd,
+            failureCode: "code" in error ? String(error.code) : undefined,
+            stdout: stdout.trim() || undefined,
+            stderr: stderr.trim() || undefined,
+          },
+        ),
+      );
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       if (code === 0) {
         resolve(stdout.trim());
         return;
       }
+      const trimmedStdout = stdout.trim();
+      const trimmedStderr = stderr.trim();
+      const failureSummary =
+        trimmedStderr || trimmedStdout || "process exited without output";
       reject(
-        new Error(
-          `Claude Code exited with code ${code}: ${stderr.trim() || stdout.trim()}`,
+        new ClaudeCodeProcessError(
+          `Claude Code exited with code ${code}${signal ? ` (signal ${signal})` : ""}: ${failureSummary}`,
+          {
+            command,
+            args,
+            cwd,
+            exitCode: code,
+            signal,
+            stdout: trimmedStdout || undefined,
+            stderr: trimmedStderr || undefined,
+          },
         ),
       );
     });

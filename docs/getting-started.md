@@ -102,6 +102,8 @@ If you want the combined dev flows from the repo root:
 - `npm run dev`: Docker PostgreSQL + Docker game server + local Vite client
 - `npm run dev:host-server`: Docker PostgreSQL + host game server + local Vite client
 
+**Important:** NPC conversations are powered by the `claude` CLI, which must be available on the machine running the game server. When using `npm run dev`, the server runs inside Docker where `claude` is not installed — NPC dialogue will fall back to scripted template responses. Use `npm run dev:host-server` to run the server on your host machine so it can access your local `claude` CLI for LLM-powered conversations.
+
 ## Local Server Workflow Without Docker
 
 The server can run directly on the host in two ways:
@@ -128,6 +130,7 @@ If you need different values, export them in your shell before starting the serv
 export DATABASE_URL=postgres://USER:PASS@HOST:5432/aitown
 export PORT=3001
 export NPC_MODEL=your-model-name   # optional, passed to the Claude CLI provider
+export CLAUDE_COMMAND=/absolute/path/to/claude   # optional, overrides PATH lookup
 cd server
 npm run dev
 ```
@@ -227,6 +230,23 @@ If you only need the runtime server for local simulation or documentation exampl
 Prefer `POST /api/debug/scenario` over `POST /api/debug/reset`.
 
 `/reset` clears the game loop's world as well as its players, so the normal map is not reloaded automatically afterward.
+
+### NPC conversations are scripted / not using the LLM
+
+The NPC provider uses the `claude` CLI as a subprocess. If the CLI is not found, every call fails and the server falls back to `ScriptedNpcProvider`, which produces template responses like *"You mentioned X. Tell me a little more."*
+
+This happens when:
+
+- The server runs inside Docker (`npm run dev`) where `claude` is not installed
+- The `claude` CLI is not on your PATH
+
+Fix: use `npm run dev:host-server` instead, which runs the game server on the host where your local `claude` CLI is available. You can verify the provider status at any time:
+
+```bash
+curl localhost:3001/health
+```
+
+Look for `npcPrimaryAvailable: true` and `npcProviderCommandResolved` pointing to a valid path. If `npcPrimaryAvailable` is `false`, the server is using scripted fallback responses.
 
 ### I need to inspect browser-side reconciliation
 

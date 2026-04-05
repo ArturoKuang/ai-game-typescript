@@ -26,6 +26,7 @@ import { GameLoop } from "./engine/gameLoop.js";
 import type { MapData } from "./engine/types.js";
 import { GameWebSocketServer } from "./network/websocket.js";
 import { ClaudeCodeProvider } from "./npc/claudeCodeProvider.js";
+import { getConfiguredClaudeCommand, resolveCommandPath } from "./npc/commandResolution.js";
 import { PlaceholderEmbedder } from "./npc/embedding.js";
 import { MemoryManager } from "./npc/memory.js";
 import { NpcOrchestrator } from "./npc/orchestrator.js";
@@ -50,8 +51,12 @@ const repo = pool ? new Repository(pool) : new InMemoryRepository();
 const npcStore = pool ? new PostgresNpcStore(pool) : new InMemoryNpcStore();
 const embedder = new PlaceholderEmbedder();
 const memoryManager = new MemoryManager(repo, embedder);
+const claudeCommand = getConfiguredClaudeCommand(process.env);
+const resolvedClaudeCommand = resolveCommandPath(claudeCommand, process.env.PATH);
+logClaudeCommandAvailability(claudeCommand, resolvedClaudeCommand);
 const provider = new ResilientNpcProvider(
   new ClaudeCodeProvider({
+    command: claudeCommand,
     cwd: join(__dirname, ".."),
     model: process.env.NPC_MODEL || undefined,
   }),
@@ -146,17 +151,31 @@ game.start();
 // --- Routes ---
 app.get("/health", async (_req, res) => {
   const dbConnected = pool ? await checkConnection(pool) : false;
+  const providerDiagnostics = provider.getDiagnostics();
   res.json({
     status: dbConnected ? "ok" : "degraded",
     tick: game.currentTick,
     dbConnected,
     npcProvider: provider.name,
+    npcProviderCommand: claudeCommand,
+    npcProviderCommandResolved: resolvedClaudeCommand,
+    npcPrimaryAvailable: providerDiagnostics.primaryAvailable,
+    npcProviderRetryInMs: providerDiagnostics.nextRetryInMs ?? 0,
+    npcProviderLastError: providerDiagnostics.lastError?.message ?? null,
   });
 });
 
 app.use(
   "/api/debug",
-  createDebugRouter(game, memoryManager, pool, autonomyManager, bearManager, wsServer),
+  createDebugRouter(
+    game,
+    memoryManager,
+    pool,
+    autonomyManager,
+    bearManager,
+    wsServer,
+    provider,
+  ),
 );
 
 // Serve map data
@@ -219,5 +238,23 @@ function resolveMapPath(): string {
 
   throw new Error(
     `Failed to locate map.json. Checked: ${candidates.join(", ")}`,
+  );
+}
+
+function logClaudeCommandAvailability(
+  command: string,
+  resolvedPath: string | null,
+): void {
+  if (resolvedPath) {
+    console.log(`Claude CLI available for NPC provider: ${resolvedPath}`);
+    return;
+  }
+
+  console.error(
+    [
+      `Claude CLI command "${command}" was not found on PATH.`,
+      "NPC dialogue and goal selection will fall back to scripted responses.",
+      "Set CLAUDE_COMMAND to an absolute path if your server environment does not inherit your shell PATH.",
+    ].join(" "),
   );
 }

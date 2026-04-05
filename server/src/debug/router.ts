@@ -17,6 +17,7 @@ import type { BearManager } from "../bears/bearManager.js";
 import type { GameLoop } from "../engine/gameLoop.js";
 import type { Player } from "../engine/types.js";
 import type { MemoryManager } from "../npc/memory.js";
+import type { NpcProviderDiagnosticsSource } from "../npc/resilientProvider.js";
 import type { GameWebSocketServer } from "../network/websocket.js";
 import { renderAsciiMap } from "./asciiMap.js";
 import { SCENARIOS, listScenarios } from "./scenarios.js";
@@ -50,6 +51,7 @@ export function createDebugRouter(
   autonomyManager?: NpcAutonomyManager,
   bearManager?: BearManager,
   wsServer?: GameWebSocketServer,
+  providerDiagnostics?: NpcProviderDiagnosticsSource,
 ): Router {
   const router = Router();
 
@@ -129,6 +131,14 @@ export function createDebugRouter(
       return;
     }
     res.json(convo);
+  });
+
+  router.get("/npc-provider", (_req, res) => {
+    if (!providerDiagnostics) {
+      res.status(404).json({ error: "NPC provider diagnostics unavailable" });
+      return;
+    }
+    res.json(providerDiagnostics.getDiagnostics());
   });
 
   // --- Command endpoints ---

@@ -78,6 +78,7 @@ Recognized runtime environment variables:
 - `DATABASE_URL`: enables PostgreSQL-backed persistence when reachable
 - `PORT`: server listen port, default `3001`
 - `NPC_MODEL`: optional model name forwarded to the Claude CLI provider
+- `CLAUDE_COMMAND`: optional absolute path or command name for the Claude CLI binary
 
 Important note:
 
