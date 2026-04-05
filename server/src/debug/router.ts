@@ -4,7 +4,7 @@
  * Routes are grouped into three categories:
  * - **Read** — `/state`, `/map`, `/players`, `/log`, `/conversations`, `/memories`
  * - **Engine-integrated** — `/tick`, `/spawn`, `/move`, `/input`, `/mode`, `/scenario`
- * - **Direct mutation** — `/start-convo`, `/say`, `/end-convo` (bypass normal event path)
+ * - **Admin facade** — `/start-convo`, `/say`, `/end-convo` reuse the command path without a full tick
  *
  * @see docs/debug-api.md for full request/response examples
  */
@@ -12,37 +12,15 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Router } from "express";
 import type { Pool } from "pg";
+import { DebugGameAdmin, DebugRouteError, errorMessage } from "./admin.js";
 import type { NpcAutonomyManager } from "../autonomy/manager.js";
 import type { BearManager } from "../bears/bearManager.js";
 import type { GameLoop } from "../engine/gameLoop.js";
-import type { Player } from "../engine/types.js";
 import type { MemoryManager } from "../npc/memory.js";
 import type { NpcProviderDiagnosticsSource } from "../npc/resilientProvider.js";
 import type { GameWebSocketServer } from "../network/websocket.js";
 import { renderAsciiMap } from "./asciiMap.js";
 import { SCENARIOS, listScenarios } from "./scenarios.js";
-
-async function persistPlayer(
-  pool: Pool | undefined,
-  player: Player,
-): Promise<void> {
-  if (!pool) return;
-  await pool.query(
-    `INSERT INTO players (id, name, description, personality, is_npc, x, y, state)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     ON CONFLICT (id) DO UPDATE SET x = $6, y = $7, state = $8`,
-    [
-      player.id,
-      player.name,
-      player.description,
-      player.personality ?? null,
-      player.isNpc,
-      player.x,
-      player.y,
-      player.state,
-    ],
-  );
-}
 
 export function createDebugRouter(
   game: GameLoop,
@@ -54,6 +32,7 @@ export function createDebugRouter(
   providerDiagnostics?: NpcProviderDiagnosticsSource,
 ): Router {
   const router = Router();
+  const admin = new DebugGameAdmin(game, pool);
 
   // --- Read endpoints ---
 
@@ -162,7 +141,7 @@ export function createDebugRouter(
       return;
     }
     try {
-      const player = game.spawnPlayer({
+      const player = await admin.spawnPlayer({
         id,
         name,
         x,
@@ -172,10 +151,10 @@ export function createDebugRouter(
         personality,
         speed,
       });
-      await persistPlayer(pool, player);
       res.json(player);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
+    } catch (error) {
+      const status = error instanceof DebugRouteError ? error.status : 400;
+      res.status(status).json({ error: errorMessage(error) });
     }
   });
 
@@ -187,14 +166,13 @@ export function createDebugRouter(
         .json({ error: "Missing required fields: playerId, x, y" });
       return;
     }
-    const path = game.setPlayerTarget(playerId, x, y);
-    if (!path) {
-      res.status(400).json({
-        error: "Cannot move to target (unreachable or player in conversation)",
-      });
-      return;
+    try {
+      const path = admin.movePlayer(playerId, x, y);
+      res.json({ path });
+    } catch (error) {
+      const status = error instanceof DebugRouteError ? error.status : 400;
+      res.status(status).json({ error: errorMessage(error) });
     }
-    res.json({ path });
   });
 
   router.post("/input", (req, res) => {
@@ -211,13 +189,13 @@ export function createDebugRouter(
       });
       return;
     }
-    game.setPlayerInput(playerId, direction, active);
-    const player = game.getPlayer(playerId);
-    if (!player) {
-      res.status(404).json({ error: "Player not found" });
-      return;
+    try {
+      const player = admin.setPlayerInput(playerId, direction, active);
+      res.json(player);
+    } catch (error) {
+      const status = error instanceof DebugRouteError ? error.status : 400;
+      res.status(status).json({ error: errorMessage(error) });
     }
-    res.json(player);
   });
 
   router.post("/reset", (_req, res) => {
@@ -233,21 +211,8 @@ export function createDebugRouter(
       });
       return;
     }
-    // Reset existing players but keep world
-    for (const p of game.getPlayers()) {
-      game.removePlayer(p.id);
-    }
-    SCENARIOS[name].setup(game);
-    // Persist all spawned players to DB
-    for (const p of game.getPlayers()) {
-      await persistPlayer(pool, p);
-    }
-    res.json({
-      ok: true,
-      scenario: name,
-      playerCount: game.playerCount,
-      tick: game.currentTick,
-    });
+    const result = await admin.loadScenario(name, SCENARIOS[name]);
+    res.json(result);
   });
 
   router.post("/start-convo", (req, res) => {
@@ -259,14 +224,11 @@ export function createDebugRouter(
       return;
     }
     try {
-      const convo = game.conversations.startConversation(
-        player1Id,
-        player2Id,
-        game.currentTick,
-      );
+      const convo = admin.startConversation(player1Id, player2Id);
       res.json(convo);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
+    } catch (error) {
+      const status = error instanceof DebugRouteError ? error.status : 400;
+      res.status(status).json({ error: errorMessage(error) });
     }
   });
 
@@ -277,13 +239,11 @@ export function createDebugRouter(
       return;
     }
     try {
-      const convo = game.conversations.endConversation(
-        convoId,
-        game.currentTick,
-      );
+      const convo = admin.endConversation(convoId);
       res.json(convo);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
+    } catch (error) {
+      const status = error instanceof DebugRouteError ? error.status : 400;
+      res.status(status).json({ error: errorMessage(error) });
     }
   });
 
@@ -296,15 +256,11 @@ export function createDebugRouter(
       return;
     }
     try {
-      const msg = game.conversations.addMessage(
-        convoId,
-        playerId,
-        content,
-        game.currentTick,
-      );
+      const msg = admin.addConversationMessage(playerId, convoId, content);
       res.json(msg);
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
+    } catch (error) {
+      const status = error instanceof DebugRouteError ? error.status : 400;
+      res.status(status).json({ error: errorMessage(error) });
     }
   });
 

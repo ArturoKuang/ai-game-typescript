@@ -9,7 +9,7 @@ import { CHARACTERS } from "../data/characters.js";
 import type { GameLoop } from "../engine/gameLoop.js";
 
 /** Debug-router scenario definition. */
-interface Scenario {
+export interface ScenarioDef {
   description: string;
   setup: (game: GameLoop) => void;
 }
@@ -34,7 +34,7 @@ function spawnCharacter(
   });
 }
 
-export const SCENARIOS: Record<string, Scenario> = {
+export const SCENARIOS: Record<string, ScenarioDef> = {
   empty: {
     description: "Empty world, no players",
     setup: () => {

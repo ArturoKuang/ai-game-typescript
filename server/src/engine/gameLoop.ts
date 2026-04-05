@@ -362,6 +362,27 @@ export class GameLoop {
     this.commandQueue_.push(command);
   }
 
+  /**
+   * Drain only the queued commands without advancing simulation time.
+   *
+   * Audit note: this exists for debug/admin surfaces that must reuse the same
+   * command-processing path as production, but should not trigger movement,
+   * timers, or a synthetic `tick_complete` event.
+   */
+  processPendingCommands(): void {
+    this.processCommands();
+    this.assertWorldInvariants();
+
+    // Command handlers can create/end conversations, so keep the derived player
+    // conversation fields aligned even when no full tick runs afterward.
+    const convoStateEvents = this.syncPlayerConvoState();
+    for (const event of convoStateEvents) {
+      this.emit(event);
+    }
+
+    this.assertWorldInvariants();
+  }
+
   /** Register a handler for commands implemented by external subsystems. */
   onCommand<T extends Command["type"]>(
     type: T,
