@@ -40,11 +40,18 @@ import type {
 } from "./types.js";
 import { UI } from "./ui.js";
 
+const DEBUG_CONVERSATION_POLL_MS = 750;
+
 // State
 let gameState: FullGameState | null = null;
 let selfId: string | null = null;
 let mapLoaded = false;
 let mapTiles: TileType[][] | null = null;
+let debugModeEnabled = false;
+let debugConversationPollId: number | null = null;
+let debugConversationFetchInFlight = false;
+let debugConversationError: string | null = null;
+let debugConversations: Conversation[] = [];
 
 function conversationIncludesPlayer(
   conversation: Conversation,
@@ -72,6 +79,11 @@ const ui = new UI();
 
 async function start() {
   await renderer.init();
+  ui.renderConversationDebug({
+    enabled: false,
+    summary: "Debug mode off",
+    cards: [],
+  });
 
   // Load map tiles eagerly
   try {
@@ -146,6 +158,118 @@ async function start() {
 
   function getPlayer(playerId: string): Player | undefined {
     return gameState?.players.find((player) => player.id === playerId);
+  }
+
+  function sortDebugConversations(
+    left: Conversation,
+    right: Conversation,
+  ): number {
+    const rank: Record<Conversation["state"], number> = {
+      active: 0,
+      walking: 1,
+      invited: 2,
+      ended: 3,
+    };
+    const rankDiff = rank[left.state] - rank[right.state];
+    if (rankDiff !== 0) return rankDiff;
+    return right.id - left.id;
+  }
+
+  function formatDebugConversationPreview(conversation: Conversation): string {
+    const lastMessage = conversation.messages[conversation.messages.length - 1];
+    if (lastMessage) {
+      return `${getPlayerName(lastMessage.playerId)}: ${lastMessage.content}`;
+    }
+    if (conversation.state === "walking") {
+      return "Participants are walking to a rendezvous point.";
+    }
+    if (conversation.state === "invited") {
+      return "Invitation sent and waiting on a response.";
+    }
+    if (conversation.state === "ended") {
+      return conversation.endedReason
+        ? `Ended: ${conversation.endedReason.replaceAll("_", " ")}`
+        : "Ended without any transcript messages.";
+    }
+    return "Conversation is active but no messages have been sent yet.";
+  }
+
+  function refreshConversationDebugUi(): void {
+    const liveCount = debugConversations.filter(
+      (conversation) => conversation.state !== "ended",
+    ).length;
+    const endedCount = debugConversations.length - liveCount;
+
+    ui.renderConversationDebug({
+      enabled: debugModeEnabled,
+      summary: debugConversationError
+        ? debugConversationError
+        : `${liveCount} live • ${endedCount} ended`,
+      cards: debugConversations
+        .slice()
+        .sort(sortDebugConversations)
+        .map((conversation) => ({
+          id: conversation.id,
+          state: conversation.state,
+          title: `${getPlayerName(conversation.player1Id)} <> ${getPlayerName(
+            conversation.player2Id,
+          )}`,
+          meta: `${conversation.messages.length} messages • started t${conversation.startedTick}${
+            conversation.endedTick !== undefined
+              ? ` • ended t${conversation.endedTick}`
+              : ""
+          }`,
+          preview: formatDebugConversationPreview(conversation),
+        })),
+    });
+  }
+
+  async function fetchDebugConversations(): Promise<void> {
+    if (!debugModeEnabled || debugConversationFetchInFlight) {
+      return;
+    }
+
+    debugConversationFetchInFlight = true;
+    try {
+      const response = await fetch("/api/debug/conversations");
+      if (!response.ok) {
+        throw new Error(`Conversation debug API returned ${response.status}`);
+      }
+      debugConversations = (await response.json()) as Conversation[];
+      debugConversationError = null;
+    } catch (error) {
+      debugConversationError =
+        error instanceof Error
+          ? error.message
+          : "Conversation debug API unavailable";
+    } finally {
+      debugConversationFetchInFlight = false;
+      refreshConversationDebugUi();
+    }
+  }
+
+  function stopDebugConversationPolling(): void {
+    if (debugConversationPollId !== null) {
+      window.clearInterval(debugConversationPollId);
+      debugConversationPollId = null;
+    }
+  }
+
+  function setDebugConversationMode(enabled: boolean): void {
+    debugModeEnabled = enabled;
+    stopDebugConversationPolling();
+
+    if (!enabled) {
+      debugConversationError = null;
+      debugConversations = [];
+      refreshConversationDebugUi();
+      return;
+    }
+
+    void fetchDebugConversations();
+    debugConversationPollId = window.setInterval(() => {
+      void fetchDebugConversations();
+    }, DEBUG_CONVERSATION_POLL_MS);
   }
 
   /** Generate system chat messages describing a conversation state change. */
@@ -239,6 +363,7 @@ async function start() {
     }
 
     ui.updatePlayerList(gameState.players, talkablePlayerIds);
+    refreshConversationDebugUi();
 
     if (!selfId || !currentConversation) {
       ui.renderConversationPanel({
@@ -533,6 +658,10 @@ async function start() {
 
   ui.onTalk((playerId) => {
     client.send({ type: "start_convo", data: { targetId: playerId } });
+  });
+
+  ui.onConversationDebugModeChange((enabled) => {
+    setDebugConversationMode(enabled);
   });
 
   ui.onAcceptConversation(() => {

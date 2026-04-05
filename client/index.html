@@ -20,8 +20,30 @@
       align-items: center;
       justify-content: center;
       position: relative;
+      padding: 16px;
     }
     #game-canvas { cursor: pointer; }
+    #debug-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: #9fb0d1;
+      padding: 8px 10px;
+      background: #0f3460;
+      border: 1px solid #533483;
+      border-radius: 4px;
+    }
+    .debug-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+    .debug-toggle input {
+      accent-color: #e94560;
+    }
     #sidebar {
       width: 320px;
       background: #16213e;
@@ -166,17 +188,135 @@
       padding: 4px 0;
       border-top: 1px solid #0f3460;
     }
+    #conversation-debug-overlay {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 32vh;
+      padding: 12px;
+      border: 1px solid #533483;
+      border-radius: 8px;
+      background: rgba(15, 52, 96, 0.94);
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(10px);
+      z-index: 4;
+      overflow: hidden;
+    }
+    .conversation-debug-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .conversation-debug-title {
+      color: #f7dc6f;
+      font-size: 12px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    #conversation-debug-summary {
+      color: #9fb0d1;
+      font-size: 11px;
+    }
+    #conversation-debug-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+    .conversation-debug-card,
+    .conversation-debug-empty {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 90px;
+      padding: 10px;
+      border-radius: 6px;
+      background: rgba(8, 23, 43, 0.82);
+      border: 1px solid #2d4f7a;
+    }
+    .conversation-debug-empty {
+      justify-content: center;
+      color: #9fb0d1;
+      font-size: 12px;
+      font-style: italic;
+    }
+    .conversation-debug-card.state-active { border-color: #e94560; }
+    .conversation-debug-card.state-walking { border-color: #f7dc6f; }
+    .conversation-debug-card.state-invited { border-color: #5dade2; }
+    .conversation-debug-card.state-ended { border-color: #888; opacity: 0.84; }
+    .conversation-debug-card-title {
+      font-size: 13px;
+      color: #e0e0e0;
+      font-weight: bold;
+    }
+    .conversation-debug-card-meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 11px;
+      color: #9fb0d1;
+    }
+    .conversation-debug-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(233, 69, 96, 0.18);
+      color: #ffd5dc;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      font-size: 10px;
+    }
+    .conversation-debug-badge.state-walking {
+      background: rgba(247, 220, 111, 0.18);
+      color: #fff3b5;
+    }
+    .conversation-debug-badge.state-invited {
+      background: rgba(93, 173, 226, 0.18);
+      color: #d3efff;
+    }
+    .conversation-debug-badge.state-ended {
+      background: rgba(136, 136, 136, 0.24);
+      color: #dddddd;
+    }
+    .conversation-debug-card-preview {
+      font-size: 12px;
+      line-height: 1.45;
+      color: #dce5f3;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
   </style>
 </head>
 <body>
   <div id="game-container">
     <canvas id="game-canvas"></canvas>
+    <div id="conversation-debug-overlay" class="hidden">
+      <div class="conversation-debug-header">
+        <div class="conversation-debug-title">Conversation Debug</div>
+        <div id="conversation-debug-summary">Debug mode off</div>
+      </div>
+      <div id="conversation-debug-list"></div>
+    </div>
   </div>
   <div id="sidebar">
     <h2>AI Town</h2>
     <div id="join-section">
       <input id="name-input" type="text" placeholder="Your name..." />
       <button id="join-btn">Join</button>
+    </div>
+    <div id="debug-controls">
+      <label class="debug-toggle" for="conversation-debug-checkbox">
+        <input id="conversation-debug-checkbox" type="checkbox" />
+        <span>Conversation debug mode</span>
+      </label>
     </div>
     <h2>Players</h2>
     <ul id="player-list"></ul>

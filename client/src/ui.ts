@@ -11,7 +11,7 @@
  * - invite-actions, active-actions
  * - accept-convo-btn, decline-convo-btn, end-convo-btn
  */
-import type { Player } from "./types.js";
+import type { Conversation, Player } from "./types.js";
 
 /** Describes what the conversation panel should display. */
 export interface ConversationPanelView {
@@ -21,6 +21,20 @@ export interface ConversationPanelView {
   chatPlaceholder: string;
   showInviteActions: boolean;
   showEndAction: boolean;
+}
+
+export interface ConversationDebugCardView {
+  id: number;
+  state: Conversation["state"];
+  title: string;
+  meta: string;
+  preview: string;
+}
+
+export interface ConversationDebugView {
+  enabled: boolean;
+  summary: string;
+  cards: ConversationDebugCardView[];
 }
 
 /** Item display metadata keyed by item ID. */
@@ -47,12 +61,17 @@ export class UI {
   private inventoryHeaderEl: HTMLHeadingElement;
   private inventoryPanelEl: HTMLDivElement;
   private inventoryListEl: HTMLUListElement;
+  private conversationDebugToggleEl: HTMLInputElement;
+  private conversationDebugOverlayEl: HTMLDivElement;
+  private conversationDebugSummaryEl: HTMLDivElement;
+  private conversationDebugListEl: HTMLDivElement;
   private inventoryVisible = true;
   private selfId: string | null = null;
   private talkHandler: ((playerId: string) => void) | null = null;
   private acceptHandler: (() => void) | null = null;
   private declineHandler: (() => void) | null = null;
   private endHandler: (() => void) | null = null;
+  private debugModeHandler: ((enabled: boolean) => void) | null = null;
 
   constructor() {
     this.playerListEl = document.getElementById(
@@ -99,6 +118,18 @@ export class UI {
     this.inventoryListEl = document.getElementById(
       "inventory-list",
     ) as HTMLUListElement;
+    this.conversationDebugToggleEl = document.getElementById(
+      "conversation-debug-checkbox",
+    ) as HTMLInputElement;
+    this.conversationDebugOverlayEl = document.getElementById(
+      "conversation-debug-overlay",
+    ) as HTMLDivElement;
+    this.conversationDebugSummaryEl = document.getElementById(
+      "conversation-debug-summary",
+    ) as HTMLDivElement;
+    this.conversationDebugListEl = document.getElementById(
+      "conversation-debug-list",
+    ) as HTMLDivElement;
 
     this.acceptConvoBtnEl.addEventListener("click", () =>
       this.acceptHandler?.(),
@@ -109,6 +140,9 @@ export class UI {
     this.endConvoBtnEl.addEventListener("click", () => this.endHandler?.());
     this.inventoryHeaderEl.addEventListener("click", () =>
       this.toggleInventory(),
+    );
+    this.conversationDebugToggleEl.addEventListener("change", () =>
+      this.debugModeHandler?.(this.conversationDebugToggleEl.checked),
     );
   }
 
@@ -206,6 +240,64 @@ export class UI {
 
   onEndConversation(callback: () => void): void {
     this.endHandler = callback;
+  }
+
+  onConversationDebugModeChange(callback: (enabled: boolean) => void): void {
+    this.debugModeHandler = callback;
+  }
+
+  renderConversationDebug(view: ConversationDebugView): void {
+    this.conversationDebugToggleEl.checked = view.enabled;
+    this.conversationDebugOverlayEl.classList.toggle("hidden", !view.enabled);
+    this.conversationDebugSummaryEl.textContent = view.summary;
+    this.conversationDebugListEl.innerHTML = "";
+
+    if (!view.enabled) {
+      return;
+    }
+
+    if (view.cards.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "conversation-debug-empty";
+      empty.textContent = "No conversations to display.";
+      this.conversationDebugListEl.appendChild(empty);
+      return;
+    }
+
+    for (const card of view.cards) {
+      const article = document.createElement("article");
+      article.className = `conversation-debug-card state-${card.state}`;
+
+      const title = document.createElement("div");
+      title.className = "conversation-debug-card-title";
+      title.textContent = card.title;
+
+      const meta = document.createElement("div");
+      meta.className = "conversation-debug-card-meta";
+
+      const badge = document.createElement("span");
+      badge.className = `conversation-debug-badge state-${card.state}`;
+      badge.textContent = card.state;
+
+      const idLabel = document.createElement("span");
+      idLabel.textContent = `#${card.id}`;
+
+      const detail = document.createElement("span");
+      detail.textContent = card.meta;
+
+      meta.appendChild(badge);
+      meta.appendChild(idLabel);
+      meta.appendChild(detail);
+
+      const preview = document.createElement("div");
+      preview.className = "conversation-debug-card-preview";
+      preview.textContent = card.preview;
+
+      article.appendChild(title);
+      article.appendChild(meta);
+      article.appendChild(preview);
+      this.conversationDebugListEl.appendChild(article);
+    }
   }
 
   /** Toggle the inventory panel visibility. */
