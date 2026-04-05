@@ -1,6 +1,6 @@
 # Persistence
 
-This document covers `server/src/db/` plus the runtime persistence modes chosen in `server/src/index.ts`.
+This document covers `server/src/db/` plus the runtime persistence modes chosen in `server/src/bootstrap/runtime.ts`.
 
 ## Runtime Modes
 

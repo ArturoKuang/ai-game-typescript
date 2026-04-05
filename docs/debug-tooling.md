@@ -21,14 +21,18 @@ The debug toolchain includes:
 
 ### `router.ts`
 
-Mounts `/api/debug` and exposes read, control, and mutation routes.
+Mounts `/api/debug` and exposes read, control, and admin-write routes.
+
+Write routes are centralized through `DebugGameAdmin` so the router no longer
+reaches into engine internals directly for spawn, move, or conversation writes.
 
 Useful route groups:
 
 - runtime inspection
 - stepping and input control
 - scenario loading
-- conversation and memory helpers
+- queue-backed spawn, move, and conversation helpers
+- memory helpers
 - autonomy, entities, bears, and inventory
 - screenshot capture
 

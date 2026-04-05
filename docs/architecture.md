@@ -57,7 +57,8 @@ The main ownership boundaries are:
 
 ## Boot Flow
 
-`server/src/index.ts` boots in this order:
+`server/src/index.ts` is now a thin entry point. The main composition lives in
+`server/src/bootstrap/runtime.ts`, which boots in this order:
 
 1. Create Express and the HTTP server.
 2. Create `GameLoop` in `realtime` mode at 20 ticks/sec.
@@ -141,8 +142,8 @@ replying once a conversation is active.
 
 The runtime exposes three practical debug entry points:
 
-- `/api/debug` for inspection, stepping, scenarios, conversation mutation, and
-  screenshot capture
+- `/api/debug` for inspection, stepping, scenarios, command-backed admin
+  writes, and screenshot capture
 - the gameplay client in `client/index.html`, which shows a compact debug
   overlay and currently polls `/api/debug/conversations` plus
   `/api/debug/autonomy/state`
@@ -152,8 +153,9 @@ The runtime exposes three practical debug entry points:
 
 ## Important Caveats
 
-- `/api/debug/start-convo`, `/api/debug/say`, and `/api/debug/end-convo` call
-  `ConversationManager` directly and bypass the normal queued command path.
+- Debug write routes now centralize through `DebugGameAdmin`. Spawn, move, and
+  conversation writes reuse the normal command queue, but they drain pending
+  commands synchronously so the HTTP caller gets the updated state immediately.
 - World tiles and activities are still file-backed even though the schema has
   broader world tables.
 - `client/src/types.ts` mirrors server types manually; there is no shared

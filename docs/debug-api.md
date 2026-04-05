@@ -10,17 +10,22 @@ Not all debug routes exercise the runtime in the same way.
 
 - Read routes inspect live state safely.
 - Control routes call engine methods or stepped tick behavior.
-- Direct conversation routes mutate `ConversationManager` without using the
-  normal queued gameplay path.
+- Command-backed admin routes go through `DebugGameAdmin`, which enqueues the
+  same gameplay commands production uses and then drains pending commands
+  immediately so the route can return updated state without waiting for a full
+  realtime tick.
 
-Direct conversation routes:
+Command-backed admin routes:
 
+- `POST /spawn`
+- `POST /move`
 - `POST /start-convo`
 - `POST /say`
 - `POST /end-convo`
 
-Use those when you explicitly want to patch conversation state. Use the browser
-or WebSocket paths when you need full live behavior.
+Use browser or WebSocket flows when you need the exact paced runtime behavior
+across whole ticks. Use the admin routes when you need immediate inspection or
+setup while still reusing the queue-driven command path.
 
 ## Read Routes
 
@@ -63,14 +68,14 @@ curl 'localhost:3001/api/debug/log?playerId=human_1&type=input_state,input_move,
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `POST` | `/tick` | advance the simulation manually |
-| `POST` | `/spawn` | spawn a player immediately |
-| `POST` | `/move` | set a pathfinding target |
+| `POST` | `/spawn` | enqueue and apply a spawn immediately |
+| `POST` | `/move` | enqueue and apply a pathfinding target immediately |
 | `POST` | `/input` | start or stop held input |
 | `POST` | `/reset` | clear the runtime |
 | `POST` | `/scenario` | load a named scenario |
-| `POST` | `/start-convo` | start a conversation directly |
-| `POST` | `/say` | inject a conversation message directly |
-| `POST` | `/end-convo` | end a conversation directly |
+| `POST` | `/start-convo` | enqueue and apply conversation start immediately |
+| `POST` | `/say` | enqueue and apply a conversation message immediately |
+| `POST` | `/end-convo` | enqueue and apply conversation end immediately |
 | `POST` | `/mode` | switch between realtime and stepped mode |
 | `POST` | `/memories` | create a memory directly |
 | `POST` | `/remember-convo` | turn a conversation into memories |
@@ -138,5 +143,7 @@ curl localhost:3001/api/debug/screenshot > /tmp/ai-town.png
 - Prefer `/scenario` over `/reset` for normal debugging.
 - Prefer queue-driven gameplay plus WebSocket flows when you need to reproduce
   real runtime behavior.
-- Use direct conversation routes only when you explicitly want to inspect or
-  patch conversation state.
+- Use admin routes when you want queue-backed writes without waiting for the
+  next realtime tick.
+- Memory creation, bear spawning, and screenshot capture remain explicit debug
+  helpers rather than production gameplay paths.

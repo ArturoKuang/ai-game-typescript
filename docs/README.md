@@ -43,7 +43,7 @@ If a behavior is not covered here, the source of truth is the code in
 
 | File | What it does | Doc page |
 | --- | --- | --- |
-| `server/src/index.ts` | Runtime bootstrap and wiring | [Architecture](architecture.md) |
+| `server/src/bootstrap/runtime.ts` | Runtime composition and wiring | [Architecture](architecture.md) |
 | `server/src/engine/gameLoop.ts` | Tick pipeline and command processing | [Server engine](server-engine.md) |
 | `server/src/network/websocket.ts` | WebSocket server and event bridge | [Networking](networking.md) |
 | `server/src/debug/router.ts` | Debug API routes | [Debug API](debug-api.md) |

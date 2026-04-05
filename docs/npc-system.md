@@ -149,5 +149,6 @@ Effects:
 - The embedder is deterministic and local, not production-grade semantic search.
 - The primary provider is a CLI bridge, not a long-lived SDK integration.
 - A provider failure can push the process onto scripted fallback behavior.
-- Direct conversation mutation through some debug API routes bypasses the normal
-  live conversation flow and does not fully exercise orchestration hooks.
+- Debug conversation routes now reuse queued conversation commands, but they
+  still drain the queue synchronously for inspection-oriented workflows instead
+  of waiting for a normal realtime tick.
