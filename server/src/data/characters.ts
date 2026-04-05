@@ -3,9 +3,8 @@
  *
  * `server/src/index.ts` uses this list during boot to spawn the default town
  * residents, and `server/src/debug/scenarios.ts` reuses it to build named
- * debug setups. The root-level `data/characters.ts` file is a parallel copy
- * for non-server consumers; this server-local file is the one that actually
- * drives gameplay today.
+ * debug setups. The repo-root `data/characters.ts` file is now a thin
+ * re-export so non-server consumers can reference the same source of truth.
  */
 import type { CharacterDef } from "../engine/types.js";
 
