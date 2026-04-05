@@ -1,62 +1,59 @@
 # Documentation Index
 
-This folder is the project reference set for the current AI Town codebase. It is organized by runtime system, subsystem, and component so you can move from the top-level architecture down to individual files without reverse-engineering the repository first.
+This folder only tracks docs that describe the current codebase. Stale design
+notes and speculative pages were removed so the remaining set can stay useful.
 
-The pages under `Runtime Systems` and `API And Workflow References` describe the code that exists today. The `Design Notes` section is intentionally separate because those files are exploratory and should not be treated as the runtime source of truth.
+If a behavior is not covered here, the source of truth is the code in
+`client/`, `server/src/`, and `data/`.
 
 ## Start Here
 
-- [Getting started](getting-started.md): local setup, runtime modes, and first commands.
-- [Architecture](architecture.md): system boundaries, boot flow, runtime ownership, and end-to-end data flow.
-- [Component catalog](component-catalog.md): file-by-file map of the major project components.
+- [Getting started](getting-started.md): local setup, first runtime checks, and
+  common commands.
+- [Architecture](architecture.md): runtime ownership, boot flow, and major data
+  paths.
+- [Debug API reference](debug-api.md): route reference for `/api/debug`.
 
 ## Runtime Systems
 
-- [Server engine](server-engine.md): authoritative simulation, movement, conversations, events, and invariants.
-- [Networking](networking.md): WebSocket protocol, HTTP surfaces, message flow, and client/server transport boundaries.
-- [Debug tooling](debug-tooling.md): debug router, scenarios, ASCII rendering, harnesses, and operational caveats.
-- [NPC system](npc-system.md): orchestration, memory retrieval, provider stack, reflections, and persistence hooks.
-- [Persistence](persistence.md): database wiring, schema, repositories, in-memory fallbacks, and current storage gaps.
-- [Client system](client-system.md): browser bootstrap, prediction, rendering, UI, and client debug hooks.
-- [Shared data](shared-data.md): map content, NPC definitions, spawn/activity layout, and shared assets.
-- [Infrastructure](infrastructure.md): scripts, Docker, ports, environment variables, and runtime topologies.
-- [Testing](testing.md): test helpers, suite coverage, harnesses, and verification strategy.
+- [Server engine](server-engine.md): authoritative simulation, movement,
+  conversations, events, and invariants.
+- [Networking](networking.md): WebSocket protocol, HTTP surfaces, and transport
+  boundaries.
+- [NPC system](npc-system.md): autonomy, dialogue orchestration, providers, and
+  memory.
+- [Client system](client-system.md): browser bootstrap, prediction, rendering,
+  UI, and debug overlay behavior.
+- [Persistence](persistence.md): database wiring, repositories, and fallback
+  modes.
+- [Shared data](shared-data.md): map content, NPC definitions, and runtime data
+  ownership.
+- [Infrastructure](infrastructure.md): scripts, ports, Docker, and environment
+  variables.
+- [Testing](testing.md): suite structure, harnesses, and verification workflow.
 
-## API And Workflow References
+## Debugging And Workflow
 
-- [Debug API reference](debug-api.md): route-by-route reference for `/api/debug`.
-- [Debugging workflow](debugging-workflow.md): recommended repro and verification loop for runtime bugs.
-
-## Design Notes
-
-- [Chemistry system design](chemistry-system-design.md): forward-looking design notes for a future chemistry/physics layer.
-- [Architecture review](architecture-review.md): prioritized list of architectural improvements and tech debt.
+- [Debug tooling](debug-tooling.md): router, harnesses, ASCII map, and capture
+  surfaces.
+- [Debugging workflow](debugging-workflow.md): recommended bug-repro loop for
+  movement and simulation issues.
 
 ## Quick File Navigation
 
-If you're looking at a specific file and want context, here's a cheat sheet:
-
 | File | What it does | Doc page |
-|------|-------------|----------|
-| `server/src/engine/gameLoop.ts` | Tick pipeline, movement, commands | [Server engine](server-engine.md) |
-| `server/src/engine/collision.ts` | AABB tile collision resolution | [Server engine](server-engine.md) |
-| `server/src/engine/pathfinding.ts` | A* with binary min-heap | [Server engine](server-engine.md) |
-| `server/src/engine/conversation.ts` | Conversation state machine | [Server engine](server-engine.md) |
-| `server/src/engine/types.ts` | All shared data models | [Server engine](server-engine.md) |
-| `server/src/network/websocket.ts` | WebSocket server + event bridge | [Networking](networking.md) |
-| `server/src/network/protocol.ts` | Message type definitions | [Networking](networking.md) |
-| `server/src/npc/orchestrator.ts` | NPC reply scheduling + initiation | [NPC system](npc-system.md) |
-| `server/src/npc/memory.ts` | Memory scoring + reflection trigger | [NPC system](npc-system.md) |
-| `server/src/npc/provider.ts` | LLM interface + prompt builders | [NPC system](npc-system.md) |
-| `server/src/db/repository.ts` | Memory persistence (pgvector) | [Persistence](persistence.md) |
+| --- | --- | --- |
+| `server/src/index.ts` | Runtime bootstrap and wiring | [Architecture](architecture.md) |
+| `server/src/engine/gameLoop.ts` | Tick pipeline and command processing | [Server engine](server-engine.md) |
+| `server/src/network/websocket.ts` | WebSocket server and event bridge | [Networking](networking.md) |
 | `server/src/debug/router.ts` | Debug API routes | [Debug API](debug-api.md) |
-| `client/src/main.ts` | Client entry, reconciliation, input | [Client system](client-system.md) |
-| `client/src/prediction.ts` | Client-side collision prediction | [Client system](client-system.md) |
-| `client/src/renderer.ts` | PixiJS tile + player rendering | [Client system](client-system.md) |
+| `server/src/autonomy/manager.ts` | NPC autonomy and survival state | [NPC system](npc-system.md) |
+| `server/src/npc/orchestrator.ts` | NPC dialogue scheduling and memory hooks | [NPC system](npc-system.md) |
+| `client/src/main.ts` | Browser coordinator and debug polling | [Client system](client-system.md) |
+| `client/src/renderer.ts` | PixiJS renderer and overlays | [Client system](client-system.md) |
 
-## Documentation Conventions
+## Conventions
 
-- System docs describe current behavior from source, not intended behavior.
-- Component names generally match file names and import boundaries.
-- Caveats are called out when a surface bypasses the normal event flow or persistence path.
-- When docs and code disagree, the code in `client/`, `server/src/`, and `data/` is the source of truth.
+- Prefer stable behavior over exact counts when writing docs.
+- Call out caveats when a route or workflow bypasses the normal runtime path.
+- Keep docs scoped to shipped behavior, not planned systems.
