@@ -1,6 +1,6 @@
 {
   "meta": {
-    "extractedAt": "2026-04-05T18:31:55.080Z",
+    "extractedAt": "2026-04-05T19:14:05.100Z",
     "rootDir": "/Users/arturokuang/ai-game-typescript",
     "fileCount": 69,
     "classCount": 156,
@@ -18044,6 +18044,13 @@
         },
         {
           "kind": "mutation",
+          "description": "enqueue \"pickup\"",
+          "sourceFile": "server/src/network/websocket.ts",
+          "targetFile": "server/src/engine/gameLoop.ts",
+          "line": 547
+        },
+        {
+          "kind": "mutation",
           "description": "enqueue \"eat\"",
           "sourceFile": "server/src/network/websocket.ts",
           "targetFile": "server/src/engine/gameLoop.ts",
@@ -18076,6 +18083,13 @@
           "sourceFile": "server/src/network/websocket.ts",
           "targetFile": "server/src/engine/gameLoop.ts",
           "line": 318
+        },
+        {
+          "kind": "mutation",
+          "description": "enqueue \"end_convo\"",
+          "sourceFile": "server/src/network/websocket.ts",
+          "targetFile": "server/src/engine/gameLoop.ts",
+          "line": 515
         },
         {
           "kind": "mutation",

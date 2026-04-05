@@ -796,6 +796,18 @@ export class GameWebSocketServer {
       type: "error",
       data: { message },
     });
+    const info = this.clients.get(ws);
+    this.publishDebugEvent({
+      tick: this.game.currentTick,
+      type: "error",
+      severity: "error",
+      subjectType: info?.playerId ? "player" : "system",
+      subjectId: info?.playerId ?? "system",
+      title: "Server error",
+      message: info?.playerId
+        ? `${this.getPlayerLabel(info.playerId)}: ${message}`
+        : message,
+    });
   }
 
   get clientCount(): number {

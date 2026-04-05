@@ -339,4 +339,129 @@ describe("WebSocket protocol", () => {
       observer.messages.filter((message) => message.type === "message").length,
     ).toBe(observerMessagesBefore);
   });
+
+  it("streams debug bootstrap and global conversation events to debug subscribers", async () => {
+    try {
+      const probe = createServer();
+      await new Promise<void>((resolve, reject) => {
+        probe.once("error", reject);
+        probe.listen(0, "127.0.0.1", () => {
+          probe.close();
+          resolve();
+        });
+      });
+    } catch {
+      console.log("Skipping: socket binding not permitted in this environment");
+      return;
+    }
+
+    game = new GameLoop({ mode: "stepped", tickRate: 20 });
+    game.loadWorld({
+      width: 5,
+      height: 5,
+      tiles: [
+        ["wall", "wall", "wall", "wall", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "wall", "wall", "wall", "wall"],
+      ],
+      activities: [],
+      spawnPoints: [
+        { x: 1, y: 1 },
+        { x: 2, y: 1 },
+        { x: 3, y: 1 },
+      ],
+    });
+
+    server = createServer();
+    wsServer = new GameWebSocketServer(server, game);
+    game.on("*", (event) => wsServer!.broadcastGameEvent(event));
+
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    sockets = await createHarnesses(3, `ws://127.0.0.1:${port}`);
+
+    const [alice, bob, dashboard] = sockets;
+
+    sendMessage(alice.ws, { type: "join", data: { name: "Alice" } });
+    sendMessage(bob.ws, { type: "join", data: { name: "Bob" } });
+
+    const aliceJoin = await waitForMessage(
+      alice.messages,
+      (message) => message.type === "player_joined" && message.data.name === "Alice",
+    );
+    const bobJoin = await waitForMessage(
+      bob.messages,
+      (message) => message.type === "player_joined" && message.data.name === "Bob",
+    );
+    await waitForDispatch();
+    game.tick();
+
+    sendMessage(dashboard.ws, { type: "subscribe_debug" });
+    const bootstrap = (await waitForMessage(
+      dashboard.messages,
+      (message) => message.type === "debug_bootstrap",
+    )) as Extract<ServerMessage, { type: "debug_bootstrap" }>;
+
+    expect(bootstrap.data.players.map((player) => player.name)).toEqual(
+      expect.arrayContaining(["Alice", "Bob"]),
+    );
+    expect(bootstrap.data.conversations).toHaveLength(0);
+
+    sendMessage(alice.ws, {
+      type: "start_convo",
+      data: { targetId: bobJoin.data.id },
+    });
+    await waitForDispatch();
+    game.tick();
+
+    const invited = (await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_conversation_upsert" &&
+        message.data.state === "invited",
+    )) as Extract<ServerMessage, { type: "debug_conversation_upsert" }>;
+
+    expect(invited.data.player1Id).toBe(aliceJoin.data.id);
+    expect(invited.data.player2Id).toBe(bobJoin.data.id);
+
+    sendMessage(bob.ws, {
+      type: "accept_convo",
+      data: { convoId: invited.data.id },
+    });
+    await waitForDispatch();
+    game.tick();
+
+    await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_conversation_upsert" &&
+        message.data.id === invited.data.id &&
+        message.data.state === "active",
+    );
+
+    sendMessage(alice.ws, { type: "say", data: { content: "secret" } });
+    await waitForDispatch();
+    game.tick();
+
+    const debugMessage = (await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_conversation_message" &&
+        message.data.content === "secret",
+    )) as Extract<ServerMessage, { type: "debug_conversation_message" }>;
+
+    expect(debugMessage.data.convoId).toBe(invited.data.id);
+
+    const debugEvent = (await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_event" &&
+        message.data.type === "conversation_message" &&
+        message.data.relatedConversationId === invited.data.id,
+    )) as Extract<ServerMessage, { type: "debug_event" }>;
+
+    expect(debugEvent.data.message).toContain("secret");
+  });
 });
