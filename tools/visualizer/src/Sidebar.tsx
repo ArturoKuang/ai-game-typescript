@@ -11,6 +11,7 @@ import {
   type DataModelVisibilityOptions,
 } from "./dataModel";
 import { FlowControls } from "./sidebar/FlowControls";
+import { EvidenceRow, InspectorHeader, actionButtonStyle, relationshipMetaBadgeStyle } from "./sidebar/sharedInspector";
 
 const ZOOM_LABELS: Record<ZoomLevel, string> = {
   container: "Containers",
@@ -1186,65 +1187,6 @@ function RelationshipList(
     </div>
   );
 }
-
-function InspectorHeader({ title, subtitle, color }: { title: string; subtitle?: string; color: string }) {
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{title}</div>
-      {subtitle && (
-        <div style={{ fontSize: 10, color: color, marginTop: 2, fontFamily: "monospace" }}>
-          [{subtitle}]
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EvidenceRow({ item }: { item: { kind: string; confidence: string; fileId?: string; line?: number; symbol?: string; detail: string } }) {
-  return (
-    <div
-      style={{
-        padding: "8px 10px",
-        marginBottom: 6,
-        border: "1px solid #273449",
-        borderRadius: 8,
-        background: "#0f172a",
-      }}
-    >
-      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 4 }}>
-        {item.kind}
-        {item.fileId ? ` · ${item.fileId}` : ""}
-        {item.line ? `:${item.line}` : ""}
-        {item.symbol ? ` · ${item.symbol}` : ""}
-        {` · ${item.confidence}`}
-      </div>
-      <div style={{ fontSize: 11, color: "#d1d5db", lineHeight: 1.5 }}>{item.detail}</div>
-    </div>
-  );
-}
-
-const actionButtonStyle = {
-  display: "block",
-  width: "100%",
-  appearance: "none" as const,
-  textAlign: "left" as const,
-  padding: "8px 10px",
-  marginBottom: 6,
-  background: "#0f172a",
-  border: "1px solid #273449",
-  borderRadius: 8,
-  cursor: "pointer",
-};
-
-const relationshipMetaBadgeStyle = {
-  fontSize: 9,
-  fontWeight: 700,
-  color: "#dbeafe",
-  background: "#111827",
-  border: "1px solid #273449",
-  borderRadius: 999,
-  padding: "3px 8px",
-};
 
 function DataModelTabControls(
   {
