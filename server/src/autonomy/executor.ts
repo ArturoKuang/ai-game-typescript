@@ -204,6 +204,7 @@ function clearCurrentPlanState(state: NpcAutonomyState): void {
   state.currentPlanReasoning = null;
   state.currentStepIndex = 0;
   state.currentExecution = null;
+  state.goalSelectionStartedAtTick = null;
 }
 
 function buildExecutionContext(

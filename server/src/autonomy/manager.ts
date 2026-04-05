@@ -850,6 +850,97 @@ export class NpcAutonomyManager {
     };
   }
 
+  private publishDebugStateIfChanged(
+    npcId: string,
+    state: NpcAutonomyState,
+  ): void {
+    const debugState = this.buildDebugState(npcId, state);
+    const serialized = JSON.stringify(debugState);
+    if (this.debugStateHashes.get(npcId) === serialized) {
+      return;
+    }
+
+    this.debugStateHashes.set(npcId, serialized);
+    for (const listener of this.debugStateListeners) {
+      listener(debugState);
+    }
+  }
+
+  private emitDebugEvent(event: DebugFeedEventPayload): void {
+    for (const listener of this.debugEventListeners) {
+      listener(event);
+    }
+  }
+
+  private emitActionTransitions(
+    npcId: string,
+    transitions: ReadonlyArray<{
+      type: "action_started" | "action_completed" | "action_failed";
+      actionId: string;
+      stepIndex: number;
+      reason?: string;
+    }>,
+  ): void {
+    for (const transition of transitions) {
+      const actionLabel =
+        this.registry.get(transition.actionId)?.displayName ?? transition.actionId;
+
+      if (transition.type === "action_started") {
+        this.emitDebugEvent(
+          this.createNpcDebugEvent(npcId, {
+            type: "action_started",
+            severity: "info",
+            title: "Action started",
+            message: `${this.getNpcLabel(npcId)} started ${actionLabel}.`,
+          }),
+        );
+        continue;
+      }
+
+      if (transition.type === "action_completed") {
+        this.emitDebugEvent(
+          this.createNpcDebugEvent(npcId, {
+            type: "action_completed",
+            severity: "info",
+            title: "Action completed",
+            message: `${this.getNpcLabel(npcId)} completed ${actionLabel}.`,
+          }),
+        );
+        continue;
+      }
+
+      this.emitDebugEvent(
+        this.createNpcDebugEvent(npcId, {
+          type: "action_failed",
+          severity: "warning",
+          title: "Action failed",
+          message: `${this.getNpcLabel(npcId)} failed ${actionLabel}${transition.reason ? `: ${transition.reason}` : "."}`,
+        }),
+      );
+    }
+  }
+
+  private createNpcDebugEvent(
+    npcId: string,
+    params: Omit<DebugFeedEventPayload, "tick" | "subjectType" | "subjectId" | "relatedNpcId">,
+  ): DebugFeedEventPayload {
+    return {
+      tick: this.game.currentTick,
+      subjectType: "npc",
+      subjectId: npcId,
+      relatedNpcId: npcId,
+      ...params,
+    };
+  }
+
+  private getNpcLabel(npcId: string): string {
+    return this.game.getPlayer(npcId)?.name ?? npcId;
+  }
+
+  private formatGoal(goalId: string): string {
+    return goalId.replaceAll("_", " ");
+  }
+
   private idleWander(npcId: string, _state: NpcAutonomyState): void {
     const npc = this.game.getPlayer(npcId);
     if (!npc) return;
@@ -896,6 +987,7 @@ export class NpcAutonomyManager {
     state.currentStepIndex = 0;
     state.currentExecution = null;
     state.consecutivePlanFailures = 0;
+    state.goalSelectionStartedAtTick = null;
   }
 
   private getOrCreateHumanSurvival(
