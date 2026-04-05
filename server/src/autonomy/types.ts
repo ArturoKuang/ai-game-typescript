@@ -5,7 +5,8 @@
  * The autonomy system reads Player state and drives behavior by
  * enqueuing commands on the GameLoop.
  */
-import type { Command, Position } from "../engine/types.js";
+import type { Command, GameEvent, Position, TickResult } from "../engine/types.js";
+import type { NpcInviteDecisionProvider } from "../engine/conversation.js";
 
 // ---------------------------------------------------------------------------
 // Needs / Drives
@@ -234,22 +235,73 @@ export interface GoalOption {
 // Minimal interfaces to avoid circular imports
 // ---------------------------------------------------------------------------
 
+/**
+ * Stable player slice shared by the planner/executor and their tests.
+ *
+ * Audit note: keep this intentionally narrow so mock games in autonomy tests
+ * only have to model the fields used by planning and action execution.
+ */
+export interface AutonomyPlayerView {
+  id: string;
+  x: number;
+  y: number;
+  state: string;
+  isNpc: boolean;
+  hp?: number;
+  maxHp?: number;
+}
+
+/**
+ * Richer player slice used by high-level autonomy coordination.
+ *
+ * The manager needs identity text for provider prompts and debug output, but it
+ * still should not depend on the full mutable engine `Player` shape.
+ */
+export interface AutonomyRuntimePlayer extends AutonomyPlayerView {
+  name: string;
+  description: string;
+  personality?: string;
+}
+
+/**
+ * Small engine contract used by the planner/executor path.
+ *
+ * Audit note: this is intentionally smaller than the real `GameLoop`. The
+ * broader runtime-only hooks live on `AutonomyGameRuntime` below.
+ */
 export interface GameLoopInterface {
   readonly currentTick: number;
   enqueue(command: Command): void;
-  getPlayer(
-    id: string,
-  ):
-    | { x: number; y: number; state: string; isNpc: boolean; id: string }
-    | undefined;
-  getPlayers(): {
-    x: number;
-    y: number;
-    state: string;
-    isNpc: boolean;
-    id: string;
-  }[];
+  getPlayer(id: string): AutonomyPlayerView | undefined;
+  getPlayers(): AutonomyPlayerView[];
   setPlayerTarget(playerId: string, x: number, y: number): Position[] | null;
+}
+
+export interface AutonomyWorldInterface {
+  isWalkable(x: number, y: number): boolean;
+}
+
+export interface AutonomyRngInterface {
+  nextInt(max: number): number;
+}
+
+/**
+ * Narrow runtime surface the autonomy manager needs from the engine.
+ *
+ * Audit note: this intentionally captures the extra event/runtime hooks used by
+ * `NpcAutonomyManager` so we can pass the engine around structurally without
+ * `as unknown as` casts.
+ */
+export interface AutonomyGameRuntime extends GameLoopInterface {
+  getPlayer(id: string): AutonomyRuntimePlayer | undefined;
+  getPlayers(): AutonomyRuntimePlayer[];
+  readonly world: AutonomyWorldInterface;
+  readonly rng: AutonomyRngInterface;
+  on(type: string, handler: (event: GameEvent) => void): void;
+  onAfterTick(callback: (result: TickResult) => void): void;
+  setNpcInviteDecisionProvider(
+    provider: NpcInviteDecisionProvider | undefined,
+  ): void;
 }
 
 export interface EntityManagerInterface {

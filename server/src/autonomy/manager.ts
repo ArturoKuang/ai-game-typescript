@@ -13,7 +13,6 @@ import type {
   Conversation,
   NpcInviteDecision,
 } from "../engine/conversation.js";
-import type { GameLoop } from "../engine/gameLoop.js";
 import type { CharacterDef, Command, Position, TickResult } from "../engine/types.js";
 import type { MemoryManager } from "../npc/memory.js";
 import type { NpcModelProvider } from "../npc/provider.js";
@@ -37,7 +36,7 @@ import {
 import { plan } from "./planner.js";
 import { ActionRegistry } from "./registry.js";
 import type {
-  GameLoopInterface,
+  AutonomyGameRuntime,
   GoalOption,
   NeedConfig,
   NpcAutonomyDebugState,
@@ -93,7 +92,7 @@ export class NpcAutonomyManager {
   private playerSurvival: Map<string, SurvivalSnapshot> = new Map();
   private registry: ActionRegistry;
   private needConfigs: Record<NeedType, NeedConfig>;
-  private game: GameLoop;
+  private game: AutonomyGameRuntime;
   private entityManager: EntityManager;
   private provider?: NpcModelProvider;
   private memoryManager?: MemoryManager;
@@ -123,7 +122,7 @@ export class NpcAutonomyManager {
   private debugStateHashes: Map<string, string> = new Map();
 
   constructor(
-    game: GameLoop,
+    game: AutonomyGameRuntime,
     entityManager: EntityManager,
     options: NpcAutonomyManagerOptions = {},
   ) {
@@ -388,7 +387,7 @@ export class NpcAutonomyManager {
           npc.id,
           state,
           this.registry,
-          this.game as unknown as GameLoopInterface,
+          this.game,
           this.entityManager,
           `Critical need: ${needsResult.newCritical.join(", ")}`,
         );
@@ -411,7 +410,7 @@ export class NpcAutonomyManager {
           const interruptedGoalId = state.currentPlan.goalId;
           invalidatePlan(
             npc.id, state, this.registry,
-            this.game as unknown as GameLoopInterface,
+            this.game,
             this.entityManager, "Emergency flee",
           );
           this.emitDebugEvent(
@@ -431,7 +430,7 @@ export class NpcAutonomyManager {
         if (state.currentPlan) {
           const result = executeAutonomyTick(
             npc.id, state, this.registry,
-            this.game as unknown as GameLoopInterface, this.entityManager,
+            this.game, this.entityManager,
           );
           this.emitActionTransitions(npc.id, result.transitions);
           if (result.planCompleted) state.consecutivePlanFailures = 0;
@@ -468,7 +467,7 @@ export class NpcAutonomyManager {
           npc.id,
           state,
           this.registry,
-          this.game as unknown as GameLoopInterface,
+          this.game,
           this.entityManager,
         );
         this.emitActionTransitions(npc.id, result.transitions);
@@ -752,7 +751,7 @@ export class NpcAutonomyManager {
 
     const currentState = snapshotWorldState(
       npcId,
-      this.game as unknown as GameLoopInterface,
+      this.game,
       state.needs,
       state.inventory,
       this.entityManager,

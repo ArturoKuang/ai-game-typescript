@@ -39,9 +39,20 @@ export interface NpcModelResponse {
   latencyMs: number;
 }
 
+/**
+ * Minimal NPC identity payload needed for goal selection.
+ *
+ * Audit note: goal selection does not need transient movement/path fields, so
+ * this stays narrower than the full engine `Player` type on purpose.
+ */
+export type NpcGoalActor = Pick<
+  Player,
+  "id" | "name" | "description" | "personality"
+>;
+
 /** Input context for NPC goal selection in the autonomy system. */
 export interface NpcGoalRequest {
-  npc: Player;
+  npc: NpcGoalActor;
   needs: { health: number; food: number; water: number; social: number };
   inventory: Record<string, number>;
   nearbyEntities: { type: string; distance: number; name?: string }[];
