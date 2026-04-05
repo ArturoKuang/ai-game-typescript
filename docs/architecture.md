@@ -2,7 +2,9 @@
 
 ## Overview
 
-AI Town is a single-process authoritative simulation with a browser client attached over WebSocket and HTTP. The core rule is simple: runtime state lives in `GameLoop`, and everything else either feeds commands into it, reads state from it, or reacts to the events it emits.
+AI Town is a single-process authoritative simulation. The browser is a thin
+client over HTTP and WebSocket; the server owns gameplay state, autonomous NPC
+behavior, combat, and debug surfaces.
 
 ```text
 Browser client (:5173)
@@ -12,197 +14,150 @@ Browser client (:5173)
                                                     v
                                                 GameLoop
                                                   |
-                    +-----------------------------+-----------------------------+
-                    |                             |                             |
-                    v                             v                             v
-                 World                   ConversationManager                GameLogger
-                    |
-                    +-------------------+
-                                        |
-                                        v
-                               NpcOrchestrator
-                                        |
-                    +-------------------+-------------------+
-                    |                                       |
-                    v                                       v
-                               MemoryManager          NpcModelProvider
-                    |                                       |
-                    v                                       v
-           MemoryStore (Postgres or in-memory)   Claude CLI primary + scripted fallback
+         +--------------------------+-------------+--------------+
+         |                          |                            |
+         v                          v                            v
+      World                ConversationManager               GameLogger
+         |
+         +--------------------+
+                              |
+                              v
+                        EntityManager
+                              |
+              +---------------+----------------+
+              |                                |
+              v                                v
+      NpcAutonomyManager                 BearManager
+              |
+      +-------+--------+
+      |                |
+      v                v
+NpcOrchestrator   MemoryManager + provider stack
 ```
 
-## Authoritative Ownership
+## Runtime Ownership
 
-The main runtime ownership boundaries are:
+The main ownership boundaries are:
 
-- `GameLoop`: players, movement state, queued commands, event emission, loop mode, tick counter.
-- `World`: static map geometry, activities, and spawn points loaded from `data/map.json`.
-- `ConversationManager`: conversation lifecycle and message history.
-- `GameLogger`: in-memory event ring buffer used by the debug API.
-- `GameWebSocketServer`: transport only; it does not own gameplay state.
-- `NpcOrchestrator`: reacts to conversation events, drives NPC replies/reflections, and can initiate nearby conversations.
-- `MemoryManager`: semantic memory creation, retrieval, scoring, and reflection thresholds.
+- `GameLoop`: players, command queue, movement, conversations, event emission,
+  tick counter, and logger.
+- `World`: static map geometry, activities, and spawn points from
+  `data/map.json`.
+- `EntityManager`: mutable world entities loaded from the map and updated at
+  runtime.
+- `NpcAutonomyManager`: NPC needs, plans, action execution, and human survival
+  snapshots.
+- `BearManager`: bear AI, combat, item drops, and inventory-backed pickup/eat
+  handling.
+- `NpcOrchestrator`: NPC dialogue scheduling, memory writes, and reflection
+  generation.
+- `GameWebSocketServer`: transport bridge only. It does not own gameplay state.
+- `createDebugRouter()`: local inspection and control API layered on top of the
+  runtime.
 
 ## Boot Flow
 
 `server/src/index.ts` boots in this order:
 
-1. Create the Express app and HTTP server.
-2. Construct `GameLoop` in `realtime` mode with `tickRate = 20`.
+1. Create Express and the HTTP server.
+2. Create `GameLoop` in `realtime` mode at 20 ticks/sec.
 3. Resolve persistence:
-   - If `DATABASE_URL` is unset or PostgreSQL is unavailable, use in-memory repository/store implementations.
-   - If PostgreSQL is reachable, run `schema.sql` migrations and use the Postgres-backed implementations.
-4. Create `MemoryManager`, NPC provider stack, and `NpcOrchestrator`.
+   - PostgreSQL-backed stores when `DATABASE_URL` is reachable.
+   - in-memory fallback otherwise.
+4. Build the NPC provider stack, memory manager, and `NpcOrchestrator`.
 5. Load `data/map.json` into `World`.
-6. Spawn the five default NPCs from `server/src/data/characters.ts`.
-7. Attach the WebSocket server.
-8. Register the wildcard event bridge that turns game events into WebSocket broadcasts.
-9. Start the realtime loop.
-10. Mount `/health`, `/data/map.json`, and `/api/debug`.
-11. Listen on `PORT` (default `3001`).
+6. Load map entities into `EntityManager`.
+7. Create `NpcAutonomyManager`.
+8. Spawn the default NPC cast from `server/src/data/characters.ts`.
+9. Create `BearManager` and seed the initial bear population.
+10. Attach `GameWebSocketServer` and wire the game-event broadcast bridge.
+11. Register entity, needs, survival, and debug feed broadcasters.
+12. Start the realtime loop and mount `/health`, `/data/map.json`, and
+    `/api/debug`.
 
-The current runtime no longer hard-requires PostgreSQL to start. Without a live database, the simulation still runs, but persistence falls back to memory and `/health` reports `status: "degraded"`.
+The runtime does not require PostgreSQL to start. Without a database, the game
+still runs and `/health` reports `status: "degraded"`.
 
-## Runtime Modes
+## Tick Model
 
-There are two meaningful runtime shapes:
+`GameLoop.tick()` is the authoritative frame boundary. At a high level it:
 
-- Full runtime: browser client, server, optional PostgreSQL, NPC orchestration, WebSocket broadcast loop.
-- Test/runtime-harness mode: stepped `GameLoop` instances created directly in Vitest or the movement harness.
+1. increments the tick counter
+2. drains the queued command list
+3. runs invariant checks when enabled
+4. resolves held-input movement
+5. resolves path-following movement
+6. advances conversations
+7. syncs player conversation state
+8. emits `tick_complete`
+9. runs after-tick callbacks
 
-`GameLoop` itself supports:
+That last step matters: autonomy, bears, and NPC orchestration mostly react to
+events or after-tick hooks, so the commands they enqueue take effect on the
+next engine tick.
 
-- `realtime`: uses `setInterval()` and ticks automatically.
-- `stepped`: only advances when `tick()` is called directly.
+## Major Runtime Flows
 
-## Tick Pipeline
+### Player Join
 
-Each call to `GameLoop.tick()` runs these phases in order:
-
-1. Drain the command queue.
-2. Validate invariants when `validateInvariants` is enabled.
-3. Process held-input movement for non-conversing players.
-4. Process A* path-following movement for players with `path` state.
-5. Emit `player_update` events for players still moving.
-6. Advance conversations.
-7. Sync `player.state` and `player.currentConvoId` from active conversations.
-8. Re-run invariant checks when enabled.
-9. Emit `tick_complete`.
-
-That sequencing matters. Examples:
-
-- `join`, `move`, `start_convo`, and `say` commands do not take effect until the next tick.
-- `input_start` and `input_stop` update held input immediately, but the position change still happens during the tick.
-- NPC reply generation is triggered by conversation events, but the actual `say` command is enqueued back into the next tick.
-
-## Core Data Flow
-
-### Join Flow
-
-1. Client opens WebSocket and receives a full `state` snapshot.
-2. Client sends `join`.
-3. Server allocates `human_N` and queues a `spawn` command.
-4. Server immediately sends a preview `player_joined` message to that socket so the client learns its id before the next tick.
-5. On the next tick, `GameLoop` processes the queued spawn and the broadcast bridge emits `player_joined` to every connected client.
-
-### Continuous Movement Flow
-
-1. Browser keydown sends `input_start`.
-2. `GameWebSocketServer` calls `game.setPlayerInput()` immediately.
-3. Next tick resolves velocity, wall collision, and player collision inside `processInputMovement()`.
-4. `input_move` and `player_update` events are emitted.
-5. `server/src/index.ts` maps those events to WebSocket `player_update` broadcasts.
-6. The client reconciles its predicted self-position toward server authority.
-
-### Path Movement Flow
-
-1. Browser click or debug `POST /move` calls `setPlayerTarget()`.
-2. The engine computes a 4-directional A* path from the rounded current position.
-3. The player follows that path at `player.speed` tiles per tick until `move_end`.
-4. Any new held input or discrete direction move cancels the path and emits `move_cancelled`.
-
-### Conversation Flow
-
-1. A queued `start_convo` command creates an `invited` conversation.
-2. If either participant is an NPC, the next conversation tick auto-accepts and moves the conversation to `walking`.
-3. Players rendezvous toward a midpoint until Manhattan distance is `<= 2`.
-4. The conversation becomes `active`.
-5. `NpcOrchestrator` can then generate NPC replies and enqueue `say` commands.
-6. On end, memories are written for both participants and NPC reflections may be generated.
-
-### NPC Memory Flow
-
-1. `MemoryManager` embeds content with the configured `Embedder`.
-2. Memory rows are stored through the abstract `MemoryStore`.
-3. Retrieval overfetches vector matches, then re-ranks by recency, importance, and semantic similarity.
-4. Reflection generation is gated by recent memory count plus a cumulative importance threshold.
-
-## Current System Rules
-
-### Map And World
-
-- The shipped map is `20 x 20`.
-- The tile set currently contains `304` floor tiles and `96` wall tiles.
-- The code supports `water`, but the current map does not use it.
-- Activities and spawn points come from `data/map.json`, not the database.
+1. The client connects and receives a `state` snapshot.
+2. The client sends `join`.
+3. The server allocates a `human_N` id and queues a spawn.
+4. The socket gets an optimistic `player_joined` preview immediately.
+5. The queued spawn becomes authoritative on the next tick.
 
 ### Movement
 
-There are three movement paths:
+There are two main movement paths and one compatibility path:
 
-- Held input: floating-point, velocity-based, diagonal-normalized, uses `moveSpeed` in tiles per second.
-- A* target movement: waypoint-based, uses `speed` in tiles per tick.
-- Discrete `move_direction`: one-tile immediate move, retained mostly for compatibility and debug surfaces.
+- held input via `input_start` and `input_stop`
+- A* path movement via `move`
+- one-tile `move_direction` for compatibility and debug flows
+
+Held input updates input state immediately, but the actual position change still
+happens inside the next engine tick.
 
 ### Conversations
 
-Conversation states are:
+Conversation state always moves through:
 
 ```text
 invited -> walking -> active -> ended
 ```
 
-Current constants from `server/src/engine/conversation.ts`:
+`NpcAutonomyManager` owns initiation pressure. `NpcOrchestrator` owns NPC
+replying once a conversation is active.
 
-- Activation distance: `2` Manhattan tiles.
-- Timeout with no messages: `600` ticks.
-- Max messages: `20`.
-- Max duration: `1200` ticks.
+### NPC Autonomy And Combat
 
-### NPC Orchestration
+- `NpcAutonomyManager` decays NPC food, water, and social needs.
+- It also tracks human survival snapshots: health, food, water, and social.
+- Plans are built from actions like `goto`, `harvest`, `cook`, `drink`, `eat`,
+  `socialize`, `flee`, and `pickup`.
+- `BearManager` consumes queued `attack`, `pickup`, and `eat` commands through
+  `GameLoop.onCommand()` hooks and turns them into combat and inventory effects.
 
-Default orchestrator settings from `server/src/npc/orchestrator.ts`:
+## Debug Surfaces
 
-- Initiation scan interval: every `20` ticks.
-- Initiation cooldown: `120` ticks per NPC.
-- Initiation radius: `6` Manhattan tiles.
-- Reflection generation: enabled by default.
+The runtime exposes three practical debug entry points:
 
-## Architectural Caveats
+- `/api/debug` for inspection, stepping, scenarios, conversation mutation, and
+  screenshot capture
+- the gameplay client in `client/index.html`, which shows a compact debug
+  overlay and currently polls `/api/debug/conversations` plus
+  `/api/debug/autonomy/state`
+- the dedicated dashboard in `client/debug.html`, which subscribes to the
+  WebSocket debug feed with `subscribe_debug` and renders live conversation,
+  autonomy, alert, and event panels
 
-- `server/src/debug/router.ts` mutates some conversation state directly for `/start-convo`, `/say`, and `/end-convo` instead of going through queued `GameLoop` commands. Those routes are useful for inspection, but they do not emit the full event stream that the WebSocket bridge and NPC orchestrator normally observe.
-- The database schema contains `world`, `activities`, and `game_log` tables, but the current runtime still loads world data from `data/map.json` and keeps the live event log in memory.
-- There are two NPC definition files: `data/characters.ts` and `server/src/data/characters.ts`. The server currently imports the copy inside `server/src/`.
-- The client mirrors many server types manually in `client/src/types.ts` rather than importing them from a shared package.
+## Important Caveats
 
-## Directory Guide
-
-```text
-client/
-  src/main.ts          Browser bootstrap and prediction loop
-  src/network.ts       Browser WebSocket client
-  src/renderer.ts      PixiJS renderer
-  src/ui.ts            Sidebar and chat DOM bindings
-
-server/src/
-  index.ts             Runtime bootstrap and event bridge
-  engine/              Deterministic simulation core
-  network/             Protocol definitions and WebSocket server
-  debug/               Debug router, scenarios, ASCII map, harness
-  npc/                 Memory + orchestration + provider stack
-  db/                  Repository, migrations, schema, persistence store
-
-data/
-  map.json             Canonical map, activities, and spawn points
-  characters.ts        Shared NPC definition copy
-```
+- `/api/debug/start-convo`, `/api/debug/say`, and `/api/debug/end-convo` call
+  `ConversationManager` directly and bypass the normal queued command path.
+- World tiles and activities are still file-backed even though the schema has
+  broader world tables.
+- `client/src/types.ts` mirrors server types manually; there is no shared
+  protocol package.
+- `server/src/data/characters.ts` is the canonical character list. The repo-root
+  `data/characters.ts` file is only a stable re-export for non-server
+  consumers.

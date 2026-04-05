@@ -1,104 +1,67 @@
 # Shared Data
 
-This document covers the shared static content in `data/` and the NPC definition copies used across the repo.
+This document covers the checked-in runtime data in `data/`.
 
-## Map Data
+## `data/map.json`
 
-`data/map.json` is the canonical shipped map.
+`data/map.json` is the authoritative checked-in world file used at runtime.
 
-Current shape:
-
-- width: `20`
-- height: `20`
-- tile counts:
-  - `304` floor
-  - `96` wall
-  - `0` water in the current file
-- activities: `5`
-- spawn points: `5`
-
-The map file provides:
+It contains:
 
 - tile layout
-- activity definitions
+- activities
 - spawn points
+- initial world entities
 
-The server serves this file at `/data/map.json`, and the browser uses it for:
+The current map includes:
 
-- tile rendering
-- activity rendering
-- collision prediction
+- floor, wall, and water tiles
+- a central pond represented both as water tiles and nearby `water_source`
+  entities for autonomy
+- berry bushes, ground food pickups, and campfires
+
+The server serves this file at `/data/map.json`. The browser uses it for tile
+rendering and collision prediction.
 
 ## Activities
 
-Current activities from `data/map.json`:
+Activities are still static markers embedded in the map file. The server
+returns them through `/api/debug/activities`, and the client renders them on
+top of the map.
 
-| Id | Name | Position | Capacity | Emoji |
-| --- | --- | --- | --- | --- |
-| 1 | cafe counter | `(3, 3)` | 2 | `☕` |
-| 2 | reading nook | `(16, 3)` | 2 | `📚` |
-| 3 | park bench west | `(5, 15)` | 2 | `🪑` |
-| 4 | park bench east | `(14, 15)` | 2 | `🪑` |
-| 5 | town fountain | `(10, 10)` | 4 | `⛲` |
-
-These are currently decorative/debug-visible markers. The engine has `currentActivityId` on players, but no active activity behavior subsystem yet.
+They are visible and useful for orientation, but there is no separate activity
+gameplay subsystem yet.
 
 ## Spawn Points
 
-Current spawn points:
+Spawn points also come from `data/map.json`.
 
-- `(2, 8)`
-- `(17, 8)`
-- `(10, 2)`
-- `(10, 17)`
-- `(10, 10)`
+The human join flow cycles through them using a process-local counter in the
+WebSocket server.
 
-The WebSocket join flow cycles through these points using a process-local human counter.
+## World Entities
 
-## NPC Definitions
+The map can seed runtime entities through its `entities` array.
 
-There are two copies of the NPC definition list:
+Those entities are loaded into `EntityManager` on boot and then become mutable
+runtime state. This is how the shipped map introduces:
 
-- `data/characters.ts`
-- `server/src/data/characters.ts`
+- harvestable berry bushes
+- edible ground pickups
+- pond water-source anchors for `drink`
+- campfires for `cook`
 
-Current server behavior:
+## Character Definitions
 
-- `server/src/index.ts` imports `server/src/data/characters.ts`
+`server/src/data/characters.ts` is the canonical character list used by the
+runtime and debug scenarios.
 
-Current cast:
+The repo-root `data/characters.ts` file is now a thin re-export of that list so
+tools can import from a stable top-level path without maintaining a second copy.
 
-- `npc_alice`
-- `npc_bob`
-- `npc_carol`
-- `npc_dave`
-- `npc_eve`
+## Operational Notes
 
-Each entry includes:
-
-- id
-- name
-- description
-- personality
-- spawn point
-- emoji
-
-## Data Flow
-
-### Server
-
-- loads `data/map.json` at boot
-- spawns NPCs from `server/src/data/characters.ts`
-- does not currently load world or activities from PostgreSQL
-
-### Client
-
-- fetches `/data/map.json`
-- fetches `/api/debug/activities`
-- does not consume either `characters.ts` file directly
-
-## Maintenance Notes
-
-- The duplicated character files can drift because they are not generated from a single source.
-- The map is a checked-in artifact and is currently the only world source used at runtime.
-- The schema includes `world` and `activities` tables, but the current world boot path is still file-based.
+- The runtime still boots world data from checked-in files, not from the
+  database.
+- Character drift risk is lower now that the repo-root module re-exports the
+  server source of truth instead of duplicating it.

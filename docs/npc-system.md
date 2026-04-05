@@ -1,209 +1,153 @@
 # NPC System
 
-This document covers the NPC intelligence stack in `server/src/npc/` and the persistence hooks it relies on.
+This document covers both NPC-related runtime layers:
 
-## Purpose
+- `server/src/autonomy/` for survival-driven behavior and action planning
+- `server/src/npc/` for dialogue, memory, and provider orchestration
 
-The NPC subsystem is responsible for:
+## Two Separate Responsibilities
 
-- retrieving relevant memories for NPC dialogue
-- generating replies and reflections through a provider abstraction
-- persisting conversations, messages, and generation metadata
-- initiating nearby conversations
-- marking NPCs as waiting while model output is in flight
+### `server/src/autonomy/`
 
-## Components
+Owns NPC behavior selection in the world:
+
+- decay NPC food, water, and social needs
+- maintain player survival snapshots for the local HUD
+- pick goals from current pressure plus nearby state
+- plan and execute actions
+- initiate conversations when social pressure wins
+- publish debug state and debug events
+
+### `server/src/npc/`
+
+Owns NPC dialogue behavior once a conversation is active:
+
+- retrieve memories
+- generate replies and reflections
+- persist conversation and generation metadata
+- mark NPCs as waiting while model output is in flight
+
+`NpcOrchestrator` is created with `enableInitiation: false`, so conversation
+initiation is now primarily an autonomy responsibility.
+
+## Autonomy Layer
+
+### Needs Model
+
+NPC autonomy currently uses three decaying needs:
+
+- food
+- water
+- social
+
+Human players also get a lightweight survival snapshot:
+
+- health
+- food
+- water
+- social
+
+### Goal Selection
+
+The autonomy manager asks for a goal only when a need becomes urgent.
+
+Selection can come from:
+
+- a provider-backed goal chooser
+- deterministic scripted fallback
+- emergency logic such as fleeing nearby hostile bears
+
+If no urgent goal is available, the NPC falls back to idle wandering.
+
+### Action Set
+
+Built-in actions currently include:
+
+- `goto`
+- `harvest`
+- `cook`
+- `drink`
+- `eat`
+- `eat_cooked`
+- `socialize`
+- `flee`
+- `pickup`
+
+These are planned backward from target predicates and executed tick-by-tick.
+
+### Autonomy Debugging
+
+`NpcAutonomyManager` can publish:
+
+- per-NPC debug state snapshots
+- plan provenance and reasoning
+- action transition events
+
+These power:
+
+- `/api/debug/autonomy/state`
+- `/api/debug/autonomy/:npcId`
+- the browser autonomy debug overlay
+- the optional WebSocket debug feed
+
+## Dialogue And Memory Layer
 
 ### `embedding.ts`
 
-Defines the `Embedder` interface and ships `PlaceholderEmbedder`.
-
-Current behavior:
-
-- deterministic hash-based pseudo-embeddings
-- default dimension `1536`
-- unit-normalized vectors
-- no external API dependency
-
-This makes the memory stack testable and reproducible without a hosted embedding service.
+Defines the `Embedder` interface and ships a deterministic placeholder embedder.
+That keeps the memory stack reproducible in tests.
 
 ### `memory.ts`
 
-`MemoryManager` is the semantic memory orchestrator.
+`MemoryManager` handles:
 
-Responsibilities:
+- adding memories with embeddings
+- conversation summary memories
+- vector search with recency and importance re-ranking
+- reflection thresholds and reflection memory creation
 
-- add memories with embeddings
-- summarize finished conversations into `conversation` memories
-- retrieve candidate memories with re-ranking
-- update access timestamps
-- decide when an NPC should produce a reflection
-- add reflection memories
+### Provider Stack
 
-Current scoring formula in practice:
+The runtime provider stack is:
 
-- recency contribution: `0.99 ** ticksAgo`
-- importance contribution: `importance / 10`
-- relevance contribution: cosine similarity clipped at `>= 0`
+1. `ClaudeCodeProvider`
+2. `ResilientNpcProvider`
+3. `ScriptedNpcProvider`
 
-Reflection thresholds:
+Important behavior:
 
-- at least `3` recent memories
-- cumulative importance of recent memories must reach `50`
-
-Access updates are throttled to once per memory every `30` ticks.
-
-### `provider.ts`
-
-Defines:
-
-- `NpcModelProvider`
-- request/response types for replies and reflections
-- prompt builders for reply and reflection tasks
-
-Prompt composition currently includes:
-
-- NPC name, description, and personality
-- partner name
-- recent transcript
-- top memories
-- explicit constraints on response style and length
-
-### `scriptedProvider.ts`
-
-Fallback provider with deterministic text templates.
-
-Behavior:
-
-- produces a greeting when a conversation has no prior messages
-- otherwise replies based on simple personality keyword matching
-- returns immediately with `latencyMs = 0`
-
-This is the reliability backstop for the NPC system.
-
-### `claudeCodeProvider.ts`
-
-Primary provider that shells out to the `claude` CLI.
-
-Current execution shape:
-
-- command defaults to `claude`
-- command can be overridden with `CLAUDE_COMMAND`
-- passes `--permission-mode dontAsk`
-- disables tool usage with `--tools ""`
-- requests JSON output
-- supports session resume via `--resume`
-- supports model override via `NPC_MODEL`
-
-The provider returns:
-
-- normalized reply text
-- prompt text
-- session id
-- raw CLI output
-- measured or reported latency
-
-### `resilientProvider.ts`
-
-Wraps a primary and fallback provider.
-
-Current failure policy:
-
-- try primary first
-- on first primary error, mark the primary unavailable for the rest of the process
-- permanently fall back to the backup provider until restart
-
-That means one Claude CLI failure currently downgrades the process to scripted replies for the remainder of the server lifetime.
+- the primary provider shells out to the `claude` CLI
+- `CLAUDE_COMMAND` and `NPC_MODEL` can override command behavior
+- the resilient wrapper falls back to scripted replies when the primary path is
+  unavailable
 
 ### `orchestrator.ts`
 
-`NpcOrchestrator` is the bridge between gameplay events and NPC behavior.
+`NpcOrchestrator` listens to conversation events and:
 
-It listens to:
-
-- `convo_started`
-- `convo_accepted`
-- `convo_active`
-- `convo_ended`
-- `convo_message`
-- after-tick callbacks for autonomous conversation initiation
-
-Responsibilities:
-
-- persist players, conversations, messages, and generation metadata
-- decide which NPC speaks next in an active conversation
-- retrieve memories and generate NPC replies
-- enqueue `say` commands back into the engine
-- create conversation memories when a conversation ends
-- generate reflection memories for NPCs
-- autonomously initiate nearby conversations
-
-## Runtime Model
-
-### Reply Scheduling
-
-When a conversation becomes active or gains a new message:
-
-1. Resolve which participant should speak next.
-2. If the next speaker is an NPC, load or create a per-conversation runtime record.
-3. Prevent duplicate in-flight requests and duplicate generation for the same message count.
-4. Mark `player.isWaitingForResponse = true`.
-5. Generate a reply.
-6. Persist the generation metadata.
-7. Enqueue a `say` command.
-8. Clear the waiting flag.
-
-### Reflection Scheduling
-
-When a conversation ends:
-
-1. Create summary memories for both participants.
-2. If a participant is an NPC and reflections are enabled, gather recent memories since the last reflection.
-3. If recent memory count and importance threshold are high enough, generate a reflection.
-4. Persist the generation metadata and add the reflection as a memory.
-
-### Autonomous Initiation
-
-After every tick, when initiation is enabled:
-
-- only run on ticks divisible by the scan interval
-- only consider idle NPCs not already reserved or in conversation
-- enforce initiation cooldown per NPC
-- choose the closest eligible target within radius
-- prefer humans over NPCs when distance ties
-- enqueue `start_convo`
-
-Default settings:
-
-- scan every `20` ticks
-- cooldown `120` ticks
-- radius `6`
-
-## Persistence Hooks
-
-The NPC subsystem depends on two abstractions:
-
-- `MemoryStore` from `db/repository.ts` for memories
-- `NpcPersistenceStore` from `db/npcStore.ts` for players, conversations, messages, and generation metadata
-
-At runtime these are backed by either:
-
-- PostgreSQL implementations
-- in-memory implementations for tests and DB-less startup
+- decides when an NPC should speak
+- retrieves memories
+- requests a reply
+- enqueues `say` back into the engine
+- persists messages and generation metadata
+- writes conversation memories on conversation end
+- generates reflections when thresholds are met
 
 ## Waiting State
 
-The orchestrator uses `GameLoop.setPlayerWaitingForResponse()` to expose model latency to the rest of the system.
+When an NPC is waiting on model output, the orchestrator uses
+`GameLoop.setPlayerWaitingForResponse()`.
 
 Effects:
 
-- server emits a `player_update`
-- browser UI shows `...`
-- renderer shows a floating waiting indicator above the NPC
+- the server emits `player_update`
+- the client shows `...` over the NPC
+- the player list and renderer can reflect the pending state
 
-## Known Limitations
+## Main Caveats
 
-- The embedder is still a placeholder; semantic quality is good enough for deterministic testing, not for production NPC reasoning.
-- The primary provider is a local CLI bridge, not an in-process SDK.
-- The fallback policy is coarse and process-wide.
-- Debug API direct conversation routes bypass orchestrator event listeners, so they do not fully exercise this subsystem.
+- The embedder is deterministic and local, not production-grade semantic search.
+- The primary provider is a CLI bridge, not a long-lived SDK integration.
+- A provider failure can push the process onto scripted fallback behavior.
+- Direct conversation mutation through some debug API routes bypasses the normal
+  live conversation flow and does not fully exercise orchestration hooks.

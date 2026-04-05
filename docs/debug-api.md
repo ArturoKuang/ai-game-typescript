@@ -1,177 +1,108 @@
 # Debug API Reference
 
-The debug API is mounted at:
+The debug API is mounted at `http://localhost:3001/api/debug`.
 
-```text
-http://localhost:3001/api/debug
-```
+It is the main local inspection and control surface for the runtime.
 
-It is the main inspection and control surface for the simulation.
+## Route Semantics
 
-Runtime notes:
+Not all debug routes exercise the runtime in the same way.
 
-- The server starts with the default world loaded.
-- Five NPCs are spawned immediately at boot.
-- The main server runs in `realtime` mode at 20 ticks/sec unless changed through `/mode`.
-- The server can run with PostgreSQL or with in-memory fallback storage.
-- Conversation endpoints are not all equivalent: `/start-convo`, `/say`, and `/end-convo` call `ConversationManager` directly instead of going through the normal queued command path.
+- Read routes inspect live state safely.
+- Control routes call engine methods or stepped tick behavior.
+- Direct conversation routes mutate `ConversationManager` without using the
+  normal queued gameplay path.
 
-## Read Endpoints
+Direct conversation routes:
 
-### `GET /state`
+- `POST /start-convo`
+- `POST /say`
+- `POST /end-convo`
 
-High-level runtime summary.
+Use those when you explicitly want to patch conversation state. Use the browser
+or WebSocket paths when you need full live behavior.
 
-```bash
-curl localhost:3001/api/debug/state
-```
+## Read Routes
 
-### `GET /map`
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/state` | tick, mode, tick rate, player count, world size |
+| `GET` | `/map` | ASCII map; `?format=json` also returns a legend |
+| `GET` | `/players` | all players |
+| `GET` | `/players/:id` | one player |
+| `GET` | `/activities` | map activities |
+| `GET` | `/log` | filtered in-memory event log |
+| `GET` | `/scenarios` | built-in scenario names |
+| `GET` | `/conversations` | all conversations, including ended ones |
+| `GET` | `/conversations/:id` | one conversation |
+| `GET` | `/npc-provider` | NPC provider diagnostics |
+| `GET` | `/memories/:playerId` | stored memories for one player |
+| `GET` | `/memories/:playerId/search` | memory search by query text |
+| `GET` | `/autonomy/state` | all autonomy debug states |
+| `GET` | `/autonomy/:npcId` | one NPC autonomy debug state |
+| `GET` | `/entities` | current runtime entities |
+| `GET` | `/bears` | current bear entities |
+| `GET` | `/inventory/:playerId` | inventory for one player |
+| `GET` | `/screenshot` | latest captured browser screenshot |
 
-Returns the ASCII map as plain text.
-
-```bash
-curl localhost:3001/api/debug/map
-```
-
-Use `format=json` to get both the rendered map and legend in JSON:
-
-```bash
-curl 'localhost:3001/api/debug/map?format=json'
-```
-
-### `GET /players`
-
-Returns every player with full server-side state.
-
-```bash
-curl localhost:3001/api/debug/players
-```
-
-### `GET /players/:id`
-
-Returns one player by id.
-
-```bash
-curl localhost:3001/api/debug/players/npc_alice
-```
-
-### `GET /activities`
-
-Returns the activity markers embedded in `data/map.json`.
-
-```bash
-curl localhost:3001/api/debug/activities
-```
-
-### `GET /log`
-
-Returns the in-memory ring-buffer event log.
-
-Query params:
+Useful log query params:
 
 - `since`
 - `limit`
 - `playerId`
-- `type` comma-separated event types
+- `type` as a comma-separated list
+
+Example:
 
 ```bash
-curl 'localhost:3001/api/debug/log?limit=20'
-curl 'localhost:3001/api/debug/log?since=50'
-curl 'localhost:3001/api/debug/log?playerId=npc_alice&limit=20'
-curl 'localhost:3001/api/debug/log?playerId=human_1&type=input_state,input_move,player_collision&limit=20'
+curl 'localhost:3001/api/debug/log?playerId=human_1&type=input_state,input_move,move_cancelled&limit=20'
 ```
 
-### `GET /scenarios`
+## Write Routes
 
-Lists the built-in scenarios.
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `POST` | `/tick` | advance the simulation manually |
+| `POST` | `/spawn` | spawn a player immediately |
+| `POST` | `/move` | set a pathfinding target |
+| `POST` | `/input` | start or stop held input |
+| `POST` | `/reset` | clear the runtime |
+| `POST` | `/scenario` | load a named scenario |
+| `POST` | `/start-convo` | start a conversation directly |
+| `POST` | `/say` | inject a conversation message directly |
+| `POST` | `/end-convo` | end a conversation directly |
+| `POST` | `/mode` | switch between realtime and stepped mode |
+| `POST` | `/memories` | create a memory directly |
+| `POST` | `/remember-convo` | turn a conversation into memories |
+| `POST` | `/autonomy/:npcId/needs` | override health, food, water, or social |
+| `POST` | `/spawn-bear` | spawn a bear |
+| `POST` | `/kill-bear` | kill a bear |
+| `POST` | `/capture-screenshot` | ask a connected client to send a screenshot |
+
+## Common Examples
+
+### Inspect runtime state
 
 ```bash
-curl localhost:3001/api/debug/scenarios
+curl localhost:3001/api/debug/state
+curl localhost:3001/api/debug/map
+curl localhost:3001/api/debug/players
+curl localhost:3001/api/debug/autonomy/state
 ```
 
-### `GET /conversations`
-
-Returns all conversations, including ended ones.
+### Step the simulation
 
 ```bash
-curl localhost:3001/api/debug/conversations
-```
+curl -X POST localhost:3001/api/debug/mode \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"stepped"}'
 
-### `GET /conversations/:id`
-
-Returns a single conversation.
-
-```bash
-curl localhost:3001/api/debug/conversations/1
-```
-
-### `GET /memories/:playerId`
-
-Returns stored memories for a player.
-
-Query params:
-
-- `limit`
-- `type`
-
-```bash
-curl localhost:3001/api/debug/memories/npc_alice
-curl 'localhost:3001/api/debug/memories/npc_alice?type=conversation&limit=5'
-```
-
-### `GET /memories/:playerId/search`
-
-Runs vector search over a player's memories.
-
-Query params:
-
-- `q` required
-- `k` optional, default `5`
-
-```bash
-curl 'localhost:3001/api/debug/memories/npc_alice/search?q=coffee&k=3'
-```
-
-## Command Endpoints
-
-### `POST /tick`
-
-Advances the simulation manually. Most useful in `stepped` mode.
-
-```bash
 curl -X POST localhost:3001/api/debug/tick \
   -H 'Content-Type: application/json' \
   -d '{"count":10}'
 ```
 
-### `POST /spawn`
-
-Spawns a player immediately.
-
-Required body fields:
-
-- `id`
-- `name`
-- `x`
-- `y`
-
-Optional fields:
-
-- `isNpc`
-- `description`
-- `personality`
-- `speed`
-
-```bash
-curl -X POST localhost:3001/api/debug/spawn \
-  -H 'Content-Type: application/json' \
-  -d '{"id":"npc_test","name":"Test NPC","x":5,"y":5,"isNpc":true}'
-```
-
-### `POST /move`
-
-Assigns an A* target to a player.
+### Move a player
 
 ```bash
 curl -X POST localhost:3001/api/debug/move \
@@ -179,222 +110,33 @@ curl -X POST localhost:3001/api/debug/move \
   -d '{"playerId":"npc_alice","x":10,"y":10}'
 ```
 
-This fails when:
-
-- The target is unreachable
-- The player does not exist
-- The player is currently conversing
-
-### `POST /input`
-
-Starts or stops continuous directional input for a player.
-
-Required body fields:
-
-- `playerId`
-- `direction`: `up`, `down`, `left`, `right`
-- `active`: `true` or `false`
+### Toggle held input
 
 ```bash
 curl -X POST localhost:3001/api/debug/input \
   -H 'Content-Type: application/json' \
   -d '{"playerId":"human_1","direction":"right","active":true}'
-
-curl -X POST localhost:3001/api/debug/input \
-  -H 'Content-Type: application/json' \
-  -d '{"playerId":"human_1","direction":"right","active":false}'
 ```
 
-Movement-specific log events to watch for in `GET /log`:
-
-- `input_state`
-- `player_collision`
-- `input_move`
-- `move_start`
-- `move_cancelled`
-- `move_end`
-
-### `POST /scenario`
-
-Clears the current players, keeps the loaded world, and applies a named scenario.
+### Inspect entities and bears
 
 ```bash
-curl -X POST localhost:3001/api/debug/scenario \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"two_npcs_near_cafe"}'
+curl localhost:3001/api/debug/entities
+curl localhost:3001/api/debug/bears
+curl localhost:3001/api/debug/inventory/human_1
 ```
 
-Built-in scenarios:
-
-- `empty`
-- `two_npcs_near_cafe`
-- `crowded_town`
-
-## Headless Movement Harness
-
-For movement and collision debugging without the runtime server, use the in-memory harness:
+### Capture a browser screenshot
 
 ```bash
-cd server
-npm run debug:movement -- --list
-npm run debug:movement -- --scenario path_handoff
-npm run debug:movement -- --scenario input_blocked_by_player --format json
-npm run debug:movement -- --scenario simultaneous_input_release --bundle /tmp/w-a.json
+curl -X POST localhost:3001/api/debug/capture-screenshot
+curl localhost:3001/api/debug/screenshot > /tmp/ai-town.png
 ```
 
-This runs deterministic scripted scenarios and prints snapshots, ASCII maps, filtered movement events, and expected-trace verification. Use `--bundle` to save a replayable JSON artifact with the map, script timeline, snapshots, and flattened event trace.
+## Practical Guidance
 
-For browser-side reconciliation debugging, inspect:
-
-```js
-window.__AI_TOWN_CLIENT_DEBUG__?.getEvents()
-```
-
-### `POST /start-convo`
-
-Starts a conversation between two players.
-
-```bash
-curl -X POST localhost:3001/api/debug/start-convo \
-  -H 'Content-Type: application/json' \
-  -d '{"player1Id":"npc_alice","player2Id":"npc_bob"}'
-```
-
-New conversations begin in `invited`, then advance through `walking` to `active`.
-
-Implementation caveat:
-
-- This route starts the conversation directly on `ConversationManager`.
-- It does not emit the normal `convo_started` game event.
-- Use WebSocket or queued `start_convo` commands when you need full NPC-orchestrator side effects.
-
-### `POST /say`
-
-Adds a message to an active conversation.
-
-```bash
-curl -X POST localhost:3001/api/debug/say \
-  -H 'Content-Type: application/json' \
-  -d '{"playerId":"npc_alice","convoId":1,"content":"Hello Bob"}'
-```
-
-The conversation must already be in `active`.
-
-Implementation caveat:
-
-- This route appends the message directly to the conversation.
-- It does not emit the normal `convo_message` event, so WebSocket subscribers and the NPC orchestrator do not observe it the same way they would through the queued gameplay path.
-
-### `POST /end-convo`
-
-Ends a conversation immediately.
-
-```bash
-curl -X POST localhost:3001/api/debug/end-convo \
-  -H 'Content-Type: application/json' \
-  -d '{"convoId":1}'
-```
-
-Implementation caveat:
-
-- This route ends the conversation directly in `ConversationManager`.
-- It does not emit the normal `convo_ended` event, so post-conversation memory creation is not automatically triggered.
-
-### `POST /mode`
-
-Switches between `realtime` and `stepped`.
-
-```bash
-curl -X POST localhost:3001/api/debug/mode \
-  -H 'Content-Type: application/json' \
-  -d '{"mode":"stepped"}'
-```
-
-Current implementation note:
-
-- The response includes `tickRate`
-- The endpoint does not currently change `tickRate`, even if you send one
-
-### `POST /memories`
-
-Creates a memory explicitly.
-
-Required body fields:
-
-- `playerId`
-- `type`
-- `content`
-
-Optional fields:
-
-- `importance`
-- `tick`
-
-```bash
-curl -X POST localhost:3001/api/debug/memories \
-  -H 'Content-Type: application/json' \
-  -d '{"playerId":"npc_alice","type":"observation","content":"The cafe was busy today","importance":6}'
-```
-
-### `POST /remember-convo`
-
-Creates conversation memories for both participants in a stored conversation.
-
-```bash
-curl -X POST localhost:3001/api/debug/remember-convo \
-  -H 'Content-Type: application/json' \
-  -d '{"convoId":1}'
-```
-
-### `POST /reset`
-
-Resets the entire game loop.
-
-```bash
-curl -X POST localhost:3001/api/debug/reset
-```
-
-Important:
-
-- This clears players, conversations, logs, commands, and the loaded world
-- The default map is not reloaded automatically after this endpoint
-- For normal debugging, prefer `POST /scenario`
-- After `reset`, routes that require `game.world` such as `/map` or `/activities` are no longer safe until a world is loaded again
-
-## Common Sequences
-
-### Switch to manual stepping
-
-```bash
-curl -X POST localhost:3001/api/debug/mode \
-  -H 'Content-Type: application/json' \
-  -d '{"mode":"stepped"}'
-
-curl -X POST localhost:3001/api/debug/tick \
-  -H 'Content-Type: application/json' \
-  -d '{"count":5}'
-```
-
-### Start and advance a conversation
-
-```bash
-curl -X POST localhost:3001/api/debug/start-convo \
-  -H 'Content-Type: application/json' \
-  -d '{"player1Id":"npc_alice","player2Id":"npc_bob"}'
-
-curl -X POST localhost:3001/api/debug/tick \
-  -H 'Content-Type: application/json' \
-  -d '{"count":5}'
-
-curl localhost:3001/api/debug/conversations
-```
-
-### Store and search memories
-
-```bash
-curl -X POST localhost:3001/api/debug/memories \
-  -H 'Content-Type: application/json' \
-  -d '{"playerId":"npc_alice","type":"observation","content":"Coffee smelled especially strong this morning"}'
-
-curl 'localhost:3001/api/debug/memories/npc_alice/search?q=coffee'
-```
+- Prefer `/scenario` over `/reset` for normal debugging.
+- Prefer queue-driven gameplay plus WebSocket flows when you need to reproduce
+  real runtime behavior.
+- Use direct conversation routes only when you explicitly want to inspect or
+  patch conversation state.

@@ -1,51 +1,51 @@
 # Debug Tooling
 
-This document covers the debug and inspection surfaces in `server/src/debug/` plus the client-side reconciliation debug handle.
+This document covers the inspectable runtime surfaces in `server/src/debug/`
+plus the browser-side debug helpers.
 
-## Purpose
+## What Exists Today
 
-The debug subsystem exists to make the authoritative simulation inspectable and reproducible without relying on the browser.
+The debug toolchain includes:
 
-It provides:
-
-- a REST debug API
+- the HTTP debug API under `/api/debug`
+- the dedicated live dashboard in `client/debug.html`
+- the gameplay client overlay in `client/index.html`
 - ASCII map rendering
-- deterministic scenarios
-- a movement harness with saved replay bundles
-- a recommended debugging workflow
+- named scenarios
+- the movement harness
+- the conversation harness
+- browser screenshot capture through a connected client
+- browser-side reconciliation logs
 
-## Components
+## Main Pieces
 
 ### `router.ts`
 
-Mounts `/api/debug` and exposes three categories of routes:
+Mounts `/api/debug` and exposes read, control, and mutation routes.
 
-- state inspection: `/state`, `/map`, `/players`, `/activities`, `/log`, `/conversations`, `/memories`
-- simulation control: `/tick`, `/mode`, `/spawn`, `/move`, `/input`, `/scenario`, `/reset`
-- conversation and memory mutation: `/start-convo`, `/say`, `/end-convo`, `/memories`, `/remember-convo`
+Useful route groups:
 
-The router reads live engine state directly and, when a PostgreSQL pool is present, persists spawned players to the `players` table.
+- runtime inspection
+- stepping and input control
+- scenario loading
+- conversation and memory helpers
+- autonomy, entities, bears, and inventory
+- screenshot capture
 
 ### `asciiMap.ts`
 
-Builds a terminal-friendly map from the current `World` and current player state.
+Renders a terminal-friendly snapshot of:
 
-Rendering rules:
-
-- `#` for walls
-- `~` for water
-- `.` for floor
-- activity emoji first character for activities
-- player first-letter initials on top of tiles
-- legend entries include rounded position and basic movement/conversation state
-
-Current caveat:
-
-- Activity symbols are derived with `emoji.charAt(0)`, so some multi-byte emoji render poorly in plain-text terminals and may appear as replacement characters in the legend.
+- walls
+- water
+- floor
+- activity markers
+- player initials
+- a legend with positions and states
 
 ### `scenarios.ts`
 
-Provides named setups that clear players and respawn a known cast while keeping the currently loaded world.
+Provides named respawn setups while keeping the loaded world intact.
 
 Built-in scenarios:
 
@@ -55,141 +55,68 @@ Built-in scenarios:
 
 ### `movementHarness.ts`
 
-Provides deterministic scripted movement scenarios on an in-memory `GameLoop`.
+Deterministic in-memory harness for movement and collision issues.
 
 It supports:
 
-- scripted spawn/input/move/tick/snapshot actions
-- filtered event tracing
-- ASCII snapshots with legends
-- built-in expected-event verification
-- bundle-friendly JSON output
-
-Representative scenarios:
-
-- `path_handoff`
-- `runtime_spawn_input`
-- `simultaneous_input_release`
+- scripted actions
+- filtered event traces
+- ASCII snapshots
+- JSON output
+- replay bundles
 
 ### `conversationHarness.ts`
 
-Provides a live conversation harness that starts a real server process when needed, connects real WebSocket clients, and uses the debug API only for inspection and final verification.
+Live harness that starts a real server process and opens real WebSocket clients.
 
-It exists for behavior that unit tests or direct debug mutations cannot verify well:
+It is the better tool when you need to validate:
 
-- queued `join`, `start_convo`, `accept_convo`, `say`, and `end_convo` flows
-- WebSocket broadcast scope and privacy checks
-- NPC initiation and reply behavior through the orchestrator
-- post-run capture of the authoritative debug log and ASCII map
+- queued conversation flows
+- WebSocket broadcast isolation
+- NPC reply behavior through the normal runtime path
 
-Representative scenarios:
+### `debugDashboard.ts`
 
-- `human_to_npc_conversation`
-- `npc_to_human_conversation`
-- `private_message_broadcast_isolation`
-- `join_grace_period`
+The dedicated dashboard subscribes to the server debug WebSocket feed and keeps
+live panels for:
 
-### `runMovementHarness.ts`
+- conversations
+- autonomy state
+- derived alerts
+- recent debug events
 
-CLI entry point for the harness.
+Use it when you want a long-running operator view instead of the smaller
+gameplay overlay.
 
-Useful commands:
+## Useful Commands
+
+Movement harness:
 
 ```bash
 cd server
 npm run debug:movement -- --list
-npm run debug:movement -- --scenario simultaneous_input_release
-npm run debug:movement -- --scenario path_handoff --format json
+npm run debug:movement -- --scenario path_handoff
 npm run debug:movement -- --scenario simultaneous_input_release --bundle /tmp/w-a.json
 ```
 
-### `runConversationHarness.ts`
-
-CLI entry point for the live conversation harness.
-
-Useful commands:
+Conversation harness:
 
 ```bash
 cd server
 npm run debug:conversation -- --list
-npm run debug:conversation -- --scenario human_to_human_accept
-npm run debug:conversation -- --scenario human_to_npc_conversation --format json
-npm run debug:conversation -- --scenario private_message_broadcast_isolation --bundle /tmp/convo.json
+npm run debug:conversation -- --scenario human_to_npc_conversation
 ```
 
-## Route Semantics
+## Screenshot Flow
 
-### Safe Inspection Routes
+`POST /api/debug/capture-screenshot` asks a connected browser client to send a
+PNG of the current canvas. The server can then return it from
+`GET /api/debug/screenshot`.
 
-These only read state:
+This is useful for quick visual checks without introducing a separate browser
+automation layer.
 
-- `/state`
-- `/map`
-- `/players`
-- `/activities`
-- `/log`
-- `/scenarios`
-- `/conversations`
-- `/memories/:playerId`
-- `/memories/:playerId/search`
-
-### Engine-Integrated Control Routes
-
-These use `GameLoop` methods or queue-compatible behavior:
-
-- `/tick`
-- `/spawn`
-- `/move`
-- `/input`
-- `/mode`
-- `/scenario`
-
-These are the best routes for reproducing live gameplay behavior from outside the browser.
-
-### Direct Conversation Mutation Routes
-
-These directly call `ConversationManager`:
-
-- `/start-convo`
-- `/say`
-- `/end-convo`
-
-Important caveat:
-
-- They bypass the normal queued-command plus emitted-event path.
-- They are useful for local inspection and manual testing.
-- They are not the right surface when you need NPC orchestration, WebSocket broadcasts, or post-conversation memory side effects to behave exactly like live gameplay.
-
-### Reset Route
-
-`POST /reset` clears players, conversations, logs, commands, and the loaded world.
-
-Important caveat:
-
-- After reset, routes that require `game.world`, especially `/map` and `/activities`, are no longer safe until a world is loaded again.
-- Prefer `/scenario` for normal debugging.
-
-## Event Inspection
-
-`GET /log` reads from `GameLogger`, not the database.
-
-Useful filters:
-
-- `since`
-- `limit`
-- `playerId`
-- `type` as a comma-separated list
-
-Common movement event types:
-
-- `input_state`
-- `input_move`
-- `player_collision`
-- `move_start`
-- `move_cancelled`
-- `move_end`
-
-## Browser-Side Debug Surface
+## Browser-Side Debug Helpers
 
 `client/src/debugLog.ts` exposes:
 
@@ -198,17 +125,16 @@ window.__AI_TOWN_CLIENT_DEBUG__?.getEvents()
 window.__AI_TOWN_CLIENT_DEBUG__?.clear()
 ```
 
-The client currently records reconciliation corrections there so you can see when the browser snapped, lerped, or settled back toward server authority.
+That log captures reconciliation corrections so you can tell whether a visual
+problem came from prediction drift or from authoritative server state.
 
-## Recommended Workflow
+## Recommended Use
 
-The short version:
+Use the tools in this order:
 
-1. Reproduce with the movement harness or debug API first.
-2. Save a bundle if the issue is movement- or collision-related.
-3. Add or adjust a runtime-oriented test.
-4. Fix the engine or client prediction path.
-5. Re-run the bundle and targeted tests.
-6. Re-check live server state through `/api/debug`.
-
-For the detailed playbook, see [Debugging workflow](debugging-workflow.md).
+1. inspect state with `/api/debug`
+2. watch the dedicated dashboard if the issue is live and multi-system
+3. reproduce deterministically with a harness when possible
+4. save a bundle if the issue is movement-related
+5. add or update a runtime-facing test
+6. re-check live state through the debug API

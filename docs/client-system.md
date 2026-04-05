@@ -4,169 +4,176 @@ This document covers the browser app in `client/`.
 
 ## Purpose
 
-The client is a thin interactive shell around the authoritative server. It is responsible for:
+The client side now has two browser entry points:
 
-- loading the map for rendering and prediction
-- opening the WebSocket
-- joining as a human player
-- collecting keyboard and click input
-- predicting local movement between server updates
-- rendering players, activities, and chat
-- exposing a small browser-side debug log
+- `client/index.html`: the playable town client
+- `client/debug.html`: the dedicated live debug dashboard
 
-It is not authoritative for gameplay state.
+Both stay thin relative to the authoritative server. Gameplay authority remains
+on the server.
 
-## Components
+## Main Pieces
 
 ### `main.ts`
 
-Browser entry point and coordinator.
+Browser coordinator and state hub for the playable client.
 
 Startup flow:
 
-1. Initialize the Pixi renderer.
-2. Fetch `/data/map.json`.
-3. Fetch `/api/debug/activities` and render activities on top of the map.
-4. Fall back to a blank bordered map if map fetch fails but `/api/debug/state` succeeds.
-5. Connect the WebSocket.
-6. Register message handlers, DOM listeners, click-to-move, and the render loop.
+1. initialize Pixi
+2. fetch `/data/map.json`
+3. fetch `/api/debug/activities`
+4. connect the WebSocket
+5. register UI and input handlers
+6. start the render loop
 
-State owned in this file:
+State stored here includes:
 
-- `gameState`
+- the current `gameState`
 - `selfId`
-- `mapLoaded`
-- `mapTiles`
+- locally cached map tiles
+- polled conversation debug snapshots
+- polled autonomy debug snapshots
+- player survival data keyed by player id
+
+### `debugDashboard.ts`
+
+Standalone live dashboard for inspecting the running simulation without loading
+the playable world renderer.
+
+It:
+
+- opens the shared WebSocket client
+- sends `subscribe_debug`
+- consumes `debug_bootstrap` and `debug_event`
+- tracks live conversations, autonomy state, alerts, and recent debug events
+- reuses conversation snapshot merge helpers so transcripts stay coherent as
+  incremental events arrive
 
 ### `network.ts`
 
-Minimal WebSocket client with reconnect behavior.
-
-Key properties:
+Small shared WebSocket wrapper with reconnect behavior.
 
 - no outgoing queue while disconnected
-- reconnect delay of `2` seconds
-- message handlers fan out to all subscribers
-- default URL is `ws(s)://<hostname>:3001`
+- two-second reconnect delay
+- message fan-out to registered handlers
+- open and close hooks for higher-level coordination
 
 ### `renderer.ts`
 
-PixiJS renderer for tiles, activities, players, conversation lines, and chat bubbles.
+PixiJS renderer for the playable client:
 
-Rendering rules:
-
-- tile size is `32 px`
-- map resize is driven by map dimensions
-- self player snaps to its predicted/current position
-- remote players are smoothed with a `0.3` lerp factor
-- NPCs, humans, and self each have distinct colors
-- active conversations draw a line between participants
-- waiting NPCs show a `...` bubble
+- floor, wall, and water tiles
+- activities
+- players
+- world entities
+- conversation links
+- NPC needs bars
+- human HP bars when damaged
 
 ### `ui.ts`
 
-DOM-side sidebar bindings for:
+Owns the sidebar and gameplay debug shell in `client/index.html`.
+
+Current UI surfaces:
 
 - join form
-- player list
-- chat log
-- chat input
-- status bar
-
-The UI does not currently expose:
-
-- conversation initiation controls
-- debug controls
-- NPC memory inspection
+- player list with talk buttons
+- chat log and chat input
+- conversation action buttons
+- inventory panel with `Eat` buttons for edible items
+- survival panel for the local player
+- toggleable debug menu and overlay for conversation and autonomy state
 
 ### `prediction.ts`
 
-Pure client-side movement prediction.
-
-It mirrors the server’s continuous movement and collision rules closely enough for parity tests:
-
-- same `MOVE_SPEED = 5.0`
-- same `PLAYER_RADIUS = 0.4`
-- same diagonal normalization
-- same tile collision approach
-- same player/player collision resolution strategy
-
-This module only predicts held-input movement. Pathfinding remains server-authoritative.
+Pure client-side prediction for held-input movement only. Pathfinding remains
+server-authoritative.
 
 ### `debugLog.ts`
 
-Small ring buffer for client-side debug events, mainly reconciliation corrections.
+Small browser-side ring buffer for reconciliation events.
 
-Exposed globally as:
+Exposed as:
 
 ```js
 window.__AI_TOWN_CLIENT_DEBUG__
 ```
 
+### `conversationDebugState.ts`
+
+Merges local and fetched conversation snapshots so both browser surfaces can
+keep the best transcript when live updates and delayed snapshots disagree.
+
 ### `types.ts`
 
-Manual mirror of the server-side protocol and key state types. This is convenient but not shared at compile time, so drift is a maintenance risk.
+Manual mirror of the server protocol and shared game shapes. It is convenient
+but drift-prone because there is no shared compile-time package.
 
-## Input Model
+## Playable Client Input Model
 
-### Keyboard Movement
+### Keyboard
 
-`main.ts` maps:
+`main.ts` handles:
 
 - `WASD`
 - arrow keys
+- `E` to pick up the nearest item
+- `I` to toggle inventory visibility
 
-Behavior:
+Rules:
 
-- `keydown` sends `input_start` only on first press per direction
+- `keydown` sends `input_start` only on the first press for a direction
 - `keyup` sends `input_stop`
-- window blur sends `input_stop` for every held direction
-- input is ignored while focus is inside a form control
+- window blur releases every held direction
+- input is ignored when a form field is focused
 
-### Click To Move
+### Mouse
 
-Canvas click uses `renderer.screenToTile()` and sends `move` with a tile coordinate. The client does not compute the path.
+Canvas click sends `move` with a tile coordinate. The server computes the path.
 
-### Chat
+### Chat And Conversations
 
-Chat submit sends `say`.
+- chat submit sends `say`
+- talk buttons send `start_convo`
+- accept, decline, and end buttons map to the corresponding conversation
+  messages
 
-Important limitation:
+## Debug Surfaces
 
-- the client has no UI for starting conversations
-- a human can only send a live chat message if a conversation is already active, usually because an NPC initiated it or the debug API was used
+The two browser surfaces consume debug data differently:
 
-## Reconciliation Model
+- the gameplay client keeps a compact overlay and polls
+  `/api/debug/conversations` plus `/api/debug/autonomy/state` every 750 ms
+  while enabled
+- the dedicated dashboard uses WebSocket debug streaming and does not depend on
+  those polling loops for its main data
 
-When a `player_update` arrives for the local player:
+The gameplay overlay still merges fetched conversation snapshots with local
+conversation state so transcripts do not regress when HTTP polling lags behind
+live conversation updates.
 
-- if the delta is greater than `4`, snap immediately
-- if movement is currently held and the delta is greater than `1.0`, snap
-- if movement is currently held and the delta is greater than `0.35`, lerp halfway
-- if movement is not held and the delta is greater than `0.3`, settle by `30%`
+## Reconciliation
 
-Reconciliation events are logged to `debugLog.ts`.
+The local player is predicted for responsiveness and corrected when
+`player_update` arrives from the server.
+
+Current correction modes:
+
+- large divergence snaps immediately
+- moderate divergence while moving lerps halfway
+- smaller divergence while stopped settles more gently
+
+These corrections are logged to `debugLog.ts`.
 
 ## Render Loop
 
-The render loop runs via `requestAnimationFrame`.
+Every animation frame in the playable client:
 
-Per frame:
+1. compute `dt`
+2. run local held-input prediction for the self player when applicable
+3. patch the predicted position into local client state
+4. render the world
 
-1. Compute `dt`.
-2. If the local player exists and is not conversing, run `predictLocalPlayerStep()`.
-3. Apply predicted position/orientation to the local player inside `gameState`.
-4. Render all players.
-
-This means the local player feels responsive even though the server remains authoritative.
-
-## Styling And UI Shell
-
-`client/index.html` contains the current UI shell and CSS:
-
-- monospace styling
-- canvas-centered game area
-- fixed-width sidebar
-- join, player list, chat, and status sections
-
-The UI is intentionally minimal and development-focused rather than production-polished.
+That is why local movement feels immediate even though the server remains
+authoritative.
