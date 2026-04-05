@@ -20,6 +20,7 @@ import { extractDataModel } from "./extractDataModel.js";
 import { extractMessageFlows, extractMessageFlowGroups } from "./extractMessageFlows.js";
 import { extractStateMachines } from "./extractStateMachines.js";
 import { extractDependencyDiagram } from "./extractDependencies.js";
+import { extractEventsAndCommands } from "./extractEventSignals.js";
 import {
   extractFileAccessFacts,
   extractHttpFacts,
@@ -53,202 +54,6 @@ import type {
 
 const ROOT = resolve(import.meta.dirname, "..", "..", "..");
 const OUTPUT = resolve(import.meta.dirname, "..", "graph.json");
-
-// ---------------------------------------------------------------------------
-// 4. Extract events (emit/subscribe) and commands (enqueue)
-// ---------------------------------------------------------------------------
-
-interface RawEventEmit {
-  eventType: string;
-  fileId: string;
-  classId?: string;
-  line: number;
-}
-
-interface RawEventSub {
-  eventType: string;
-  fileId: string;
-  classId?: string;
-  line: number;
-}
-
-interface RawCommand {
-  commandType: string;
-  fileId: string;
-  classId?: string;
-  line: number;
-}
-
-function extractEventsAndCommands(sourceFiles: SourceFile[]): {
-  events: EventInfo[];
-  commands: CommandInfo[];
-} {
-  const emits: RawEventEmit[] = [];
-  const subs: RawEventSub[] = [];
-  const cmds: RawCommand[] = [];
-
-  for (const sf of sourceFiles) {
-    const relPath = relative(ROOT, sf.getFilePath());
-    const callExprs = sf.getDescendantsOfKind(SyntaxKind.CallExpression);
-
-    for (const call of callExprs) {
-      const expr = call.getExpression();
-      const exprText = expr.getText();
-      const enclosingClass = call.getFirstAncestorByKind(SyntaxKind.ClassDeclaration)?.getName();
-
-      // --- Event emissions: this.emit({...type: "..."...}) ---
-      if (exprText === "this.emit") {
-        const typeStr = extractObjectTypeProperty(call);
-        if (typeStr) {
-          emits.push({
-            eventType: typeStr,
-            fileId: relPath,
-            classId: enclosingClass,
-            line: call.getStartLineNumber(),
-          });
-        }
-      }
-
-      // --- Event subscriptions: *.on("eventType", handler) ---
-      if (exprText.endsWith(".on") && !exprText.endsWith("onConnection") && !exprText.endsWith("onmessage") && !exprText.endsWith("onopen") && !exprText.endsWith("onclose") && !exprText.endsWith("onerror")) {
-        const args = call.getArguments();
-        if (args.length >= 2) {
-          const firstArg = args[0];
-          if (Node.isStringLiteral(firstArg)) {
-            subs.push({
-              eventType: firstArg.getLiteralValue(),
-              fileId: relPath,
-              classId: enclosingClass,
-              line: call.getStartLineNumber(),
-            });
-          }
-        }
-      }
-
-      // --- onAfterTick subscriptions ---
-      if (exprText.endsWith(".onAfterTick")) {
-        subs.push({
-          eventType: "tick_complete",
-          fileId: relPath,
-          classId: enclosingClass,
-          line: call.getStartLineNumber(),
-        });
-      }
-
-      // --- Command enqueues: *.enqueue({type: "...", ...}) ---
-      if (exprText.endsWith(".enqueue")) {
-        const typeStr = extractObjectTypeProperty(call);
-        if (typeStr) {
-          cmds.push({
-            commandType: typeStr,
-            fileId: relPath,
-            classId: enclosingClass,
-            line: call.getStartLineNumber(),
-          });
-        }
-      }
-    }
-  }
-
-  // Also scan for GameEvent object literals returned from conversation.ts processTick
-  for (const sf of sourceFiles) {
-    const relPath = relative(ROOT, sf.getFilePath());
-    if (!relPath.includes("conversation")) continue;
-
-    const objLiterals = sf.getDescendantsOfKind(SyntaxKind.ObjectLiteralExpression);
-    for (const obj of objLiterals) {
-      const typeProp = obj.getProperty("type");
-      if (!typeProp || !Node.isPropertyAssignment(typeProp)) continue;
-      const init = typeProp.getInitializer();
-      if (!init || !Node.isStringLiteral(init)) continue;
-      const eventType = init.getLiteralValue();
-      if (!eventType.startsWith("convo_")) continue;
-
-      const enclosingClass = obj.getFirstAncestorByKind(SyntaxKind.ClassDeclaration)?.getName();
-      // Avoid duplicates — only add if this is inside a method returning GameEvent[]
-      const enclosingMethod = obj.getFirstAncestorByKind(SyntaxKind.MethodDeclaration);
-      if (enclosingMethod?.getName() === "processTick") {
-        const exists = emits.some(
-          (e) => e.eventType === eventType && e.fileId === relPath && e.classId === enclosingClass,
-        );
-        if (!exists) {
-          emits.push({
-            eventType,
-            fileId: relPath,
-            classId: enclosingClass,
-            line: obj.getStartLineNumber(),
-          });
-        }
-      }
-    }
-  }
-
-  // Aggregate into EventInfo[]
-  const eventMap = new Map<string, EventInfo>();
-  for (const e of emits) {
-    if (!eventMap.has(e.eventType)) {
-      eventMap.set(e.eventType, { eventType: e.eventType, emitters: [], subscribers: [] });
-    }
-    const info = eventMap.get(e.eventType)!;
-    if (!info.emitters.some((x) => x.fileId === e.fileId && x.line === e.line)) {
-      info.emitters.push({ fileId: e.fileId, classId: e.classId, line: e.line });
-    }
-  }
-  for (const s of subs) {
-    if (!eventMap.has(s.eventType)) {
-      eventMap.set(s.eventType, { eventType: s.eventType, emitters: [], subscribers: [] });
-    }
-    const info = eventMap.get(s.eventType)!;
-    info.subscribers.push({ fileId: s.fileId, classId: s.classId, line: s.line });
-  }
-
-  // Wildcard subscribers receive all events
-  const wildcardSubs = subs.filter((s) => s.eventType === "*");
-  if (wildcardSubs.length > 0) {
-    for (const info of eventMap.values()) {
-      if (info.eventType === "*") continue;
-      for (const ws of wildcardSubs) {
-        if (!info.subscribers.some((x) => x.fileId === ws.fileId && x.line === ws.line)) {
-          info.subscribers.push({ fileId: ws.fileId, classId: ws.classId, line: ws.line });
-        }
-      }
-    }
-  }
-
-  // Aggregate into CommandInfo[]
-  const cmdMap = new Map<string, CommandInfo>();
-  const gameLoopFile = "server/src/engine/gameLoop.ts";
-  for (const c of cmds) {
-    if (!cmdMap.has(c.commandType)) {
-      cmdMap.set(c.commandType, { commandType: c.commandType, producers: [], consumer: gameLoopFile });
-    }
-    cmdMap.get(c.commandType)!.producers.push({
-      fileId: c.fileId,
-      classId: c.classId,
-      line: c.line,
-    });
-  }
-
-  return {
-    events: Array.from(eventMap.values()).filter((e) => e.eventType !== "*"),
-    commands: Array.from(cmdMap.values()),
-  };
-}
-
-/** Extract the string value of a `type` property from the first object argument of a call. */
-function extractObjectTypeProperty(call: Node): string | undefined {
-  const args = call.getChildrenOfKind(SyntaxKind.SyntaxList)[0]?.getChildren() ?? [];
-  for (const arg of args) {
-    if (!Node.isObjectLiteralExpression(arg)) continue;
-    const typeProp = arg.getProperty("type");
-    if (!typeProp || !Node.isPropertyAssignment(typeProp)) continue;
-    const init = typeProp.getInitializer();
-    if (init && Node.isStringLiteral(init)) {
-      return init.getLiteralValue();
-    }
-  }
-  return undefined;
-}
 
 // ---------------------------------------------------------------------------
 // 5. Classify cross-component boundaries
@@ -576,7 +381,7 @@ console.log(`  Extracted ${fileAccesses.length} file access facts`);
 const sqlOperations = extractSqlOperations(ROOT, sourceFiles);
 console.log(`  Extracted ${sqlOperations.length} SQL operation facts`);
 
-const { events, commands } = extractEventsAndCommands(sourceFiles);
+const { events, commands } = extractEventsAndCommands(ROOT, sourceFiles);
 console.log(`  Found ${events.length} event types, ${commands.length} command types`);
 
 const boundaries = classifyBoundaries(files, imports, events, commands);
