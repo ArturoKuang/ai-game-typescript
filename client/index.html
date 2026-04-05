@@ -23,26 +23,272 @@
       padding: 16px;
     }
     #game-canvas { cursor: pointer; }
-    #debug-controls {
+    #sidebar-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
-      font-size: 12px;
-      color: #9fb0d1;
-      padding: 8px 10px;
-      background: #0f3460;
-      border: 1px solid #533483;
-      border-radius: 4px;
+      gap: 10px;
     }
-    .debug-toggle {
+    .sidebar-panel-toggle {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      justify-content: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(121, 154, 204, 0.28);
+      background: rgba(15, 52, 96, 0.58);
+      color: #d8e7ff;
       cursor: pointer;
+      font-family: inherit;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      transition:
+        background 120ms ease-out,
+        border-color 120ms ease-out,
+        color 120ms ease-out;
     }
-    .debug-toggle input {
-      accent-color: #e94560;
+    .sidebar-panel-toggle:hover {
+      background: rgba(31, 74, 126, 0.74);
+      border-color: rgba(145, 176, 227, 0.5);
+      color: #edf4ff;
+    }
+    .sidebar-panel-toggle.is-active {
+      background: rgba(72, 145, 214, 0.18);
+      border-color: rgba(72, 145, 214, 0.34);
+      color: #dff0ff;
+    }
+    #debug-menu {
+      display: flex;
+      flex-direction: column;
+      background:
+        radial-gradient(circle at top left, rgba(72, 145, 214, 0.18), transparent 52%),
+        linear-gradient(180deg, rgba(14, 35, 67, 0.98), rgba(9, 22, 44, 0.98));
+      border: 1px solid rgba(107, 136, 186, 0.45);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
+    }
+    #debug-menu[open] {
+      border-color: rgba(145, 176, 227, 0.62);
+      box-shadow:
+        0 18px 38px rgba(0, 0, 0, 0.24),
+        0 0 0 1px rgba(145, 176, 227, 0.14);
+    }
+    #debug-menu summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px 14px;
+      font-size: 12px;
+      color: #d3def1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      user-select: none;
+    }
+    #debug-menu summary::-webkit-details-marker {
+      display: none;
+    }
+    #debug-menu summary::after {
+      content: "▸";
+      color: #c6d7f3;
+      font-size: 12px;
+      transition: transform 120ms ease-out;
+      flex-shrink: 0;
+    }
+    #debug-menu[open] summary::after {
+      transform: rotate(90deg);
+    }
+    .debug-menu-summary {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+      flex: 1;
+    }
+    .debug-menu-eyebrow {
+      color: #86a2d2;
+      font-size: 10px;
+      letter-spacing: 1.1px;
+      text-transform: uppercase;
+    }
+    .debug-menu-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+    .debug-menu-title {
+      color: #edf4ff;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+    .debug-menu-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 10px;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      border: 1px solid rgba(170, 184, 211, 0.2);
+      background: rgba(170, 184, 211, 0.12);
+      color: #d5deed;
+      flex-shrink: 0;
+    }
+    .debug-menu-badge.tone-live {
+      background: rgba(72, 145, 214, 0.16);
+      border-color: rgba(72, 145, 214, 0.32);
+      color: #d8ecff;
+    }
+    .debug-menu-badge.tone-error {
+      background: rgba(233, 69, 96, 0.16);
+      border-color: rgba(233, 69, 96, 0.3);
+      color: #ffe0e6;
+    }
+    .debug-menu-hint {
+      color: #adc2e6;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .debug-menu-content {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 0 14px 14px;
+      border-top: 1px solid rgba(121, 154, 204, 0.16);
+    }
+    .debug-feature-card {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      cursor: pointer;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(121, 154, 204, 0.18);
+      background: rgba(7, 17, 32, 0.34);
+      transition:
+        border-color 120ms ease-out,
+        background 120ms ease-out,
+        transform 120ms ease-out,
+        box-shadow 120ms ease-out;
+    }
+    .debug-feature-card:hover {
+      border-color: rgba(145, 176, 227, 0.3);
+      background: rgba(11, 24, 43, 0.46);
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.14);
+    }
+    .debug-feature-card.is-enabled {
+      border-color: rgba(145, 176, 227, 0.36);
+      background:
+        linear-gradient(180deg, rgba(14, 31, 57, 0.78), rgba(9, 20, 39, 0.9));
+    }
+    .debug-feature-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+      flex: 1;
+    }
+    .debug-feature-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+    .debug-feature-title {
+      color: #eef4ff;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .debug-feature-status {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      border: 1px solid rgba(170, 184, 211, 0.2);
+      background: rgba(170, 184, 211, 0.12);
+      color: #d5deed;
+      flex-shrink: 0;
+    }
+    .debug-feature-status.tone-live {
+      background: rgba(72, 145, 214, 0.16);
+      border-color: rgba(72, 145, 214, 0.32);
+      color: #d8ecff;
+    }
+    .debug-feature-status.tone-error {
+      background: rgba(233, 69, 96, 0.16);
+      border-color: rgba(233, 69, 96, 0.3);
+      color: #ffe0e6;
+    }
+    .debug-feature-description {
+      color: #acc2e6;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .debug-feature-detail {
+      color: #7f9ac2;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .debug-switch {
+      display: flex;
+      align-items: center;
+      min-height: 100%;
+      padding-top: 2px;
+    }
+    .debug-switch-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .debug-switch-track {
+      position: relative;
+      width: 46px;
+      height: 28px;
+      border-radius: 999px;
+      background: rgba(108, 126, 160, 0.32);
+      border: 1px solid rgba(145, 176, 227, 0.18);
+      box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.24);
+      transition: background 140ms ease-out, border-color 140ms ease-out;
+    }
+    .debug-switch-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: linear-gradient(180deg, #edf4ff, #bfd0ee);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
+      transition: transform 140ms ease-out;
+    }
+    .debug-switch-input:checked + .debug-switch-track {
+      background: linear-gradient(180deg, rgba(87, 148, 235, 0.9), rgba(44, 103, 197, 0.92));
+      border-color: rgba(176, 207, 255, 0.62);
+    }
+    .debug-switch-input:checked + .debug-switch-track .debug-switch-thumb {
+      transform: translateX(18px);
+    }
+    .debug-switch-input:focus-visible + .debug-switch-track {
+      outline: 2px solid rgba(214, 228, 255, 0.85);
+      outline-offset: 2px;
     }
     #sidebar {
       width: 320px;
@@ -166,6 +412,51 @@
       border-radius: 4px;
       padding: 8px;
     }
+    #survival-panel {
+      background: #0f3460;
+      border: 1px solid #533483;
+      border-radius: 4px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .survival-empty {
+      color: #9fb0d1;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .survival-row {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .survival-row-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .survival-label {
+      color: #e0e0e0;
+    }
+    .survival-value {
+      color: #9fb0d1;
+      font-variant-numeric: tabular-nums;
+    }
+    .survival-bar {
+      height: 7px;
+      background: #16213e;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid rgba(233, 69, 96, 0.12);
+    }
+    .survival-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 160ms ease-out;
+    }
     #inventory-panel.hidden { display: none; }
     #inventory-list {
       list-style: none;
@@ -188,57 +479,169 @@
       padding: 4px 0;
       border-top: 1px solid #0f3460;
     }
-    #conversation-debug-overlay {
+    #debug-overlay {
       position: absolute;
+      top: 16px;
       left: 16px;
-      right: 16px;
       bottom: 16px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      max-height: 32vh;
-      padding: 12px;
-      border: 1px solid #533483;
-      border-radius: 8px;
-      background: rgba(15, 52, 96, 0.94);
-      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28);
+      gap: 12px;
+      width: min(620px, calc(100% - 32px));
+      padding: 14px;
+      border: 1px solid rgba(83, 120, 170, 0.9);
+      border-radius: 14px;
+      background:
+        radial-gradient(circle at top left, rgba(63, 114, 175, 0.18), transparent 42%),
+        radial-gradient(circle at top right, rgba(60, 161, 114, 0.14), transparent 38%),
+        linear-gradient(180deg, rgba(10, 24, 42, 0.97), rgba(8, 18, 31, 0.95));
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
       backdrop-filter: blur(10px);
       z-index: 4;
       overflow: hidden;
     }
-    .conversation-debug-header {
+    .debug-overlay-header {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
       gap: 12px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid rgba(120, 154, 204, 0.18);
     }
-    .conversation-debug-title {
-      color: #f7dc6f;
+    .debug-overlay-title {
+      color: #e9f0fb;
       font-size: 12px;
-      letter-spacing: 1px;
+      letter-spacing: 1.1px;
       text-transform: uppercase;
+      font-weight: 700;
     }
-    #conversation-debug-summary {
-      color: #9fb0d1;
+    #debug-overlay-summary {
+      color: #b8cae7;
       font-size: 11px;
+      text-align: right;
+    }
+    #debug-overlay-content {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .debug-surface-section {
+      display: flex;
+      flex: 1 1 0;
+      min-height: 0;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.03),
+        0 8px 18px rgba(0, 0, 0, 0.2);
+    }
+    #conversation-debug-section {
+      border: 1px solid rgba(63, 91, 130, 0.9);
+      background:
+        linear-gradient(180deg, rgba(13, 28, 49, 0.96), rgba(9, 19, 34, 0.94));
+    }
+    #autonomy-debug-section {
+      border: 1px solid rgba(70, 112, 96, 0.9);
+      background:
+        linear-gradient(180deg, rgba(10, 33, 29, 0.97), rgba(7, 22, 21, 0.94));
+    }
+    .debug-surface-section-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 4px;
+    }
+    #conversation-debug-section .debug-surface-section-header {
+      border-bottom: 1px solid rgba(120, 154, 204, 0.18);
+    }
+    #autonomy-debug-section .debug-surface-section-header {
+      border-bottom: 1px solid rgba(122, 191, 161, 0.16);
+    }
+    .debug-surface-section-title {
+      color: #f6d77a;
+      font-size: 12px;
+      letter-spacing: 1.1px;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    #autonomy-debug-section .debug-surface-section-title {
+      color: #9ef0c8;
+    }
+    .debug-surface-section-summary {
+      color: #b8cae7;
+      font-size: 11px;
+      text-align: right;
+    }
+    #autonomy-debug-section .debug-surface-section-summary {
+      color: #b9e7d2;
     }
     #conversation-debug-list {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
       overflow-y: auto;
-      padding-right: 2px;
+      min-height: 0;
+      padding-right: 4px;
+    }
+    .conversation-debug-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .conversation-debug-section-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 2px;
+    }
+    .conversation-debug-section-title {
+      color: #e8eef8;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+    .conversation-debug-section-summary {
+      color: #89a2c8;
+      font-size: 11px;
+    }
+    .conversation-debug-section-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
     .conversation-debug-card,
     .conversation-debug-empty {
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      min-height: 90px;
-      padding: 10px;
-      border-radius: 6px;
-      background: rgba(8, 23, 43, 0.82);
-      border: 1px solid #2d4f7a;
+      gap: 8px;
+      min-height: 0;
+      padding: 12px;
+      border-radius: 12px;
+      background:
+        linear-gradient(180deg, rgba(13, 28, 49, 0.96), rgba(9, 19, 34, 0.94));
+      border: 1px solid rgba(63, 91, 130, 0.9);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.03),
+        0 8px 18px rgba(0, 0, 0, 0.2);
+      position: relative;
+      overflow: hidden;
+    }
+    .conversation-debug-card::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: var(--conversation-accent, #5dade2);
     }
     .conversation-debug-empty {
       justify-content: center;
@@ -246,14 +649,62 @@
       font-size: 12px;
       font-style: italic;
     }
-    .conversation-debug-card.state-active { border-color: #e94560; }
-    .conversation-debug-card.state-walking { border-color: #f7dc6f; }
-    .conversation-debug-card.state-invited { border-color: #5dade2; }
-    .conversation-debug-card.state-ended { border-color: #888; opacity: 0.84; }
+    .conversation-debug-card.state-active { border-color: rgba(233, 69, 96, 0.85); }
+    .conversation-debug-card.state-walking { border-color: rgba(247, 220, 111, 0.85); }
+    .conversation-debug-card.state-invited { border-color: rgba(93, 173, 226, 0.88); }
+    .conversation-debug-card.state-ended {
+      border-color: rgba(136, 136, 136, 0.7);
+      opacity: 0.88;
+    }
+    .conversation-debug-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
     .conversation-debug-card-title {
       font-size: 13px;
-      color: #e0e0e0;
-      font-weight: bold;
+      color: #f2f5fb;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .conversation-debug-id {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      color: #d7e4f7;
+      background: rgba(87, 121, 171, 0.2);
+      border: 1px solid rgba(121, 154, 204, 0.22);
+      flex-shrink: 0;
+    }
+    .conversation-debug-participants {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .conversation-debug-participant {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      letter-spacing: 0.3px;
+      border: 1px solid rgba(121, 154, 204, 0.22);
+      color: #dce8f8;
+      background: rgba(76, 99, 141, 0.18);
+    }
+    .conversation-debug-participant.role-npc {
+      color: #ffe5b7;
+      background: rgba(214, 151, 72, 0.16);
+      border-color: rgba(214, 151, 72, 0.26);
+    }
+    .conversation-debug-participant.role-human {
+      color: #d7f0ff;
+      background: rgba(72, 145, 214, 0.16);
+      border-color: rgba(72, 145, 214, 0.28);
     }
     .conversation-debug-card-meta {
       display: flex;
@@ -261,7 +712,7 @@
       flex-wrap: wrap;
       gap: 6px;
       font-size: 11px;
-      color: #9fb0d1;
+      color: #a9bad8;
     }
     .conversation-debug-badge {
       display: inline-flex;
@@ -286,38 +737,235 @@
       background: rgba(136, 136, 136, 0.24);
       color: #dddddd;
     }
-    .conversation-debug-card-preview {
+    .conversation-debug-transcript {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 220px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+      padding: 9px 10px;
+      border-radius: 8px;
+      background: rgba(4, 10, 19, 0.46);
+      border: 1px solid rgba(121, 154, 204, 0.16);
+    }
+    .conversation-debug-line {
       font-size: 12px;
       line-height: 1.45;
       color: #dce5f3;
-      white-space: pre-wrap;
       word-break: break-word;
+    }
+    .conversation-debug-line.kind-system {
+      color: #a8bbd8;
+      font-style: italic;
+    }
+    .conversation-debug-line-speaker {
+      color: #f6d77a;
+      font-weight: 700;
+      margin-right: 6px;
+    }
+    .conversation-debug-line-content {
+      white-space: pre-wrap;
+    }
+    #autonomy-debug-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      min-height: 0;
+      padding-right: 4px;
+    }
+    .autonomy-debug-card,
+    .autonomy-debug-empty {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 12px;
+      background:
+        linear-gradient(180deg, rgba(10, 33, 29, 0.97), rgba(7, 22, 21, 0.94));
+      border: 1px solid rgba(70, 112, 96, 0.9);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.03),
+        0 8px 18px rgba(0, 0, 0, 0.2);
+    }
+    .autonomy-debug-empty {
+      justify-content: center;
+      color: #95c8b3;
+      font-size: 12px;
+      font-style: italic;
+      min-height: 120px;
+    }
+    .autonomy-debug-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .autonomy-debug-card-title {
+      font-size: 13px;
+      color: #effbf4;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .autonomy-debug-source {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      border: 1px solid rgba(122, 191, 161, 0.22);
+      color: #dff9ec;
+      background: rgba(72, 145, 111, 0.18);
+      flex-shrink: 0;
+    }
+    .autonomy-debug-source.source-llm {
+      background: rgba(72, 145, 214, 0.2);
+      border-color: rgba(72, 145, 214, 0.3);
+      color: #d7f0ff;
+    }
+    .autonomy-debug-source.source-emergency {
+      background: rgba(233, 69, 96, 0.18);
+      border-color: rgba(233, 69, 96, 0.28);
+      color: #ffd9df;
+    }
+    .autonomy-debug-source.source-idle {
+      background: rgba(150, 150, 150, 0.18);
+      border-color: rgba(170, 170, 170, 0.28);
+      color: #dddddd;
+    }
+    .autonomy-debug-goal {
+      color: #edf9f2;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .autonomy-debug-execution {
+      color: #cce9da;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .autonomy-debug-meta {
+      color: #8eb9a7;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .autonomy-debug-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 0;
+      padding-left: 18px;
+      color: #d8f3e4;
+    }
+    .autonomy-debug-step {
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: rgba(3, 14, 14, 0.42);
+      border: 1px solid rgba(122, 191, 161, 0.12);
+    }
+    .autonomy-debug-step.is-current {
+      border-color: rgba(158, 240, 200, 0.4);
+      background: rgba(21, 58, 48, 0.5);
+      box-shadow: inset 0 0 0 1px rgba(158, 240, 200, 0.08);
+    }
+    .autonomy-debug-step-label {
+      color: #effbf4;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+    .autonomy-debug-step-detail {
+      color: #9dc8b7;
+      font-size: 11px;
+      line-height: 1.4;
+      margin-top: 2px;
     }
   </style>
 </head>
 <body>
   <div id="game-container">
     <canvas id="game-canvas"></canvas>
-    <div id="conversation-debug-overlay" class="hidden">
-      <div class="conversation-debug-header">
-        <div class="conversation-debug-title">Conversation Debug</div>
-        <div id="conversation-debug-summary">Debug mode off</div>
+    <div id="debug-overlay" class="hidden">
+      <div class="debug-overlay-header">
+        <div class="debug-overlay-title">Debug Overlay</div>
+        <div id="debug-overlay-summary">Debug mode off</div>
       </div>
-      <div id="conversation-debug-list"></div>
+      <div id="debug-overlay-content">
+        <section id="conversation-debug-section" class="debug-surface-section hidden">
+          <div class="debug-surface-section-header">
+            <div class="debug-surface-section-title">Conversation Debug</div>
+            <div id="conversation-debug-summary" class="debug-surface-section-summary">Off</div>
+          </div>
+          <div id="conversation-debug-list"></div>
+        </section>
+        <section id="autonomy-debug-section" class="debug-surface-section hidden">
+          <div class="debug-surface-section-header">
+            <div class="debug-surface-section-title">NPC Autonomy</div>
+            <div id="autonomy-debug-summary" class="debug-surface-section-summary">Off</div>
+          </div>
+          <div id="autonomy-debug-list"></div>
+        </section>
+      </div>
     </div>
   </div>
   <div id="sidebar">
-    <h2>AI Town</h2>
+    <div id="sidebar-header">
+      <h2>AI Town</h2>
+      <button id="debug-menu-visibility-btn" class="sidebar-panel-toggle is-active" type="button" aria-expanded="true">Hide Debug</button>
+    </div>
     <div id="join-section">
       <input id="name-input" type="text" placeholder="Your name..." />
       <button id="join-btn">Join</button>
     </div>
-    <div id="debug-controls">
-      <label class="debug-toggle" for="conversation-debug-checkbox">
-        <input id="conversation-debug-checkbox" type="checkbox" />
-        <span>Conversation debug mode</span>
-      </label>
-    </div>
+    <details id="debug-menu" open>
+      <summary>
+        <div class="debug-menu-summary">
+          <div class="debug-menu-eyebrow">Live tools</div>
+          <div class="debug-menu-title-row">
+            <span class="debug-menu-title">Debug Control Center</span>
+            <span id="debug-menu-badge" class="debug-menu-badge">Overlay off</span>
+          </div>
+          <div class="debug-menu-hint">Toggle live overlays for conversations and NPC plans, then watch both feeds in the same surface.</div>
+        </div>
+      </summary>
+      <div class="debug-menu-content">
+        <label id="conversation-debug-toggle-card" class="debug-feature-card" for="conversation-debug-checkbox">
+          <span class="debug-feature-copy">
+            <span class="debug-feature-title-row">
+              <span class="debug-feature-title">Conversations</span>
+              <span id="conversation-debug-menu-status" class="debug-feature-status">Off</span>
+            </span>
+            <span class="debug-feature-description">Track active and ended conversations with live transcript updates in the shared overlay.</span>
+            <span id="conversation-debug-menu-detail" class="debug-feature-detail">Turn this on to inspect NPC and player conversations.</span>
+          </span>
+          <span class="debug-switch">
+            <input id="conversation-debug-checkbox" class="debug-switch-input" type="checkbox" />
+            <span class="debug-switch-track">
+              <span class="debug-switch-thumb"></span>
+            </span>
+          </span>
+        </label>
+        <label id="autonomy-debug-toggle-card" class="debug-feature-card" for="autonomy-debug-checkbox">
+          <span class="debug-feature-copy">
+            <span class="debug-feature-title-row">
+              <span class="debug-feature-title">NPC plans</span>
+              <span id="autonomy-debug-menu-status" class="debug-feature-status">Off</span>
+            </span>
+            <span class="debug-feature-description">Show the current plan, executing action, and whether each plan came from an LLM or fallback logic.</span>
+            <span id="autonomy-debug-menu-detail" class="debug-feature-detail">Turn this on to inspect live autonomy state.</span>
+          </span>
+          <span class="debug-switch">
+            <input id="autonomy-debug-checkbox" class="debug-switch-input" type="checkbox" />
+            <span class="debug-switch-track">
+              <span class="debug-switch-thumb"></span>
+            </span>
+          </span>
+        </label>
+      </div>
+    </details>
     <h2>Players</h2>
     <ul id="player-list"></ul>
     <h2>Conversation</h2>
@@ -331,6 +979,10 @@
       <div id="active-actions" class="conversation-actions hidden">
         <button id="end-convo-btn">End conversation</button>
       </div>
+    </div>
+    <h2>Survival</h2>
+    <div id="survival-panel">
+      <div class="survival-empty">Join to see your survival values.</div>
     </div>
     <h2 id="inventory-header" style="cursor:pointer;">Inventory (0/10) [I]</h2>
     <div id="inventory-panel">

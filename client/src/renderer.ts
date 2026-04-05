@@ -29,11 +29,12 @@ const HUMAN_COLOR = 0x5dade2;
 const SELF_COLOR = 0xf7dc6f;
 const CONVO_LINE_COLOR = 0xe94560;
 
-/** Colors for need bar visualization (hunger, energy, social). */
+/** Colors for survival bar visualization. */
 const NEED_BAR_COLORS: Record<string, number> = {
-  hunger: 0xe74c3c, // red
-  energy: 0xf39c12, // orange
-  social: 0x3498db, // blue
+  health: 0xe74c3c,
+  food: 0xf39c12,
+  water: 0x3498db,
+  social: 0x48c9b0,
 };
 const NEED_BAR_WIDTH = 20;
 const NEED_BAR_HEIGHT = 3;
@@ -59,6 +60,10 @@ const ENTITY_EMOJI: Record<string, string> = {
 };
 
 function getEntityEmoji(entity: { type: string; properties: Record<string, boolean | number | string> }): string {
+  if (entity.type === "water_source") {
+    return "";
+  }
+
   if (entity.type === "ground_item") {
     switch (entity.properties.itemId) {
       case "raw_food":
@@ -202,10 +207,10 @@ export class GameRenderer {
         sprite.circle.stroke({ width: 1.5, color: CONVO_LINE_COLOR });
       }
 
-      // HP bar — show when damaged
+      // Humans keep a lightweight combat HP bar. NPCs use the survival overlay instead.
       const hp = player.hp ?? 100;
       const maxHp = player.maxHp ?? 100;
-      if (hp < maxHp) {
+      if (!player.isNpc && hp < maxHp) {
         const hpBarY = -TILE_SIZE * 0.5;
         const hpBarW = TILE_SIZE * 0.7;
         const hpRatio = hp / maxHp;
@@ -405,8 +410,9 @@ export class GameRenderer {
 
     const barsContainer = new Container();
     const barKeys: Array<{ key: keyof typeof NEED_BAR_COLORS; value: number }> = [
-      { key: "hunger", value: needs.hunger },
-      { key: "energy", value: needs.energy },
+      { key: "health", value: needs.health },
+      { key: "food", value: needs.food },
+      { key: "water", value: needs.water },
       { key: "social", value: needs.social },
     ];
 

@@ -77,6 +77,25 @@ export interface Conversation {
 
 export type PlanSource = "scripted" | "llm" | "emergency";
 
+export type DebugFeedSeverity = "info" | "warning" | "error";
+export type DebugFeedEventType =
+  | "conversation_started"
+  | "conversation_active"
+  | "conversation_ended"
+  | "conversation_message"
+  | "plan_started"
+  | "plan_cleared"
+  | "plan_failed"
+  | "action_started"
+  | "action_completed"
+  | "action_failed"
+  | "error";
+export type DebugFeedSubjectType =
+  | "conversation"
+  | "npc"
+  | "player"
+  | "system";
+
 export interface NpcAutonomyDebugPlanStep {
   index: number;
   actionId: string;
@@ -103,15 +122,44 @@ export interface NpcAutonomyDebugExecution {
   stepIndex: number;
 }
 
+export interface SurvivalSnapshot {
+  health: number;
+  food: number;
+  water: number;
+  social: number;
+}
+
 export interface NpcAutonomyDebugState {
   npcId: string;
-  needs: PlayerSurvivalData;
+  needs: SurvivalSnapshot;
   inventory: Record<string, number>;
   currentPlan: NpcAutonomyDebugPlan | null;
   currentStepIndex: number;
   currentExecution: NpcAutonomyDebugExecution | null;
   consecutivePlanFailures: number;
   goalSelectionInFlight: boolean;
+  goalSelectionStartedAtTick: number | null;
+}
+
+export interface DebugFeedEvent {
+  id: number;
+  tick: number;
+  type: DebugFeedEventType;
+  severity: DebugFeedSeverity;
+  subjectType: DebugFeedSubjectType;
+  subjectId: string;
+  title: string;
+  message: string;
+  relatedConversationId?: number;
+  relatedNpcId?: string;
+}
+
+export interface DebugDashboardBootstrap {
+  tick: number;
+  players: Player[];
+  conversations: Conversation[];
+  autonomyStates: Record<string, NpcAutonomyDebugState>;
+  recentEvents: DebugFeedEvent[];
 }
 
 /** A dynamic world entity (berry bush, bench, etc.) rendered on the map. */
@@ -171,6 +219,11 @@ export type ServerMessage =
   | { type: "player_survival"; data: PlayerSurvivalData }
   | { type: "combat_event"; data: { eventType: string; [key: string]: unknown } }
   | { type: "inventory_update"; data: { playerId: string; items: Record<string, number>; capacity: number } }
+  | { type: "debug_bootstrap"; data: DebugDashboardBootstrap }
+  | { type: "debug_conversation_upsert"; data: Conversation }
+  | { type: "debug_conversation_message"; data: Message }
+  | { type: "debug_autonomy_upsert"; data: NpcAutonomyDebugState }
+  | { type: "debug_event"; data: DebugFeedEvent }
   | { type: "error"; data: { message: string } }
   | { type: "capture_screenshot" };
 
@@ -179,6 +232,7 @@ export type MoveDirection = "up" | "down" | "left" | "right";
 
 export type ClientMessage =
   | { type: "join"; data: { name: string } }
+  | { type: "subscribe_debug" }
   | { type: "move"; data: { x: number; y: number } }
   | { type: "move_direction"; data: { direction: MoveDirection } }
   | { type: "input_start"; data: { direction: MoveDirection } }

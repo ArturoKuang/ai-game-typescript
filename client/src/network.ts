@@ -12,6 +12,8 @@ export type MessageHandler = (msg: ServerMessage) => void;
 export class GameClient {
   private ws: WebSocket | null = null;
   private handlers: MessageHandler[] = [];
+  private openHandlers: Array<() => void> = [];
+  private closeHandlers: Array<() => void> = [];
   private url: string;
 
   constructor(url?: string) {
@@ -25,6 +27,9 @@ export class GameClient {
 
     this.ws.onopen = () => {
       console.log("WebSocket connected");
+      for (const handler of this.openHandlers) {
+        handler();
+      }
     };
 
     this.ws.onmessage = (event) => {
@@ -38,6 +43,9 @@ export class GameClient {
 
     this.ws.onclose = () => {
       console.log("WebSocket disconnected, reconnecting in 2s...");
+      for (const handler of this.closeHandlers) {
+        handler();
+      }
       setTimeout(() => this.connect(), 2000);
     };
 
@@ -54,6 +62,14 @@ export class GameClient {
 
   onMessage(handler: MessageHandler): void {
     this.handlers.push(handler);
+  }
+
+  onOpen(handler: () => void): void {
+    this.openHandlers.push(handler);
+  }
+
+  onClose(handler: () => void): void {
+    this.closeHandlers.push(handler);
   }
 
   get connected(): boolean {
