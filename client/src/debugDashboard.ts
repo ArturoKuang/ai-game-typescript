@@ -12,6 +12,10 @@ import type {
   ServerMessage,
 } from "./types.js";
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
 const ENDED_RECENTLY_WINDOW_TICKS = 300;
 const EXECUTION_STUCK_TICKS = 180;
 const CONVERSATION_QUIET_TICKS = 180;
@@ -22,16 +26,12 @@ const CRITICAL_NEED_THRESHOLD = 15;
 const DANGER_NEED_THRESHOLD = 8;
 const MAX_EVENTS = 400;
 
-type ConversationSort =
-  | "last_activity_desc"
-  | "started_desc"
-  | "ended_desc"
-  | "npc_name_asc"
-  | "participant_name_asc"
-  | "message_count_desc";
-type ConversationFilter = "all" | "active" | "ended" | "npc" | "human";
-type AutonomySort = "priority" | "name" | "need" | "failures" | "action_age";
-type AutonomyFilter = "all" | "executing" | "planned" | "llm" | "stalled";
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type ConversationFilter = "all" | "active" | "ended";
+type TabId = "conversations" | "npcs" | "activity";
 type AlertSeverity = "warning" | "danger";
 
 interface DashboardAlert {
@@ -53,14 +53,17 @@ interface DashboardState {
   events: DebugFeedEvent[];
   selectedConversationId: number | null;
   selectedNpcId: string | null;
+  activeTab: TabId;
+  conversationFilter: ConversationFilter;
 }
 
-const collator = new Intl.Collator(undefined, {
-  numeric: true,
-  sensitivity: "base",
-});
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 const client = new GameClient();
+
 const state: DashboardState = {
   connected: false,
   tick: 0,
@@ -70,40 +73,56 @@ const state: DashboardState = {
   events: [],
   selectedConversationId: null,
   selectedNpcId: null,
+  activeTab: "conversations",
+  conversationFilter: "all",
 };
 
 let nextSyntheticEventId = -1;
 let renderScheduled = false;
+const RENDER_THROTTLE_MS = 200;
+let lastRenderTime = 0;
+let pendingThrottleTimer: ReturnType<typeof setTimeout> | null = null;
 
-function assertElement<T extends HTMLElement>(id: string): T {
+// Cache last rendered HTML per section to avoid DOM thrashing / blinking
+const htmlCache = new Map<string, string>();
+
+/** Only update innerHTML if content actually changed. Returns true if DOM was updated. */
+function setHtml(element: HTMLElement, key: string, html: string): boolean {
+  if (htmlCache.get(key) === html) return false;
+  htmlCache.set(key, html);
+  element.innerHTML = html;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// DOM references
+// ---------------------------------------------------------------------------
+
+function el<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
-  if (!element) {
-    throw new Error(`Missing dashboard element #${id}`);
-  }
+  if (!element) throw new Error(`Missing #${id}`);
   return element as T;
 }
 
-const elements = {
-  connection: assertElement<HTMLDivElement>("dashboard-connection"),
-  tick: assertElement<HTMLDivElement>("dashboard-tick"),
-  counters: assertElement<HTMLDivElement>("health-counters"),
-  conversationSummary: assertElement<HTMLDivElement>("conversation-panel-summary"),
-  conversationSearch: assertElement<HTMLInputElement>("conversation-search"),
-  conversationSort: assertElement<HTMLSelectElement>("conversation-sort"),
-  conversationFilter: assertElement<HTMLSelectElement>("conversation-filter"),
-  conversationGroups: assertElement<HTMLDivElement>("conversation-groups"),
-  conversationDetail: assertElement<HTMLDivElement>("conversation-detail"),
-  autonomySummary: assertElement<HTMLDivElement>("autonomy-panel-summary"),
-  autonomySearch: assertElement<HTMLInputElement>("autonomy-search"),
-  autonomySort: assertElement<HTMLSelectElement>("autonomy-sort"),
-  autonomyFilter: assertElement<HTMLSelectElement>("autonomy-filter"),
-  autonomyList: assertElement<HTMLDivElement>("autonomy-list"),
-  autonomyDetail: assertElement<HTMLDivElement>("autonomy-detail"),
-  alertsSummary: assertElement<HTMLDivElement>("alerts-summary"),
-  alertsList: assertElement<HTMLDivElement>("alerts-list"),
-  eventFeedSummary: assertElement<HTMLDivElement>("event-feed-summary"),
-  eventFeed: assertElement<HTMLDivElement>("event-feed"),
+const dom = {
+  connStatus: el<HTMLSpanElement>("conn-status"),
+  tickDisplay: el<HTMLSpanElement>("tick-display"),
+  badgeConvos: el<HTMLSpanElement>("badge-convos"),
+  badgeNpcs: el<HTMLSpanElement>("badge-npcs"),
+  badgeActivity: el<HTMLSpanElement>("badge-activity"),
+  convoSearch: el<HTMLInputElement>("convo-search"),
+  convoFilters: el<HTMLDivElement>("convo-filters"),
+  convoList: el<HTMLDivElement>("convo-list"),
+  convoDetail: el<HTMLDivElement>("convo-detail"),
+  npcSearch: el<HTMLInputElement>("npc-search"),
+  npcList: el<HTMLDivElement>("npc-list"),
+  npcDetail: el<HTMLDivElement>("npc-detail"),
+  activityContent: el<HTMLDivElement>("activity-content"),
 };
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
 
 function escapeHtml(value: string): string {
   return value
@@ -119,7 +138,7 @@ function pluralize(count: number, singular: string, plural = `${singular}s`): st
 }
 
 function formatTick(tick?: number | null): string {
-  return typeof tick === "number" ? `T${tick}` : "—";
+  return typeof tick === "number" ? `T${tick}` : "\u2014";
 }
 
 function formatAge(ageTicks: number): string {
@@ -139,335 +158,190 @@ function getPlayerLabel(playerId: string): string {
   return getPlayer(playerId)?.name ?? playerId;
 }
 
-function getParticipantData(conversation: Conversation): Array<{
-  id: string;
-  name: string;
-  isNpc: boolean;
-}> {
-  return [conversation.player1Id, conversation.player2Id].map((playerId) => {
-    const player = getPlayer(playerId);
-    return {
-      id: playerId,
-      name: player?.name ?? playerId,
-      isNpc: player?.isNpc ?? false,
-    };
+// ---------------------------------------------------------------------------
+// Conversation helpers
+// ---------------------------------------------------------------------------
+
+function getParticipantData(conversation: Conversation) {
+  return [conversation.player1Id, conversation.player2Id].map((id) => {
+    const p = getPlayer(id);
+    return { id, name: p?.name ?? id, isNpc: p?.isNpc ?? false };
   });
 }
 
-function getConversationParticipantLabel(conversation: Conversation): string {
-  return getParticipantData(conversation)
-    .map((participant) => participant.name)
-    .join(" ↔ ");
+function getConversationParticipantLabel(c: Conversation): string {
+  return getParticipantData(c).map((p) => p.name).join(" \u2194 ");
 }
 
-function getConversationNpcLabel(conversation: Conversation): string {
-  const npcNames = getParticipantData(conversation)
-    .filter((participant) => participant.isNpc)
-    .map((participant) => participant.name);
-  return npcNames.join(", ");
+function getConversationNpcLabel(c: Conversation): string {
+  return getParticipantData(c).filter((p) => p.isNpc).map((p) => p.name).join(", ");
 }
 
-function getConversationLastActivityTick(conversation: Conversation): number {
-  const lastMessage = conversation.messages[conversation.messages.length - 1];
-  return lastMessage?.tick ?? conversation.endedTick ?? conversation.startedTick;
+function getConversationLastActivityTick(c: Conversation): number {
+  const last = c.messages[c.messages.length - 1];
+  return last?.tick ?? c.endedTick ?? c.startedTick;
 }
 
-function getConversationDurationTicks(conversation: Conversation): number {
-  const endTick = conversation.endedTick ?? state.tick;
-  return Math.max(0, endTick - conversation.startedTick);
+function getConversationDurationTicks(c: Conversation): number {
+  return Math.max(0, (c.endedTick ?? state.tick) - c.startedTick);
 }
 
-function getConversationTone(conversation: Conversation): string {
-  switch (conversation.state) {
-    case "ended":
-      return "ended";
-    case "active":
-      return "active";
-    default:
-      return "warning";
-  }
+function getConversationTone(c: Conversation): string {
+  if (c.state === "ended") return "ended";
+  if (c.state === "active") return "active";
+  return "warning";
 }
 
-function getConversationWaitingLabel(conversation: Conversation): string | null {
-  const waitingNpc = [conversation.player1Id, conversation.player2Id]
-    .map((playerId) => getPlayer(playerId))
-    .find(
-      (player) =>
-        player?.isNpc &&
-        player.currentConvoId === conversation.id &&
-        player.isWaitingForResponse,
-    );
-  return waitingNpc ? `${waitingNpc.name} thinking` : null;
+function getConversationWaitingLabel(c: Conversation): string | null {
+  const waiting = [c.player1Id, c.player2Id]
+    .map((id) => getPlayer(id))
+    .find((p) => p?.isNpc && p.currentConvoId === c.id && p.isWaitingForResponse);
+  return waiting ? `${waiting.name} thinking` : null;
 }
 
-function getConversationSearchBlob(conversation: Conversation): string {
-  const participants = getParticipantData(conversation)
-    .map((participant) => participant.name)
-    .join(" ");
-  return `${conversation.id} ${participants} ${conversation.state}`.toLowerCase();
+function getConversationSearchBlob(c: Conversation): string {
+  return `${c.id} ${getParticipantData(c).map((p) => p.name).join(" ")} ${c.state}`.toLowerCase();
 }
 
-function getConversationMatchesFilter(
-  conversation: Conversation,
-  filter: ConversationFilter,
-): boolean {
+function matchesConversationFilter(c: Conversation, filter: ConversationFilter): boolean {
   if (filter === "all") return true;
-  if (filter === "active") return conversation.state !== "ended";
-  if (filter === "ended") return conversation.state === "ended";
-  const participants = getParticipantData(conversation);
-  if (filter === "npc") return participants.some((participant) => participant.isNpc);
-  if (filter === "human") {
-    return participants.some((participant) => !participant.isNpc);
-  }
-  return true;
+  if (filter === "active") return c.state !== "ended";
+  return c.state === "ended";
 }
 
-function sortConversations(
-  left: Conversation,
-  right: Conversation,
-  sort: ConversationSort,
-): number {
-  if (sort === "last_activity_desc") {
-    const diff = getConversationLastActivityTick(right) - getConversationLastActivityTick(left);
-    return diff || right.id - left.id;
-  }
-  if (sort === "started_desc") {
-    return right.startedTick - left.startedTick || right.id - left.id;
-  }
-  if (sort === "ended_desc") {
-    return (right.endedTick ?? -1) - (left.endedTick ?? -1) || right.id - left.id;
-  }
-  if (sort === "npc_name_asc") {
-    const diff = collator.compare(
-      getConversationNpcLabel(left) || "~",
-      getConversationNpcLabel(right) || "~",
-    );
-    return diff || sortConversations(left, right, "last_activity_desc");
-  }
-  if (sort === "participant_name_asc") {
-    const diff = collator.compare(
-      getConversationParticipantLabel(left),
-      getConversationParticipantLabel(right),
-    );
-    return diff || sortConversations(left, right, "last_activity_desc");
-  }
-  return right.messages.length - left.messages.length || sortConversations(left, right, "last_activity_desc");
+// ---------------------------------------------------------------------------
+// NPC helpers
+// ---------------------------------------------------------------------------
+
+function getLowestNeed(s: NpcAutonomyDebugState): number {
+  return Math.min(s.needs.health, s.needs.food, s.needs.water, s.needs.social);
 }
 
-function getLowestNeed(debugState: NpcAutonomyDebugState): number {
-  return Math.min(
-    debugState.needs.health,
-    debugState.needs.food,
-    debugState.needs.water,
-    debugState.needs.social,
-  );
+function getNpcSearchBlob(s: NpcAutonomyDebugState): string {
+  const p = getPlayer(s.npcId);
+  const goal = s.currentPlan?.goalId ?? "";
+  const action = s.currentExecution?.actionLabel ?? "";
+  return `${s.npcId} ${p?.name ?? ""} ${goal} ${action}`.toLowerCase();
 }
 
-function getAutonomySearchBlob(debugState: NpcAutonomyDebugState): string {
-  const player = getPlayer(debugState.npcId);
-  const goal = debugState.currentPlan?.goalId ?? "";
-  const action = debugState.currentExecution?.actionLabel ?? "";
-  return `${debugState.npcId} ${player?.name ?? ""} ${goal} ${action}`.toLowerCase();
+function needFillClass(value: number): string {
+  if (value >= 50) return "good";
+  if (value >= 25) return "mid";
+  return "low";
 }
 
-function getAutonomyMatchesFilter(
-  debugState: NpcAutonomyDebugState,
-  filter: AutonomyFilter,
-  stalledNpcIds: ReadonlySet<string>,
-): boolean {
-  if (filter === "all") return true;
-  if (filter === "executing") return Boolean(debugState.currentExecution);
-  if (filter === "planned") return Boolean(debugState.currentPlan);
-  if (filter === "llm") return debugState.currentPlan?.source === "llm";
-  if (filter === "stalled") return stalledNpcIds.has(debugState.npcId);
-  return true;
-}
-
-function sortAutonomyStates(
-  left: NpcAutonomyDebugState,
-  right: NpcAutonomyDebugState,
-  sort: AutonomySort,
-  stalledNpcIds: ReadonlySet<string>,
-): number {
-  const leftName = getPlayerLabel(left.npcId);
-  const rightName = getPlayerLabel(right.npcId);
-
-  if (sort === "name") {
-    return collator.compare(leftName, rightName);
-  }
-
-  if (sort === "need") {
-    return getLowestNeed(left) - getLowestNeed(right) || collator.compare(leftName, rightName);
-  }
-
-  if (sort === "failures") {
-    return (
-      right.consecutivePlanFailures - left.consecutivePlanFailures ||
-      sortAutonomyStates(left, right, "need", stalledNpcIds)
-    );
-  }
-
-  if (sort === "action_age") {
-    const leftAge = left.currentExecution ? state.tick - left.currentExecution.startedAtTick : -1;
-    const rightAge = right.currentExecution ? state.tick - right.currentExecution.startedAtTick : -1;
-    return rightAge - leftAge || collator.compare(leftName, rightName);
-  }
-
-  const leftExecuting = left.currentExecution ? 0 : 1;
-  const rightExecuting = right.currentExecution ? 0 : 1;
-  if (leftExecuting !== rightExecuting) {
-    return leftExecuting - rightExecuting;
-  }
-
-  const leftPlanned = left.currentPlan ? 0 : 1;
-  const rightPlanned = right.currentPlan ? 0 : 1;
-  if (leftPlanned !== rightPlanned) {
-    return leftPlanned - rightPlanned;
-  }
-
-  const leftStalled = stalledNpcIds.has(left.npcId) ? 0 : 1;
-  const rightStalled = stalledNpcIds.has(right.npcId) ? 0 : 1;
-  if (leftStalled !== rightStalled) {
-    return leftStalled - rightStalled;
-  }
-
-  return getLowestNeed(left) - getLowestNeed(right) || collator.compare(leftName, rightName);
-}
-
-function getSortedEvents(): DebugFeedEvent[] {
-  return [...state.events].sort((left, right) => {
-    if (left.tick !== right.tick) {
-      return right.tick - left.tick;
-    }
-    return right.id - left.id;
-  });
-}
+// ---------------------------------------------------------------------------
+// Alert derivation
+// ---------------------------------------------------------------------------
 
 function deriveAlerts(): DashboardAlert[] {
   const alerts: DashboardAlert[] = [];
 
-  for (const conversation of state.conversations) {
-    if (conversation.state === "ended") {
-      continue;
-    }
+  for (const c of state.conversations) {
+    if (c.state === "ended") continue;
+    const lastMsgTick = c.messages[c.messages.length - 1]?.tick ?? c.startedTick;
+    const quietAge = state.tick - lastMsgTick;
+    const inviteAge = state.tick - c.startedTick;
 
-    const lastMessageTick =
-      conversation.messages[conversation.messages.length - 1]?.tick ??
-      conversation.startedTick;
-    const quietAge = state.tick - lastMessageTick;
-    const inviteAge = state.tick - conversation.startedTick;
-
-    if (conversation.state === "active" && quietAge >= CONVERSATION_QUIET_TICKS) {
+    if (c.state === "active" && quietAge >= CONVERSATION_QUIET_TICKS) {
       alerts.push({
-        id: `conversation-quiet-${conversation.id}`,
+        id: `conversation-quiet-${c.id}`,
         severity: quietAge >= CONVERSATION_QUIET_TICKS * 2 ? "danger" : "warning",
         title: "Conversation quiet",
-        message: `${getConversationParticipantLabel(conversation)} has been active without a new message for ${formatAge(quietAge)}.`,
+        message: `${getConversationParticipantLabel(c)} has been active without a new message for ${formatAge(quietAge)}.`,
         ageTicks: quietAge,
-        targetConversationId: conversation.id,
+        targetConversationId: c.id,
       });
     }
 
-    if (
-      (conversation.state === "invited" || conversation.state === "walking") &&
-      inviteAge >= INVITE_STUCK_TICKS
-    ) {
+    if ((c.state === "invited" || c.state === "walking") && inviteAge >= INVITE_STUCK_TICKS) {
       alerts.push({
-        id: `conversation-pending-${conversation.id}`,
+        id: `conversation-pending-${c.id}`,
         severity: inviteAge >= INVITE_STUCK_TICKS * 2 ? "danger" : "warning",
-        title: conversation.state === "invited" ? "Invite pending too long" : "Conversation rendezvous stalled",
-        message: `${getConversationParticipantLabel(conversation)} has been ${conversation.state} for ${formatAge(inviteAge)}.`,
+        title: c.state === "invited" ? "Invite pending too long" : "Rendezvous stalled",
+        message: `${getConversationParticipantLabel(c)} has been ${c.state} for ${formatAge(inviteAge)}.`,
         ageTicks: inviteAge,
-        targetConversationId: conversation.id,
+        targetConversationId: c.id,
       });
     }
   }
 
-  for (const debugState of state.autonomy.values()) {
-    const npcLabel = getPlayerLabel(debugState.npcId);
+  for (const s of state.autonomy.values()) {
+    const label = getPlayerLabel(s.npcId);
 
-    if (debugState.currentExecution) {
-      const executionAge = state.tick - debugState.currentExecution.startedAtTick;
-      if (executionAge >= EXECUTION_STUCK_TICKS) {
+    if (s.currentExecution) {
+      const age = state.tick - s.currentExecution.startedAtTick;
+      if (age >= EXECUTION_STUCK_TICKS) {
         alerts.push({
-          id: `npc-execution-${debugState.npcId}`,
-          severity: executionAge >= EXECUTION_STUCK_TICKS * 2 ? "danger" : "warning",
+          id: `npc-execution-${s.npcId}`,
+          severity: age >= EXECUTION_STUCK_TICKS * 2 ? "danger" : "warning",
           title: "Action taking too long",
-          message: `${npcLabel} has been executing ${debugState.currentExecution.actionLabel} for ${formatAge(executionAge)}.`,
-          ageTicks: executionAge,
-          targetNpcId: debugState.npcId,
+          message: `${label} has been executing ${s.currentExecution.actionLabel} for ${formatAge(age)}.`,
+          ageTicks: age,
+          targetNpcId: s.npcId,
         });
       }
     }
 
-    if (debugState.consecutivePlanFailures >= PLAN_FAILURE_ALERT_THRESHOLD) {
+    if (s.consecutivePlanFailures >= PLAN_FAILURE_ALERT_THRESHOLD) {
       alerts.push({
-        id: `npc-failures-${debugState.npcId}`,
-        severity: debugState.consecutivePlanFailures >= 3 ? "danger" : "warning",
+        id: `npc-failures-${s.npcId}`,
+        severity: s.consecutivePlanFailures >= 3 ? "danger" : "warning",
         title: "Repeated plan failures",
-        message: `${npcLabel} has failed ${pluralize(debugState.consecutivePlanFailures, "plan")} in a row.`,
-        ageTicks: debugState.consecutivePlanFailures,
-        targetNpcId: debugState.npcId,
+        message: `${label} has failed ${pluralize(s.consecutivePlanFailures, "plan")} in a row.`,
+        ageTicks: s.consecutivePlanFailures,
+        targetNpcId: s.npcId,
       });
     }
 
-    if (
-      !debugState.currentPlan &&
-      !debugState.goalSelectionInFlight &&
-      getLowestNeed(debugState) <= CRITICAL_NEED_THRESHOLD
-    ) {
-      const lowestNeed = [
-        ["health", debugState.needs.health],
-        ["food", debugState.needs.food],
-        ["water", debugState.needs.water],
-        ["social", debugState.needs.social],
-      ] as Array<[string, number]>;
-      lowestNeed.sort((left, right) => left[1] - right[1]);
-      const [needLabel, needValue] = lowestNeed[0];
-
+    if (!s.currentPlan && !s.goalSelectionInFlight && getLowestNeed(s) <= CRITICAL_NEED_THRESHOLD) {
+      const needs: [string, number][] = [
+        ["health", s.needs.health],
+        ["food", s.needs.food],
+        ["water", s.needs.water],
+        ["social", s.needs.social],
+      ];
+      needs.sort((a, b) => a[1] - b[1]);
+      const [needLabel, needValue] = needs[0];
       alerts.push({
-        id: `npc-critical-need-${debugState.npcId}`,
+        id: `npc-critical-need-${s.npcId}`,
         severity: needValue <= DANGER_NEED_THRESHOLD ? "danger" : "warning",
         title: "Critical need without plan",
-        message: `${npcLabel} has no active plan while ${needLabel} is at ${Math.round(needValue)}.`,
+        message: `${label} has no active plan while ${needLabel} is at ${Math.round(needValue)}.`,
         ageTicks: Math.round(100 - needValue),
-        targetNpcId: debugState.npcId,
+        targetNpcId: s.npcId,
       });
     }
 
-    if (
-      debugState.goalSelectionInFlight &&
-      typeof debugState.goalSelectionStartedAtTick === "number"
-    ) {
-      const selectionAge = state.tick - debugState.goalSelectionStartedAtTick;
-      if (selectionAge >= GOAL_SELECTION_STUCK_TICKS) {
+    if (s.goalSelectionInFlight && typeof s.goalSelectionStartedAtTick === "number") {
+      const age = state.tick - s.goalSelectionStartedAtTick;
+      if (age >= GOAL_SELECTION_STUCK_TICKS) {
         alerts.push({
-          id: `npc-goal-selection-${debugState.npcId}`,
-          severity:
-            selectionAge >= GOAL_SELECTION_STUCK_TICKS * 2 ? "danger" : "warning",
+          id: `npc-goal-selection-${s.npcId}`,
+          severity: age >= GOAL_SELECTION_STUCK_TICKS * 2 ? "danger" : "warning",
           title: "Goal selection stuck",
-          message: `${npcLabel} has been waiting on goal selection for ${formatAge(selectionAge)}.`,
-          ageTicks: selectionAge,
-          targetNpcId: debugState.npcId,
+          message: `${label} has been waiting on goal selection for ${formatAge(age)}.`,
+          ageTicks: age,
+          targetNpcId: s.npcId,
         });
       }
     }
   }
 
-  return alerts.sort((left, right) => {
-    const severityDiff =
-      (left.severity === "danger" ? 0 : 1) - (right.severity === "danger" ? 0 : 1);
-    if (severityDiff !== 0) {
-      return severityDiff;
-    }
-    return right.ageTicks - left.ageTicks;
+  return alerts.sort((a, b) => {
+    const sd = (a.severity === "danger" ? 0 : 1) - (b.severity === "danger" ? 0 : 1);
+    return sd || b.ageTicks - a.ageTicks;
   });
 }
 
+// ---------------------------------------------------------------------------
+// Event management
+// ---------------------------------------------------------------------------
+
 function pushEvent(event: DebugFeedEvent): void {
-  const existingIndex = state.events.findIndex((item) => item.id === event.id);
-  if (existingIndex >= 0) {
-    state.events[existingIndex] = event;
+  const idx = state.events.findIndex((e) => e.id === event.id);
+  if (idx >= 0) {
+    state.events[idx] = event;
   } else {
     state.events.push(event);
     if (state.events.length > MAX_EVENTS) {
@@ -476,600 +350,552 @@ function pushEvent(event: DebugFeedEvent): void {
   }
 }
 
-function syncPlayers(players: readonly Player[]): void {
-  state.players = new Map(players.map((player) => [player.id, { ...player }]));
+function getSortedEvents(): DebugFeedEvent[] {
+  return [...state.events].sort((a, b) => b.tick !== a.tick ? b.tick - a.tick : b.id - a.id);
 }
 
-function focusConversation(conversationId: number): void {
-  elements.conversationSearch.value = "";
-  elements.conversationFilter.value = "all";
-  state.selectedConversationId = conversationId;
-  scheduleRender();
+function syncPlayers(players: readonly Player[]): void {
+  state.players = new Map(players.map((p) => [p.id, { ...p }]));
+}
+
+// ---------------------------------------------------------------------------
+// Tab management
+// ---------------------------------------------------------------------------
+
+function switchTab(tabId: TabId): void {
+  state.activeTab = tabId;
+  document.querySelectorAll<HTMLElement>(".tab-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tab === tabId);
+  });
+  document.querySelectorAll<HTMLElement>(".tab-panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.id === `tab-${tabId}`);
+  });
+  // Invalidate cache for this tab so it renders fresh
+  htmlCache.delete("convo-list");
+  htmlCache.delete("convo-detail");
+  htmlCache.delete("npc-list");
+  htmlCache.delete("npc-detail");
+  htmlCache.delete("activity");
+  scheduleRender(true);
+}
+
+document.querySelectorAll<HTMLElement>(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    switchTab(btn.dataset.tab as TabId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Filter management
+// ---------------------------------------------------------------------------
+
+dom.convoFilters.addEventListener("click", (e) => {
+  const pill = (e.target as HTMLElement).closest<HTMLElement>(".filter-pill");
+  if (!pill) return;
+  state.conversationFilter = (pill.dataset.filter ?? "all") as ConversationFilter;
+  dom.convoFilters.querySelectorAll(".filter-pill").forEach((p) => {
+    p.classList.toggle("active", p === pill);
+  });
+  scheduleRender(true);
+});
+
+// ---------------------------------------------------------------------------
+// Focus navigation
+// ---------------------------------------------------------------------------
+
+function focusConversation(convoId: number): void {
+  dom.convoSearch.value = "";
+  state.conversationFilter = "all";
+  dom.convoFilters.querySelectorAll(".filter-pill").forEach((p) => {
+    p.classList.toggle("active", (p as HTMLElement).dataset.filter === "all");
+  });
+  state.selectedConversationId = convoId;
+  switchTab("conversations"); // already calls scheduleRender(true)
 }
 
 function focusNpc(npcId: string): void {
-  elements.autonomySearch.value = "";
-  elements.autonomyFilter.value = "all";
+  dom.npcSearch.value = "";
   state.selectedNpcId = npcId;
-  scheduleRender();
+  switchTab("npcs"); // already calls scheduleRender(true)
 }
 
-function scheduleRender(): void {
-  if (renderScheduled) return;
-  renderScheduled = true;
-  requestAnimationFrame(() => {
-    renderScheduled = false;
-    renderDashboard();
-  });
-}
+// ---------------------------------------------------------------------------
+// Render scheduling
+// ---------------------------------------------------------------------------
 
-function renderCounters(alerts: readonly DashboardAlert[], stalledNpcIds: ReadonlySet<string>): void {
-  const activeConversations = state.conversations.filter(
-    (conversation) => conversation.state !== "ended",
-  ).length;
-  const endedRecently = state.conversations.filter((conversation) => {
-    if (typeof conversation.endedTick !== "number") return false;
-    return state.tick - conversation.endedTick <= ENDED_RECENTLY_WINDOW_TICKS;
-  }).length;
-  const executingNpcs = Array.from(state.autonomy.values()).filter(
-    (debugState) => debugState.currentExecution,
-  ).length;
-  const llmPlans = Array.from(state.autonomy.values()).filter(
-    (debugState) => debugState.currentPlan?.source === "llm",
-  ).length;
-  const recentFailures = getSortedEvents().filter((event) => {
-    if (state.tick - event.tick > ENDED_RECENTLY_WINDOW_TICKS) {
-      return false;
+function scheduleRender(immediate = false): void {
+  if (immediate) {
+    // User interaction -- render on next frame, cancel any pending throttle
+    if (pendingThrottleTimer !== null) {
+      clearTimeout(pendingThrottleTimer);
+      pendingThrottleTimer = null;
     }
-    return event.type === "plan_failed" || event.type === "action_failed";
-  }).length;
-
-  const cards = [
-    {
-      label: "Active Conversations",
-      value: activeConversations,
-      detail: `${pluralize(
-        state.conversations.filter((conversation) => conversation.state === "active").length,
-        "conversation",
-      )} talking now`,
-      tone: activeConversations > 0 ? "active" : "",
-    },
-    {
-      label: "Ended Recently",
-      value: endedRecently,
-      detail: `Last ${ENDED_RECENTLY_WINDOW_TICKS} ticks`,
-      tone: "",
-    },
-    {
-      label: "NPCs Executing",
-      value: executingNpcs,
-      detail: `${pluralize(executingNpcs, "NPC")} currently running an action`,
-      tone: executingNpcs > 0 ? "active" : "",
-    },
-    {
-      label: "LLM Plans",
-      value: llmPlans,
-      detail: `${pluralize(llmPlans, "NPC")} on an LLM-selected plan`,
-      tone: llmPlans > 0 ? "llm" : "",
-    },
-    {
-      label: "Stalled NPCs",
-      value: stalledNpcIds.size,
-      detail: `${pluralize(alerts.filter((alert) => alert.targetNpcId).length, "alert")} targeting autonomy`,
-      tone: stalledNpcIds.size > 0 ? "danger" : "",
-    },
-    {
-      label: "Recent Failures",
-      value: recentFailures,
-      detail: `${pluralize(recentFailures, "plan or action failure")} in the recent window`,
-      tone: recentFailures > 0 ? "warning" : "",
-    },
-  ];
-
-  elements.counters.innerHTML = cards
-    .map(
-      (card) => `
-        <article class="counter-card"${card.tone ? ` data-tone="${card.tone}"` : ""}>
-          <div class="counter-label">${escapeHtml(card.label)}</div>
-          <div class="counter-value">${card.value}</div>
-          <div class="counter-detail">${escapeHtml(card.detail)}</div>
-        </article>
-      `,
-    )
-    .join("");
+    if (renderScheduled) return;
+    renderScheduled = true;
+    requestAnimationFrame(() => {
+      renderScheduled = false;
+      lastRenderTime = performance.now();
+      render();
+    });
+    return;
+  }
+  // Data-driven (WebSocket tick) -- throttle to avoid blinking
+  if (renderScheduled || pendingThrottleTimer !== null) return;
+  const elapsed = performance.now() - lastRenderTime;
+  if (elapsed >= RENDER_THROTTLE_MS) {
+    renderScheduled = true;
+    requestAnimationFrame(() => {
+      renderScheduled = false;
+      lastRenderTime = performance.now();
+      render();
+    });
+  } else {
+    pendingThrottleTimer = setTimeout(() => {
+      pendingThrottleTimer = null;
+      renderScheduled = true;
+      requestAnimationFrame(() => {
+        renderScheduled = false;
+        lastRenderTime = performance.now();
+        render();
+      });
+    }, RENDER_THROTTLE_MS - elapsed);
+  }
 }
 
-function renderConversationPanel(filteredConversations: readonly Conversation[]): void {
-  const activeConversations = filteredConversations.filter(
-    (conversation) => conversation.state !== "ended",
-  );
-  const endedConversations = filteredConversations.filter(
-    (conversation) => conversation.state === "ended",
-  );
+// ---------------------------------------------------------------------------
+// Render: Top bar
+// ---------------------------------------------------------------------------
 
-  elements.conversationSummary.textContent = `${pluralize(filteredConversations.length, "conversation")} shown • ${pluralize(activeConversations.length, "active")} • ${pluralize(endedConversations.length, "ended")}`;
+function renderTopBar(): void {
+  dom.connStatus.textContent = state.connected ? "Connected" : "Disconnected";
+  dom.connStatus.className = `status-pill ${state.connected ? "connected" : "disconnected"}`;
+  dom.tickDisplay.textContent = `Tick ${state.tick}`;
+}
 
-  const groups = [
-    { title: "Active", items: activeConversations },
-    { title: "Ended", items: endedConversations },
-  ];
+// ---------------------------------------------------------------------------
+// Render: Conversations
+// ---------------------------------------------------------------------------
 
-  elements.conversationGroups.innerHTML = groups
-    .filter((group) => group.items.length > 0)
-    .map((group) => {
-      const rows = group.items
-        .map((conversation) => {
-          const lastActivityTick = getConversationLastActivityTick(conversation);
-          const waitingLabel = getConversationWaitingLabel(conversation);
-          return `
-            <article class="selectable-card${state.selectedConversationId === conversation.id ? " is-selected" : ""}" data-conversation-id="${conversation.id}">
-              <div class="card-head">
-                <div>
-                  <div class="card-title">${escapeHtml(getConversationParticipantLabel(conversation))}</div>
-                  <div class="card-meta">Conversation #${conversation.id} • ${escapeHtml(formatTick(conversation.startedTick))} started • ${escapeHtml(formatTick(lastActivityTick))} last activity</div>
-                </div>
-                <div class="chip-row">
-                  <span class="chip" data-tone="${getConversationTone(conversation)}">${escapeHtml(conversation.state)}</span>
-                </div>
-              </div>
-              <div class="chip-row">
-                <span class="chip">${pluralize(conversation.messages.length, "message")}</span>
-                <span class="chip">${escapeHtml(formatAge(getConversationDurationTicks(conversation)))}</span>
-                ${waitingLabel ? `<span class="chip" data-tone="warning">${escapeHtml(waitingLabel)}</span>` : ""}
-              </div>
-            </article>
-          `;
-        })
-        .join("");
+function renderConversations(): void {
+  const search = dom.convoSearch.value.trim().toLowerCase();
+  const filtered = state.conversations
+    .filter((c) => !search || getConversationSearchBlob(c).includes(search))
+    .filter((c) => matchesConversationFilter(c, state.conversationFilter))
+    .sort((a, b) => getConversationLastActivityTick(b) - getConversationLastActivityTick(a) || b.id - a.id);
 
-      return `
-        <section class="group-block">
-          <div class="group-header">
-            <div class="group-title">${escapeHtml(group.title)}</div>
-            <div class="group-count">${pluralize(group.items.length, "conversation")}</div>
-          </div>
-          <div class="row-list">${rows}</div>
-        </section>
-      `;
-    })
-    .join("");
-
-  if (filteredConversations.length === 0) {
-    elements.conversationGroups.innerHTML =
-      '<div class="empty-state">No conversations match the current search and filters.</div>';
+  // Auto-select if needed
+  if (
+    state.selectedConversationId === null ||
+    !state.conversations.some((c) => c.id === state.selectedConversationId)
+  ) {
+    state.selectedConversationId = filtered[0]?.id ?? null;
+  } else if (
+    filtered.length > 0 &&
+    !filtered.some((c) => c.id === state.selectedConversationId)
+  ) {
+    state.selectedConversationId = filtered[0].id;
   }
 
-  const selectedConversation = state.conversations.find(
-    (conversation) => conversation.id === state.selectedConversationId,
-  );
+  // Group into active / ended
+  const active = filtered.filter((c) => c.state !== "ended");
+  const ended = filtered.filter((c) => c.state === "ended");
 
-  if (!selectedConversation) {
-    elements.conversationDetail.innerHTML =
-      '<div class="empty-state">Select a conversation to inspect its transcript, participants, and timing.</div>';
-  } else {
-    const waitingLabel = getConversationWaitingLabel(selectedConversation);
-    const lastActivityTick = getConversationLastActivityTick(selectedConversation);
-    const metrics = [
-      { label: "State", value: selectedConversation.state },
-      { label: "Started", value: formatTick(selectedConversation.startedTick) },
-      { label: "Last Activity", value: formatTick(lastActivityTick) },
-      { label: "Duration", value: formatAge(getConversationDurationTicks(selectedConversation)) },
-      { label: "Messages", value: String(selectedConversation.messages.length) },
-      {
-        label: "Ended",
-        value:
-          typeof selectedConversation.endedTick === "number"
-            ? `${formatTick(selectedConversation.endedTick)}${selectedConversation.endedReason ? ` • ${selectedConversation.endedReason.replaceAll("_", " ")}` : ""}`
-            : "—",
-      },
-    ];
+  let listHtml = "";
 
-    const participantChips = getParticipantData(selectedConversation)
-      .map(
-        (participant) =>
-          `<span class="chip"${participant.isNpc ? ' data-tone="llm"' : ""}>${escapeHtml(participant.isNpc ? `NPC: ${participant.name}` : `Player: ${participant.name}`)}</span>`,
-      )
-      .join("");
-
-    const transcript = selectedConversation.messages.length
-      ? selectedConversation.messages
-          .map(
-            (message) =>
-              `<div class="transcript-line"><strong>${escapeHtml(getPlayerLabel(message.playerId))}</strong>: ${escapeHtml(message.content)}</div>`,
-          )
-          .join("")
-      : `<div class="transcript-line">${
-          selectedConversation.state === "invited"
-            ? "Invitation sent. Waiting for the invitee to respond."
-            : selectedConversation.state === "walking"
-              ? "Participants are walking to their rendezvous point."
-              : "No transcript captured for this conversation yet."
-        }</div>`;
-
-    elements.conversationDetail.innerHTML = `
-      <div class="detail-head">
-        <div>
-          <div class="detail-title">${escapeHtml(getConversationParticipantLabel(selectedConversation))}</div>
-          <div class="detail-meta">Conversation #${selectedConversation.id} • ${escapeHtml(formatTick(lastActivityTick))} last activity</div>
-        </div>
-        <div class="chip-row">
-          <span class="chip" data-tone="${getConversationTone(selectedConversation)}">${escapeHtml(selectedConversation.state)}</span>
-          ${waitingLabel ? `<span class="chip" data-tone="warning">${escapeHtml(waitingLabel)}</span>` : ""}
-        </div>
-      </div>
-      <div class="chip-row">${participantChips}</div>
-      <div class="metric-grid">
-        ${metrics
-          .map(
-            (metric) => `
-              <div class="metric-card">
-                <div class="metric-label">${escapeHtml(metric.label)}</div>
-                <div class="metric-value">${escapeHtml(metric.value)}</div>
-              </div>
-            `,
-          )
-          .join("")}
-      </div>
-      ${
-        selectedConversation.summary
-          ? `<div class="detail-copy">${escapeHtml(selectedConversation.summary)}</div>`
-          : ""
-      }
-      <div class="transcript">${transcript}</div>
-    `;
+  if (active.length > 0) {
+    listHtml += `<div class="list-group-header">Active (${active.length})</div>`;
+    listHtml += active.map((c) => renderConvoCard(c)).join("");
+  }
+  if (ended.length > 0) {
+    listHtml += `<div class="list-group-header">Ended (${ended.length})</div>`;
+    listHtml += ended.map((c) => renderConvoCard(c)).join("");
   }
 
-  elements.conversationGroups
-    .querySelectorAll<HTMLElement>("[data-conversation-id]")
-    .forEach((card) => {
+  if (filtered.length === 0) {
+    listHtml = '<div class="empty-state">No conversations match your search.</div>';
+  }
+
+  const listChanged = setHtml(dom.convoList, "convo-list", listHtml);
+  renderConvoDetail();
+
+  // Only re-bind click handlers when DOM actually changed
+  if (listChanged) {
+    dom.convoList.querySelectorAll<HTMLElement>("[data-convo-id]").forEach((card) => {
       card.addEventListener("click", () => {
-        const rawId = card.dataset.conversationId;
-        if (!rawId) return;
-        state.selectedConversationId = Number(rawId);
-        scheduleRender();
+        state.selectedConversationId = Number(card.dataset.convoId);
+        scheduleRender(true);
       });
     });
+  }
 }
 
-function renderAutonomyPanel(
-  filteredAutonomy: readonly NpcAutonomyDebugState[],
-  stalledNpcIds: ReadonlySet<string>,
-): void {
-  const executingCount = filteredAutonomy.filter((debugState) => debugState.currentExecution).length;
-  const plannedCount = filteredAutonomy.filter((debugState) => debugState.currentPlan).length;
-  elements.autonomySummary.textContent = `${pluralize(filteredAutonomy.length, "NPC")} shown • ${pluralize(executingCount, "executing action")} • ${pluralize(plannedCount, "active plan")}`;
-
-  if (filteredAutonomy.length === 0) {
-    elements.autonomyList.innerHTML =
-      '<div class="empty-state">No NPC autonomy state matches the current search and filters.</div>';
-  } else {
-    elements.autonomyList.innerHTML = filteredAutonomy
-      .map((debugState) => {
-        const player = getPlayer(debugState.npcId);
-        const actionAge = debugState.currentExecution
-          ? state.tick - debugState.currentExecution.startedAtTick
-          : null;
-        return `
-          <article class="selectable-card${state.selectedNpcId === debugState.npcId ? " is-selected" : ""}" data-npc-id="${escapeHtml(debugState.npcId)}">
-            <div class="card-head">
-              <div>
-                <div class="card-title">${escapeHtml(player?.name ?? debugState.npcId)}</div>
-                <div class="card-meta">${escapeHtml(debugState.npcId)} • ${escapeHtml(player?.state ?? "unknown")} • @ ${escapeHtml(formatPoint(player))}</div>
-              </div>
-              <div class="chip-row">
-                ${debugState.currentPlan?.source === "llm" ? '<span class="chip" data-tone="llm">LLM</span>' : ""}
-                ${stalledNpcIds.has(debugState.npcId) ? '<span class="chip" data-tone="danger">Stalled</span>' : ""}
-              </div>
-            </div>
-            <div class="card-meta">${
-              debugState.currentPlan
-                ? `Plan: ${escapeHtml(debugState.currentPlan.goalId.replaceAll("_", " "))}`
-                : "No active plan"
-            }</div>
-            <div class="chip-row">
-              <span class="chip">${escapeHtml(`Need ${Math.round(getLowestNeed(debugState))}`)}</span>
-              <span class="chip">${escapeHtml(debugState.currentExecution?.actionLabel ?? "No action executing")}</span>
-              ${
-                typeof actionAge === "number"
-                  ? `<span class="chip" data-tone="${actionAge >= EXECUTION_STUCK_TICKS ? "warning" : "active"}">${escapeHtml(formatAge(actionAge))}</span>`
-                  : ""
-              }
-            </div>
-          </article>
-        `;
-      })
-      .join("");
-  }
-
-  const selectedState = state.selectedNpcId
-    ? state.autonomy.get(state.selectedNpcId)
-    : undefined;
-
-  if (!selectedState) {
-    elements.autonomyDetail.innerHTML =
-      '<div class="empty-state">Select an NPC to inspect needs, active plan steps, and execution state.</div>';
-  } else {
-    const player = getPlayer(selectedState.npcId);
-    const currentActionAge = selectedState.currentExecution
-      ? state.tick - selectedState.currentExecution.startedAtTick
-      : null;
-    const metrics = [
-      { label: "Position", value: formatPoint(player) },
-      { label: "State", value: player?.state ?? "unknown" },
-      {
-        label: "Plan Source",
-        value: selectedState.currentPlan?.source ?? "idle",
-      },
-      {
-        label: "Current Action",
-        value: selectedState.currentExecution?.actionLabel ?? "none",
-      },
-      {
-        label: "Action Age",
-        value: typeof currentActionAge === "number" ? formatAge(currentActionAge) : "—",
-      },
-      {
-        label: "Failures",
-        value: String(selectedState.consecutivePlanFailures),
-      },
-    ];
-
-    const needRows = ([
-      ["Health", selectedState.needs.health],
-      ["Food", selectedState.needs.food],
-      ["Water", selectedState.needs.water],
-      ["Social", selectedState.needs.social],
-    ] as Array<[string, number]>)
-      .map(
-        ([label, value]) => `
-          <div class="need-row">
-            <div class="need-header">
-              <span>${escapeHtml(label)}</span>
-              <span>${Math.round(value)}</span>
-            </div>
-            <div class="need-bar">
-              <div class="need-fill" style="width: ${Math.max(0, Math.min(100, value))}%"></div>
-            </div>
-          </div>
-        `,
-      )
-      .join("");
-
-    const steps = selectedState.currentPlan?.steps.length
-      ? selectedState.currentPlan.steps
-          .map(
-            (step) => `
-              <div class="step-item${step.isCurrent ? " is-current" : ""}">
-                <div class="step-title">Step ${step.index + 1}: ${escapeHtml(step.actionLabel)}</div>
-                <div class="step-detail">${step.targetPosition ? `Target ${step.targetPosition.x}, ${step.targetPosition.y}` : "No explicit target"}</div>
-              </div>
-            `,
-          )
-          .join("")
-      : '<div class="empty-state">No current plan steps.</div>';
-
-    const inventoryEntries = Object.entries(selectedState.inventory);
-
-    elements.autonomyDetail.innerHTML = `
-      <div class="detail-head">
-        <div>
-          <div class="detail-title">${escapeHtml(player?.name ?? selectedState.npcId)}</div>
-          <div class="detail-meta">${escapeHtml(selectedState.npcId)} • ${escapeHtml(player?.state ?? "unknown")} • @ ${escapeHtml(formatPoint(player))}</div>
-        </div>
-        <div class="chip-row">
-          ${
-            selectedState.currentPlan
-              ? `<span class="chip"${selectedState.currentPlan.source === "llm" ? ' data-tone="llm"' : ""}>${escapeHtml(selectedState.currentPlan.source)} plan</span>`
-              : '<span class="chip">idle</span>'
-          }
-          ${
-            stalledNpcIds.has(selectedState.npcId)
-              ? '<span class="chip" data-tone="danger">Stalled</span>'
-              : ""
-          }
-          ${
-            selectedState.goalSelectionInFlight
-              ? '<span class="chip" data-tone="warning">Goal selection</span>'
-              : ""
-          }
-        </div>
+function renderConvoCard(c: Conversation): string {
+  const selected = state.selectedConversationId === c.id;
+  const waiting = getConversationWaitingLabel(c);
+  return `
+    <div class="list-card${selected ? " selected" : ""}" data-convo-id="${c.id}">
+      <div class="list-card-header">
+        <span class="list-card-title">${escapeHtml(getConversationParticipantLabel(c))}</span>
+        <span class="chip ${getConversationTone(c)}">${escapeHtml(c.state)}</span>
       </div>
-      <div class="metric-grid">
-        ${metrics
-          .map(
-            (metric) => `
-              <div class="metric-card">
-                <div class="metric-label">${escapeHtml(metric.label)}</div>
-                <div class="metric-value">${escapeHtml(metric.value)}</div>
-              </div>
-            `,
-          )
-          .join("")}
+      <div class="list-card-chips">
+        <span class="chip">${pluralize(c.messages.length, "msg")}</span>
+        <span class="chip">${escapeHtml(formatAge(getConversationDurationTicks(c)))}</span>
+        ${waiting ? `<span class="chip warning">${escapeHtml(waiting)}</span>` : ""}
       </div>
-      <div class="need-list">${needRows}</div>
-      ${
-        selectedState.currentPlan?.reasoning
-          ? `<div class="detail-copy">${escapeHtml(selectedState.currentPlan.reasoning)}</div>`
-          : ""
-      }
-      <div class="steps-list">${steps}</div>
-      ${
-        inventoryEntries.length
-          ? `<div class="detail-copy">Inventory: ${escapeHtml(
-              inventoryEntries.map(([item, count]) => `${item} ×${count}`).join(", "),
-            )}</div>`
-          : '<div class="detail-copy">Inventory empty.</div>'
-      }
-    `;
-  }
-
-  elements.autonomyList
-    .querySelectorAll<HTMLElement>("[data-npc-id]")
-    .forEach((card) => {
-      card.addEventListener("click", () => {
-        const npcId = card.dataset.npcId;
-        if (!npcId) return;
-        state.selectedNpcId = npcId;
-        scheduleRender();
-      });
-    });
+    </div>
+  `;
 }
 
-function renderAlerts(alerts: readonly DashboardAlert[]): void {
-  elements.alertsSummary.textContent = alerts.length
-    ? `${pluralize(alerts.length, "alert")} active`
-    : "No stuck-state alerts";
-
-  if (alerts.length === 0) {
-    elements.alertsList.innerHTML =
-      '<div class="empty-state">No current alerts. Autonomy and conversation flows look healthy.</div>';
+function renderConvoDetail(): void {
+  const c = state.conversations.find((cv) => cv.id === state.selectedConversationId);
+  if (!c) {
+    setHtml(dom.convoDetail, "convo-detail", '<div class="detail-empty">Select a conversation</div>');
     return;
   }
 
-  elements.alertsList.innerHTML = alerts
-    .map(
-      (alert) => `
-        <article class="alert-card" data-severity="${alert.severity}" data-alert-id="${escapeHtml(alert.id)}">
-          <div class="alert-title">${escapeHtml(alert.title)}</div>
-          <div class="alert-meta">${escapeHtml(formatAge(alert.ageTicks))} • ${alert.targetNpcId ? escapeHtml(getPlayerLabel(alert.targetNpcId)) : `Conversation #${alert.targetConversationId}`}</div>
-          <div class="alert-copy">${escapeHtml(alert.message)}</div>
-        </article>
-      `,
-    )
+  const participants = getParticipantData(c);
+  const waiting = getConversationWaitingLabel(c);
+  const lastActivity = getConversationLastActivityTick(c);
+
+  const participantChips = participants
+    .map((p) => `<span class="chip ${p.isNpc ? "llm" : "accent"}">${escapeHtml(p.isNpc ? `NPC: ${p.name}` : p.name)}</span>`)
     .join("");
 
-  const alertsById = new Map(alerts.map((alert) => [alert.id, alert]));
-  elements.alertsList
-    .querySelectorAll<HTMLElement>("[data-alert-id]")
-    .forEach((card) => {
+  const metrics = [
+    { label: "State", value: c.state },
+    { label: "Started", value: formatTick(c.startedTick) },
+    { label: "Last Activity", value: formatTick(lastActivity) },
+    { label: "Duration", value: formatAge(getConversationDurationTicks(c)) },
+    { label: "Messages", value: String(c.messages.length) },
+    {
+      label: "Ended",
+      value: typeof c.endedTick === "number"
+        ? `${formatTick(c.endedTick)}${c.endedReason ? ` \u2022 ${c.endedReason.replaceAll("_", " ")}` : ""}`
+        : "\u2014",
+    },
+  ];
+
+  let transcript: string;
+  if (c.messages.length > 0) {
+    transcript = c.messages
+      .map((m) => `<div class="transcript-msg"><strong>${escapeHtml(getPlayerLabel(m.playerId))}</strong>: ${escapeHtml(m.content)}</div>`)
+      .join("");
+  } else if (c.state === "invited") {
+    transcript = '<div class="transcript-empty">Invitation sent. Waiting for response.</div>';
+  } else if (c.state === "walking") {
+    transcript = '<div class="transcript-empty">Participants walking to rendezvous.</div>';
+  } else {
+    transcript = '<div class="transcript-empty">No messages yet.</div>';
+  }
+
+  setHtml(dom.convoDetail, "convo-detail", `
+    <div class="detail-header">
+      <div>
+        <div class="detail-title">${escapeHtml(getConversationParticipantLabel(c))}</div>
+        <div class="detail-subtitle">Conversation #${c.id}</div>
+      </div>
+      <div class="detail-chips">
+        <span class="chip ${getConversationTone(c)}">${escapeHtml(c.state)}</span>
+        ${waiting ? `<span class="chip warning">${escapeHtml(waiting)}</span>` : ""}
+      </div>
+    </div>
+    <div class="detail-chips" style="margin-bottom:16px">${participantChips}</div>
+    <div class="metrics">
+      ${metrics.map((m) => `
+        <div class="metric">
+          <div class="metric-label">${escapeHtml(m.label)}</div>
+          <div class="metric-value">${escapeHtml(m.value)}</div>
+        </div>
+      `).join("")}
+    </div>
+    ${c.summary ? `<div class="inventory-text">${escapeHtml(c.summary)}</div>` : ""}
+    <div class="detail-section-label">Transcript</div>
+    <div class="transcript">${transcript}</div>
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// Render: NPCs
+// ---------------------------------------------------------------------------
+
+function renderNpcs(stalledNpcIds: ReadonlySet<string>): void {
+  const search = dom.npcSearch.value.trim().toLowerCase();
+
+  // Always sort alphabetically for stable ordering
+  const filtered = [...state.autonomy.values()]
+    .filter((s) => !search || getNpcSearchBlob(s).includes(search))
+    .sort((a, b) => collator.compare(getPlayerLabel(a.npcId), getPlayerLabel(b.npcId)));
+
+  // Auto-select
+  if (!state.selectedNpcId || !state.autonomy.has(state.selectedNpcId)) {
+    state.selectedNpcId = filtered[0]?.npcId ?? null;
+  } else if (filtered.length > 0 && !filtered.some((s) => s.npcId === state.selectedNpcId)) {
+    state.selectedNpcId = filtered[0].npcId;
+  }
+
+  let listHtml: string;
+  if (filtered.length === 0) {
+    listHtml = '<div class="empty-state">No NPCs match your search.</div>';
+  } else {
+    listHtml = filtered.map((s) => renderNpcCard(s, stalledNpcIds)).join("");
+  }
+
+  const listChanged = setHtml(dom.npcList, "npc-list", listHtml);
+  renderNpcDetail(stalledNpcIds);
+
+  if (listChanged) {
+    dom.npcList.querySelectorAll<HTMLElement>("[data-npc-id]").forEach((card) => {
+      card.addEventListener("click", () => {
+        state.selectedNpcId = card.dataset.npcId!;
+        scheduleRender(true);
+      });
+    });
+  }
+}
+
+function renderNpcCard(s: NpcAutonomyDebugState, stalledNpcIds: ReadonlySet<string>): string {
+  const player = getPlayer(s.npcId);
+  const selected = state.selectedNpcId === s.npcId;
+  const stalled = stalledNpcIds.has(s.npcId);
+
+  let statusChip = "";
+  if (stalled) {
+    statusChip = '<span class="chip danger">Stalled</span>';
+  } else if (s.currentExecution) {
+    statusChip = '<span class="chip active">Executing</span>';
+  } else if (s.currentPlan) {
+    statusChip = '<span class="chip accent">Planned</span>';
+  } else if (s.goalSelectionInFlight) {
+    statusChip = '<span class="chip warning">Thinking</span>';
+  } else {
+    statusChip = '<span class="chip ended">Idle</span>';
+  }
+
+  const sourceChip = s.currentPlan
+    ? `<span class="chip${s.currentPlan.source === "llm" ? " llm" : ""}">${escapeHtml(s.currentPlan.source)}</span>`
+    : "";
+
+  return `
+    <div class="list-card${selected ? " selected" : ""}" data-npc-id="${escapeHtml(s.npcId)}">
+      <div class="list-card-header">
+        <span class="list-card-title">${escapeHtml(player?.name ?? s.npcId)}</span>
+        ${statusChip}
+      </div>
+      <div class="list-card-meta">
+        ${escapeHtml(player?.state ?? "unknown")} \u2022 ${escapeHtml(formatPoint(player))}${s.currentPlan ? ` \u2022 ${escapeHtml(s.currentPlan.goalId.replaceAll("_", " "))}` : ""}
+      </div>
+      ${sourceChip ? `<div class="list-card-chips">${sourceChip}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderNpcDetail(stalledNpcIds: ReadonlySet<string>): void {
+  const s = state.selectedNpcId ? state.autonomy.get(state.selectedNpcId) : undefined;
+  if (!s) {
+    setHtml(dom.npcDetail, "npc-detail", '<div class="detail-empty">Select an NPC</div>');
+    return;
+  }
+
+  const player = getPlayer(s.npcId);
+  const actionAge = s.currentExecution ? state.tick - s.currentExecution.startedAtTick : null;
+
+  const metrics = [
+    { label: "Position", value: formatPoint(player) },
+    { label: "State", value: player?.state ?? "unknown" },
+    { label: "Plan Source", value: s.currentPlan?.source ?? "idle" },
+    { label: "Current Action", value: s.currentExecution?.actionLabel ?? "none" },
+    { label: "Action Age", value: typeof actionAge === "number" ? formatAge(actionAge) : "\u2014" },
+    { label: "Failures", value: String(s.consecutivePlanFailures) },
+  ];
+
+  const needsHtml = (
+    [
+      ["Health", s.needs.health],
+      ["Food", s.needs.food],
+      ["Water", s.needs.water],
+      ["Social", s.needs.social],
+    ] as [string, number][]
+  )
+    .map(([label, value]) => `
+      <div class="need-row">
+        <span class="need-label">${escapeHtml(label)}</span>
+        <div class="need-bar"><div class="need-fill ${needFillClass(value)}" style="width:${Math.max(0, Math.min(100, value))}%"></div></div>
+        <span class="need-value">${Math.round(value)}</span>
+      </div>
+    `)
+    .join("");
+
+  let stepsHtml = "";
+  if (s.currentPlan?.steps.length) {
+    stepsHtml = `
+      <div class="plan-steps">
+        <div class="detail-section-label">Plan Steps</div>
+        ${s.currentPlan.steps.map((step) => `
+          <div class="step-item${step.isCurrent ? " current" : ""}">
+            <span class="step-num">${step.index + 1}</span>
+            <span>${escapeHtml(step.actionLabel)}${step.targetPosition ? ` \u2192 ${step.targetPosition.x},${step.targetPosition.y}` : ""}</span>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  const inventoryEntries = Object.entries(s.inventory);
+  const inventoryHtml = inventoryEntries.length
+    ? `<div class="inventory-text">Inventory: ${escapeHtml(inventoryEntries.map(([item, count]) => `${item} \u00d7${count}`).join(", "))}</div>`
+    : '<div class="inventory-text">Inventory empty.</div>';
+
+  let headerChips = "";
+  if (s.currentPlan) {
+    headerChips += `<span class="chip ${s.currentPlan.source === "llm" ? "llm" : ""}">${escapeHtml(s.currentPlan.source)} plan</span>`;
+  } else {
+    headerChips += '<span class="chip ended">idle</span>';
+  }
+  if (stalledNpcIds.has(s.npcId)) {
+    headerChips += '<span class="chip danger">Stalled</span>';
+  }
+  if (s.goalSelectionInFlight) {
+    headerChips += '<span class="chip warning">Goal selection</span>';
+  }
+
+  setHtml(dom.npcDetail, "npc-detail", `
+    <div class="detail-header">
+      <div>
+        <div class="detail-title">${escapeHtml(player?.name ?? s.npcId)}</div>
+        <div class="detail-subtitle">${escapeHtml(s.npcId)}</div>
+      </div>
+      <div class="detail-chips">${headerChips}</div>
+    </div>
+    <div class="metrics">
+      ${metrics.map((m) => `
+        <div class="metric">
+          <div class="metric-label">${escapeHtml(m.label)}</div>
+          <div class="metric-value">${escapeHtml(m.value)}</div>
+        </div>
+      `).join("")}
+    </div>
+    <div class="needs-section">
+      <div class="section-label">Needs</div>
+      ${needsHtml}
+    </div>
+    ${s.currentPlan?.reasoning ? `<div class="inventory-text">${escapeHtml(s.currentPlan.reasoning)}</div>` : ""}
+    ${stepsHtml}
+    ${inventoryHtml}
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// Render: Activity (alerts + events)
+// ---------------------------------------------------------------------------
+
+function renderActivity(alerts: readonly DashboardAlert[]): void {
+  const events = getSortedEvents();
+  let html = "";
+
+  // Alerts section
+  html += '<div class="section-divider">Alerts</div>';
+  if (alerts.length === 0) {
+    html += '<div class="empty-state">No stuck-state alerts. Everything looks healthy.</div>';
+  } else {
+    html += alerts.map((a) => `
+      <div class="alert-card ${a.severity}" data-alert-id="${escapeHtml(a.id)}">
+        <div class="alert-title">${escapeHtml(a.title)}</div>
+        <div class="alert-meta">${escapeHtml(formatAge(a.ageTicks))} \u2022 ${a.targetNpcId ? escapeHtml(getPlayerLabel(a.targetNpcId)) : `Conversation #${a.targetConversationId}`}</div>
+      </div>
+    `).join("");
+  }
+
+  // Events section
+  html += '<div class="section-divider">Event Feed</div>';
+  if (events.length === 0) {
+    html += '<div class="empty-state">Waiting for events.</div>';
+  } else {
+    html += events.map((e) => {
+      const borderClass = e.severity === "error" ? "error-border" : e.severity === "warning" ? "warning-border" : "";
+      return `
+        <div class="event-card ${borderClass}" data-event-id="${e.id}">
+          <div class="event-title">${escapeHtml(e.title)}</div>
+          <div class="event-meta">${escapeHtml(formatTick(e.tick))} \u2022 ${escapeHtml(e.subjectType)} ${escapeHtml(e.subjectId)}</div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  const changed = setHtml(dom.activityContent, "activity", html);
+
+  if (changed) {
+    // Bind alert clicks
+    const alertsById = new Map(alerts.map((a) => [a.id, a]));
+    dom.activityContent.querySelectorAll<HTMLElement>("[data-alert-id]").forEach((card) => {
       card.addEventListener("click", () => {
         const alert = alertsById.get(card.dataset.alertId ?? "");
         if (!alert) return;
-        if (alert.targetConversationId) {
-          focusConversation(alert.targetConversationId);
-        } else if (alert.targetNpcId) {
-          focusNpc(alert.targetNpcId);
-        }
+        if (alert.targetConversationId) focusConversation(alert.targetConversationId);
+        else if (alert.targetNpcId) focusNpc(alert.targetNpcId);
       });
     });
-}
 
-function renderEventFeed(events: readonly DebugFeedEvent[]): void {
-  elements.eventFeedSummary.textContent = events.length
-    ? `${pluralize(events.length, "event")} buffered`
-    : "No events captured yet";
-
-  if (events.length === 0) {
-    elements.eventFeed.innerHTML =
-      '<div class="empty-state">Waiting for conversations, plans, actions, and errors to enter the feed.</div>';
-    return;
-  }
-
-  elements.eventFeed.innerHTML = events
-    .map(
-      (event) => `
-        <article class="event-card" data-severity="${event.severity}" data-event-id="${event.id}">
-          <div class="event-title">${escapeHtml(event.title)}</div>
-          <div class="event-meta">${escapeHtml(formatTick(event.tick))} • ${escapeHtml(event.subjectType)} ${escapeHtml(event.subjectId)}</div>
-          <div class="event-copy">${escapeHtml(event.message)}</div>
-        </article>
-      `,
-    )
-    .join("");
-
-  const eventsById = new Map(events.map((event) => [String(event.id), event]));
-  elements.eventFeed
-    .querySelectorAll<HTMLElement>("[data-event-id]")
-    .forEach((card) => {
+    // Bind event clicks
+    const eventsById = new Map(events.map((e) => [String(e.id), e]));
+    dom.activityContent.querySelectorAll<HTMLElement>("[data-event-id]").forEach((card) => {
       card.addEventListener("click", () => {
         const event = eventsById.get(card.dataset.eventId ?? "");
         if (!event) return;
         if (typeof event.relatedConversationId === "number") {
           focusConversation(event.relatedConversationId);
-          return;
-        }
-        if (event.relatedNpcId) {
+        } else if (event.relatedNpcId) {
           focusNpc(event.relatedNpcId);
-          return;
-        }
-        if (event.subjectType === "npc") {
+        } else if (event.subjectType === "npc") {
           focusNpc(event.subjectId);
         }
       });
     });
+  }
 }
 
-function renderDashboard(): void {
+// ---------------------------------------------------------------------------
+// Main render
+// ---------------------------------------------------------------------------
+
+function render(): void {
   const alerts = deriveAlerts();
   const stalledNpcIds = new Set(
-    alerts
-      .map((alert) => alert.targetNpcId)
-      .filter((npcId): npcId is string => Boolean(npcId)),
+    alerts.map((a) => a.targetNpcId).filter((id): id is string => Boolean(id)),
   );
 
-  const conversationSearch = elements.conversationSearch.value.trim().toLowerCase();
-  const conversationFilter = elements.conversationFilter.value as ConversationFilter;
-  const conversationSort = elements.conversationSort.value as ConversationSort;
+  renderTopBar();
 
-  const filteredConversations = [...state.conversations]
-    .filter((conversation) =>
-      !conversationSearch || getConversationSearchBlob(conversation).includes(conversationSearch),
-    )
-    .filter((conversation) =>
-      getConversationMatchesFilter(conversation, conversationFilter),
-    )
-    .sort((left, right) => sortConversations(left, right, conversationSort));
+  // Always update tab badges
+  const activeConvos = state.conversations.filter((c) => c.state !== "ended").length;
+  dom.badgeConvos.textContent = String(activeConvos);
+  dom.badgeNpcs.textContent = String(state.autonomy.size);
+  dom.badgeActivity.textContent = alerts.length > 0 ? String(alerts.length) : "0";
 
-  if (
-    state.selectedConversationId === null ||
-    !state.conversations.some((conversation) => conversation.id === state.selectedConversationId)
-  ) {
-    state.selectedConversationId = filteredConversations[0]?.id ?? null;
-  } else if (
-    filteredConversations.length > 0 &&
-    !filteredConversations.some(
-      (conversation) => conversation.id === state.selectedConversationId,
-    )
-  ) {
-    state.selectedConversationId = filteredConversations[0].id;
+  // Only render the visible tab to avoid unnecessary DOM work
+  switch (state.activeTab) {
+    case "conversations":
+      renderConversations();
+      break;
+    case "npcs":
+      renderNpcs(stalledNpcIds);
+      break;
+    case "activity":
+      renderActivity(alerts);
+      break;
   }
-
-  const autonomySearch = elements.autonomySearch.value.trim().toLowerCase();
-  const autonomyFilter = elements.autonomyFilter.value as AutonomyFilter;
-  const autonomySort = elements.autonomySort.value as AutonomySort;
-  const filteredAutonomy = [...state.autonomy.values()]
-    .filter(
-      (debugState) =>
-        !autonomySearch || getAutonomySearchBlob(debugState).includes(autonomySearch),
-    )
-    .filter((debugState) =>
-      getAutonomyMatchesFilter(debugState, autonomyFilter, stalledNpcIds),
-    )
-    .sort((left, right) => sortAutonomyStates(left, right, autonomySort, stalledNpcIds));
-
-  if (
-    state.selectedNpcId === null ||
-    !state.autonomy.has(state.selectedNpcId)
-  ) {
-    state.selectedNpcId = filteredAutonomy[0]?.npcId ?? null;
-  } else if (
-    filteredAutonomy.length > 0 &&
-    !filteredAutonomy.some((debugState) => debugState.npcId === state.selectedNpcId)
-  ) {
-    state.selectedNpcId = filteredAutonomy[0].npcId;
-  }
-
-  elements.connection.textContent = state.connected ? "Connected" : "Disconnected";
-  elements.connection.classList.toggle("is-connected", state.connected);
-  elements.connection.classList.toggle("is-disconnected", !state.connected);
-  elements.tick.textContent = `Tick ${state.tick}`;
-
-  renderCounters(alerts, stalledNpcIds);
-  renderConversationPanel(filteredConversations);
-  renderAutonomyPanel(filteredAutonomy, stalledNpcIds);
-  renderAlerts(alerts);
-  renderEventFeed(getSortedEvents());
 }
+
+// ---------------------------------------------------------------------------
+// Input handlers
+// ---------------------------------------------------------------------------
+
+dom.convoSearch.addEventListener("input", () => scheduleRender(true));
+dom.npcSearch.addEventListener("input", () => scheduleRender(true));
+
+// ---------------------------------------------------------------------------
+// WebSocket
+// ---------------------------------------------------------------------------
 
 function handleMessage(message: ServerMessage): void {
   switch (message.type) {
@@ -1102,10 +928,7 @@ function handleMessage(message: ServerMessage): void {
       ).conversations;
       break;
     case "debug_conversation_message":
-      state.conversations = appendConversationMessage(
-        state.conversations,
-        message.data,
-      );
+      state.conversations = appendConversationMessage(state.conversations, message.data);
       break;
     case "debug_autonomy_upsert":
       state.autonomy.set(message.data.npcId, message.data);
@@ -1128,33 +951,25 @@ function handleMessage(message: ServerMessage): void {
     default:
       break;
   }
-
-  scheduleRender();
-}
-
-for (const control of [
-  elements.conversationSearch,
-  elements.conversationSort,
-  elements.conversationFilter,
-  elements.autonomySearch,
-  elements.autonomySort,
-  elements.autonomyFilter,
-]) {
-  control.addEventListener("input", () => scheduleRender());
-  control.addEventListener("change", () => scheduleRender());
+  // Bootstrap and conversation events render immediately; ticks are throttled
+  const isImmediate = message.type === "debug_bootstrap"
+    || message.type === "debug_conversation_upsert"
+    || message.type === "debug_conversation_message"
+    || message.type === "error";
+  scheduleRender(isImmediate);
 }
 
 client.onOpen(() => {
   state.connected = true;
   client.send({ type: "subscribe_debug" });
-  scheduleRender();
+  scheduleRender(true);
 });
 
 client.onClose(() => {
   state.connected = false;
-  scheduleRender();
+  scheduleRender(true);
 });
 
 client.onMessage(handleMessage);
 client.connect();
-renderDashboard();
+render();
