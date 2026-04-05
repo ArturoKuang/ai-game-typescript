@@ -7,6 +7,8 @@ This folder contains the architecture tooling for AI Town. It has two runnable t
 
 It also includes [`component-tab-redesign-spec.md`](/Users/arturokuang/ai-game-typescript/tools/component-tab-redesign-spec.md), which documents the current design direction for the visualizer's component view.
 
+There is also a lightweight browser QA helper under [`qa/`](/Users/arturokuang/ai-game-typescript/tools/qa/autonomyBrowserQa.mjs) for autonomy/gameplay checks against a live local server.
+
 There is also a top-level [`package.json`](/Users/arturokuang/ai-game-typescript/tools/package.json) in this folder now, so you can run the common workflows from `tools/` without changing directories.
 
 ## Folder Layout
@@ -18,6 +20,8 @@ tools/
 │   ├── graph.json               # Main extracted graph output
 │   ├── component-diagram.mmd    # Generated Mermaid source
 │   └── component-diagram.md     # Generated Markdown wrapper for Mermaid
+├── qa/
+│   └── autonomyBrowserQa.mjs    # Browser QA helper for live gameplay/autonomy checks
 ├── visualizer/                  # React Flow UI for graph.json
 │   ├── public/graph.json        # Copy consumed by the app
 │   └── src/
@@ -25,6 +29,25 @@ tools/
 ```
 
 ## What Each Tool Does
+
+### `qa`
+
+`qa/autonomyBrowserQa.mjs` drives the actual browser client against a chosen server origin, saves a screenshot, and writes a JSON report with UI text plus `/api/debug/*` snapshots. It is intended for gameplay/autonomy QA where unit tests are not enough.
+
+Typical usage:
+
+```bash
+node tools/qa/autonomyBrowserQa.mjs \
+  --server-origin http://127.0.0.1:3002 \
+  --client-url http://127.0.0.1:5173/
+```
+
+The script expects Playwright to be available either as a normal dependency or via `PLAYWRIGHT_MODULE_PATH`. In this Codex environment, the easiest bootstrap is the existing visualization QA helper:
+
+```bash
+PLAYWRIGHT_WORKDIR=/tmp/aitown-playwright \
+  ~/.codex/skills/visualization-qa/scripts/ensure_playwright.sh
+```
 
 ### `extractor`
 
