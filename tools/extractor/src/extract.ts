@@ -10,19 +10,24 @@
  * - Cross-component boundary classification
  */
 
-import { Project, SyntaxKind, Node, type SourceFile, type ClassDeclaration, type InterfaceDeclaration } from "ts-morph";
+import { SyntaxKind, Node, type SourceFile } from "ts-morph";
 import { resolve, relative } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { getComponentId, getComponentDefs, type ComponentDef } from "./componentGrouper.js";
+import { writeFileSync } from "node:fs";
+import { getComponentDefs, type ComponentDef } from "./componentGrouper.js";
 import { buildContainerDiagram } from "./buildContainerDiagram.js";
 import { buildComponentDiagram } from "./buildComponentDiagram.js";
 import { extractDataModel } from "./extractDataModel.js";
 import { extractMessageFlows, extractMessageFlowGroups } from "./extractMessageFlows.js";
 import { extractStateMachines } from "./extractStateMachines.js";
 import { extractDependencyDiagram } from "./extractDependencies.js";
+import {
+  createProjects,
+  extractClasses,
+  extractFilesAndImports,
+  extractModuleFacts,
+} from "./extractSourceInventory.js";
 import type {
   ArchitectureGraph,
-  BoundaryDetail,
   BoundaryEdge,
   ClassInfo,
   CommandInfo,
@@ -35,7 +40,6 @@ import type {
   HttpRequestFact,
   HttpRouteFact,
   ImportEdge,
-  MethodInfo,
   ModuleFact,
   SqlOperationFact,
   TransportMessageFact,
@@ -43,314 +47,6 @@ import type {
 
 const ROOT = resolve(import.meta.dirname, "..", "..", "..");
 const OUTPUT = resolve(import.meta.dirname, "..", "graph.json");
-const EXTRA_FILE_IDS = [
-  "server/src/db/schema.sql",
-  "data/map.json",
-  "data/characters.ts",
-];
-
-// ---------------------------------------------------------------------------
-// 1. Create ts-morph projects
-// ---------------------------------------------------------------------------
-
-function createProjects(): SourceFile[] {
-  const serverProject = new Project({
-    tsConfigFilePath: resolve(ROOT, "server/tsconfig.json"),
-    skipAddingFilesFromTsConfig: true,
-  });
-  serverProject.addSourceFilesAtPaths(resolve(ROOT, "server/src/**/*.ts"));
-
-  const clientProject = new Project({
-    tsConfigFilePath: resolve(ROOT, "client/tsconfig.json"),
-    skipAddingFilesFromTsConfig: true,
-  });
-  clientProject.addSourceFilesAtPaths(resolve(ROOT, "client/src/**/*.ts"));
-
-  return [...serverProject.getSourceFiles(), ...clientProject.getSourceFiles()];
-}
-
-// ---------------------------------------------------------------------------
-// 2. Extract files and imports
-// ---------------------------------------------------------------------------
-
-function extractFilesAndImports(sourceFiles: SourceFile[]): {
-  files: FileNode[];
-  imports: ImportEdge[];
-} {
-  const files: FileNode[] = [];
-  const imports: ImportEdge[] = [];
-  const sourceFileSet = new Set(sourceFiles.map((sf) => sf.getFilePath()));
-
-  for (const sf of sourceFiles) {
-    const absPath = sf.getFilePath();
-    const relPath = relative(ROOT, absPath);
-    const componentId = getComponentId(relPath);
-
-    const classNames = [
-      ...sf.getClasses().map((c) => c.getName()).filter(Boolean),
-      ...sf.getInterfaces().map((i) => i.getName()).filter(Boolean),
-    ] as string[];
-
-    const exportNames = sf
-      .getExportedDeclarations()
-      .keys()
-      .toArray();
-
-    files.push({
-      id: relPath,
-      componentId,
-      classes: classNames,
-      exports: exportNames,
-      loc: sf.getEndLineNumber(),
-    });
-
-    // Extract import edges
-    for (const imp of sf.getImportDeclarations()) {
-      const moduleFile = imp.getModuleSpecifierSourceFile();
-      if (!moduleFile) continue;
-      const targetAbs = moduleFile.getFilePath();
-      if (!sourceFileSet.has(targetAbs)) continue; // skip node_modules
-
-      const targetRel = relative(ROOT, targetAbs);
-      const symbols: string[] = [];
-      const typeOnlySymbols: string[] = [];
-      const isWholeTypeOnly = imp.isTypeOnly();
-      for (const named of imp.getNamedImports()) {
-        const name = named.getName();
-        symbols.push(name);
-        if (isWholeTypeOnly || named.isTypeOnly()) {
-          typeOnlySymbols.push(name);
-        }
-      }
-      const defaultImport = imp.getDefaultImport();
-      if (defaultImport) symbols.push(defaultImport.getText());
-
-      imports.push({
-        source: relPath,
-        target: targetRel,
-        symbols,
-        ...(typeOnlySymbols.length > 0 ? { typeOnlySymbols } : {}),
-      });
-    }
-  }
-
-  for (const fileId of EXTRA_FILE_IDS) {
-    const absPath = resolve(ROOT, fileId);
-    if (!existsSync(absPath) || files.some((file) => file.id === fileId)) continue;
-    const lineCount = readFileSync(absPath, "utf-8").split(/\r?\n/).length;
-    files.push({
-      id: fileId,
-      componentId: getComponentId(fileId),
-      classes: [],
-      exports: [],
-      loc: lineCount,
-    });
-  }
-
-  return { files, imports };
-}
-
-// ---------------------------------------------------------------------------
-// 3. Extract classes and interfaces
-// ---------------------------------------------------------------------------
-
-function extractClasses(sourceFiles: SourceFile[]): ClassInfo[] {
-  const classes: ClassInfo[] = [];
-
-  for (const sf of sourceFiles) {
-    const relPath = relative(ROOT, sf.getFilePath());
-    const componentId = getComponentId(relPath);
-
-    for (const cls of sf.getClasses()) {
-      const name = cls.getName();
-      if (!name) continue;
-      classes.push({
-        id: name,
-        fileId: relPath,
-        componentId,
-        name,
-        kind: "class",
-        fields: extractFields(cls),
-        methods: extractMethods(cls),
-        implementsNames: cls.getImplements().map((i) => i.getText()),
-        extendsName: cls.getExtends()?.getText(),
-      });
-    }
-
-    for (const iface of sf.getInterfaces()) {
-      const name = iface.getName();
-      if (!name) continue;
-      classes.push({
-        id: name,
-        fileId: relPath,
-        componentId,
-        name,
-        kind: "interface",
-        fields: extractInterfaceFields(iface),
-        methods: extractInterfaceMethods(iface),
-        implementsNames: [],
-        extendsName: iface.getExtends().map((e) => e.getText())[0],
-      });
-    }
-  }
-
-  return classes;
-}
-
-function extractFields(cls: ClassDeclaration): FieldInfo[] {
-  return cls.getProperties().map((prop) => ({
-    name: prop.getName(),
-    type: prop.getType().getText(prop) ?? "unknown",
-    visibility: getVisibility(prop),
-  }));
-}
-
-function extractInterfaceFields(iface: InterfaceDeclaration): FieldInfo[] {
-  return iface.getProperties().map((prop) => ({
-    name: prop.getName(),
-    type: prop.getType().getText(prop) ?? "unknown",
-    visibility: "public" as const,
-  }));
-}
-
-function extractMethods(cls: ClassDeclaration): MethodInfo[] {
-  return cls.getMethods().map((method) => ({
-    name: method.getName(),
-    returnType: method.getReturnType().getText(method) ?? "unknown",
-    parameters: method.getParameters().map((p) => ({
-      name: p.getName(),
-      type: p.getType().getText(p) ?? "unknown",
-    })),
-    visibility: getVisibility(method),
-    isAsync: method.isAsync(),
-    loc: method.getEndLineNumber() - method.getStartLineNumber() + 1,
-  }));
-}
-
-function extractInterfaceMethods(iface: InterfaceDeclaration): MethodInfo[] {
-  return iface.getMethods().map((method) => ({
-    name: method.getName(),
-    returnType: method.getReturnType().getText(method) ?? "unknown",
-    parameters: method.getParameters().map((p) => ({
-      name: p.getName(),
-      type: p.getType().getText(p) ?? "unknown",
-    })),
-    visibility: "public" as const,
-    isAsync: false,
-    loc: method.getEndLineNumber() - method.getStartLineNumber() + 1,
-  }));
-}
-
-function getVisibility(node: { getScope?(): string }): "public" | "private" | "protected" {
-  const scope = node.getScope?.();
-  if (scope === "private") return "private";
-  if (scope === "protected") return "protected";
-  return "public";
-}
-
-// ---------------------------------------------------------------------------
-// 3b. Extract raw per-file module facts
-// ---------------------------------------------------------------------------
-
-function extractModuleFacts(sourceFiles: SourceFile[]): ModuleFact[] {
-  const facts: ModuleFact[] = [];
-
-  for (const sf of sourceFiles) {
-    const relPath = relative(ROOT, sf.getFilePath());
-    const routerPaths = { get: [] as string[], post: [] as string[] };
-    const domElementIds: string[] = [];
-    const windowGlobals: string[] = [];
-
-    for (const call of sf.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-      const exprText = call.getExpression().getText();
-      const [firstArg] = call.getArguments();
-
-      if (exprText === "document.getElementById" && firstArg && Node.isStringLiteral(firstArg)) {
-        domElementIds.push(firstArg.getLiteralValue());
-      }
-
-      if ((exprText === "router.get" || exprText === "router.post") && firstArg && Node.isStringLiteral(firstArg)) {
-        const route = firstArg.getLiteralValue().replace(/^\//, "");
-        if (exprText === "router.get") routerPaths.get.push(route);
-        else routerPaths.post.push(route);
-      }
-    }
-
-    const fileText = sf.getFullText();
-    for (const match of fileText.matchAll(/window\.(__[A-Z0-9_]+__)/g)) {
-      windowGlobals.push(match[1]);
-    }
-
-    const switchCases: ModuleFact["switchCases"] = [];
-    for (const cls of sf.getClasses()) {
-      for (const method of cls.getMethods()) {
-        const labels = method
-          .getDescendantsOfKind(SyntaxKind.CaseClause)
-          .map((clause) => clause.getExpression())
-          .filter((expr): expr is Node => Boolean(expr))
-          .map((expr) => (Node.isStringLiteral(expr) ? expr.getLiteralValue() : expr.getText().replaceAll('"', "")));
-
-        if (labels.length > 0) {
-          switchCases.push({
-            className: cls.getName(),
-            methodName: method.getName(),
-            labels,
-          });
-        }
-      }
-    }
-
-    facts.push({
-      fileId: relPath,
-      topLevelVariables: sf
-        .getVariableStatements()
-        .flatMap((statement) => statement.getDeclarations().map((decl) => decl.getName())),
-      functionVariables: sf.getFunctions().map((fn) => ({
-        functionName: fn.getName() ?? "<anonymous>",
-        variableNames: fn
-          .getDescendantsOfKind(SyntaxKind.VariableDeclaration)
-          .map((decl) => decl.getName()),
-      })),
-      exportedFunctions: sf
-        .getFunctions()
-        .filter((fn) => fn.isExported())
-        .map((fn) => fn.getName())
-        .filter(Boolean) as string[],
-      domElementIds: Array.from(new Set(domElementIds)),
-      windowGlobals: Array.from(new Set(windowGlobals)),
-      routerPaths: {
-        get: Array.from(new Set(routerPaths.get)),
-        post: Array.from(new Set(routerPaths.post)),
-      },
-      switchCases,
-      sqlTables: [],
-      sqlFlags: [],
-    });
-  }
-
-  const schemaPath = resolve(ROOT, "server", "src", "db", "schema.sql");
-  const sqlText = readFileSync(schemaPath, "utf-8");
-  facts.push({
-    fileId: "server/src/db/schema.sql",
-    topLevelVariables: [],
-    functionVariables: [],
-    exportedFunctions: [],
-    domElementIds: [],
-    windowGlobals: [],
-    routerPaths: { get: [], post: [] },
-    switchCases: [],
-    sqlTables: Array.from(
-      sqlText.matchAll(/CREATE TABLE IF NOT EXISTS\s+([a-z_]+)/g),
-      (match) => match[1],
-    ),
-    sqlFlags: [
-      ...(sqlText.includes("vector(1536)") ? ["vector(1536)"] : []),
-      ...(sqlText.toLowerCase().includes("ivfflat") ? ["IVFFlat memory index"] : []),
-    ],
-  });
-
-  return facts;
-}
 
 // ---------------------------------------------------------------------------
 // 3c. Extract transport, HTTP, file, and SQL facts
@@ -1108,16 +804,16 @@ function buildComponents(files: FileNode[], componentDefs: ComponentDef[]): Comp
 console.log("Extracting architecture from", ROOT);
 console.time("extraction");
 
-const sourceFiles = createProjects();
+const sourceFiles = createProjects(ROOT);
 console.log(`  Loaded ${sourceFiles.length} source files`);
 
-const { files, imports } = extractFilesAndImports(sourceFiles);
+const { files, imports } = extractFilesAndImports(ROOT, sourceFiles);
 console.log(`  Extracted ${files.length} files, ${imports.length} import edges`);
 
-const classes = extractClasses(sourceFiles);
+const classes = extractClasses(ROOT, sourceFiles);
 console.log(`  Extracted ${classes.length} classes/interfaces`);
 
-const moduleFacts = extractModuleFacts(sourceFiles);
+const moduleFacts = extractModuleFacts(ROOT, sourceFiles);
 console.log(`  Extracted ${moduleFacts.length} module fact records`);
 
 const { httpRoutes, httpRequests } = extractHttpFacts(sourceFiles);
