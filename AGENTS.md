@@ -12,12 +12,12 @@ AI Town is a multiplayer social simulation game where human players and AI-drive
 Codex runs in an isolated sandbox. These constraints shape what you can and cannot verify:
 
 - **No Docker.** You cannot run `docker compose` commands. All work must use the host-mode path.
-- **No external network.** You cannot `curl localhost:3001` or connect a WebSocket. E2E verification against a live server is not available.
-- **No browser.** You cannot open a browser or run Playwright.
-- **No persistent processes.** You can run `npm test` and one-shot scripts, but not long-running servers.
+- **External network is allowed.** You may use internet access, localhost endpoints, and remote documentation or QA resources when the task benefits from it.
+- **Browser QA is allowed.** You may open a browser, run Playwright, and use browser-based QA flows against local host-mode servers.
+- **Local long-running processes are allowed when needed for QA.** You may run `vite`, `vite preview`, or the game server locally to verify browser behavior. Prefer shutting them down once verification is complete.
 - **npm install works.** Dependencies are already installed. If you need to reinstall: `cd server && npm install`.
 
-**What this means for workflow:** Your verification loop is `edit -> npm test -> read output -> fix -> repeat`. When the CLAUDE.md workflow says "verify live end-to-end," you must substitute with a test that exercises the same runtime path. If you cannot write such a test, state that E2E verification was not possible and explain what a human should check.
+**What this means for workflow:** Default to `edit -> test/build -> browser QA -> fix -> repeat`. Use host-mode servers plus browser or Playwright checks when UI behavior, layout, or end-to-end wiring need validation. When a task still cannot be exercised locally, state what remains unverified and what a human should check.
 
 ## Project Structure
 
@@ -77,11 +77,9 @@ cd server && npx vitest run test/conversation.test.ts   # Run a single test file
 cd server && npx tsc --noEmit        # Type-check without emitting (fast)
 ```
 
-You do NOT have access to these (they require Docker or a running server):
+You do NOT have access to these:
 ```bash
 # docker compose up --build -d       # NOT AVAILABLE in sandbox
-# curl localhost:3001/api/debug/...  # NOT AVAILABLE in sandbox
-# npm run dev                        # NOT USEFUL without a client to connect
 ```
 
 ## Tech Stack
@@ -342,9 +340,7 @@ If a player has `path` set, they are using A* movement. If they have `inputX`/`i
 
 ## Debug API Reference
 
-You cannot call these from the sandbox, but you should know they exist so you can:
-1. Write code that serves these endpoints correctly.
-2. Tell the human what to check after your changes.
+These endpoints are available when you have the server running locally. Use them for host-mode debugging and verification when appropriate.
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
@@ -386,7 +382,7 @@ Tasks that are risky for Codex (deep coupling, subtle invariants):
 - Modifying the tick pipeline order (execution order matters)
 - Changing how the two movement systems interact (mutual exclusion invariant)
 - Conversation state machine transitions (affects movement, NPC AI, WebSocket)
-- Anything that requires E2E verification you cannot perform in the sandbox
+- Anything that depends on external services or environment-specific behavior you still cannot reproduce locally
 
 For risky tasks: make the change, write thorough tests, but explicitly flag what needs human review and live verification.
 
