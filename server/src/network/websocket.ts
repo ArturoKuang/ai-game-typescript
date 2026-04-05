@@ -13,6 +13,13 @@
  */
 import type { Server } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
+import type { NpcAutonomyManager } from "../autonomy/manager.js";
+import type { NpcAutonomyDebugState } from "../autonomy/types.js";
+import type {
+  DebugDashboardBootstrap,
+  DebugFeedEvent,
+  DebugFeedEventPayload,
+} from "../debug/streamTypes.js";
 import type { Conversation, Message } from "../engine/conversation.js";
 import type { GameLoop } from "../engine/gameLoop.js";
 import type { GameEvent, Player } from "../engine/types.js";
@@ -29,12 +36,15 @@ import type {
 interface ClientInfo {
   /** Player ID this socket controls, or null before the "join" message. */
   playerId: string | null;
+  /** True when this connection requested the debug dashboard stream. */
+  debugSubscribed: boolean;
   ws: WebSocket;
 }
 
 /** Monotonic counter for assigning human player IDs (human_1, human_2, …).
  *  Never resets — ensures unique IDs even across reconnects within the same process. */
 let humanCounter = 0;
+const DEBUG_EVENT_BUFFER_MAX = 300;
 
 export class GameWebSocketServer {
   private wss: WebSocketServer;
@@ -46,16 +56,28 @@ export class GameWebSocketServer {
   private game: GameLoop;
   /** Optional entity manager for including entities in state snapshots. */
   private entityManager?: EntityManager;
+  /** Optional autonomy manager for debug dashboard bootstrap snapshots. */
+  private autonomyManager?: NpcAutonomyManager;
   /** Optional bear manager for routing combat commands. */
   private bearManager?: BearManager;
   /** Latest screenshot captured from a connected client (base64 PNG data URL). */
   private latestScreenshot: string | null = null;
   /** Resolvers waiting for a screenshot to arrive. */
   private screenshotWaiters: Array<(png: string) => void> = [];
+  /** Recent debug feed events used to bootstrap newly connected dashboards. */
+  private debugEvents: DebugFeedEvent[] = [];
+  /** Monotonic sequence for debug feed item IDs. */
+  private nextDebugEventId = 1;
 
-  constructor(server: Server, game: GameLoop, entityManager?: EntityManager) {
+  constructor(
+    server: Server,
+    game: GameLoop,
+    entityManager?: EntityManager,
+    autonomyManager?: NpcAutonomyManager,
+  ) {
     this.game = game;
     this.entityManager = entityManager;
+    this.autonomyManager = autonomyManager;
     this.wss = new WebSocketServer({ server });
 
     this.wss.on("connection", (ws) => this.onConnection(ws));
@@ -151,9 +173,26 @@ export class GameWebSocketServer {
           type: "convo_update",
           data: conversation,
         });
+        this.broadcastToDebugSubscribers({
+          type: "debug_conversation_upsert",
+          data: conversation,
+        });
+        this.publishDebugEventIfPresent(
+          this.buildDebugEventFromGameEvent(event, conversation),
+        );
         return;
       }
       case "convo_declined": {
+        const conversation = this.resolveConversation(event);
+        if (conversation) {
+          this.broadcastToDebugSubscribers({
+            type: "debug_conversation_upsert",
+            data: conversation,
+          });
+          this.publishDebugEventIfPresent(
+            this.buildDebugEventFromGameEvent(event, conversation),
+          );
+        }
         return;
       }
       case "convo_message": {
@@ -167,6 +206,13 @@ export class GameWebSocketServer {
           type: "message",
           data: message,
         });
+        this.broadcastToDebugSubscribers({
+          type: "debug_conversation_message",
+          data: message,
+        });
+        this.publishDebugEventIfPresent(
+          this.buildDebugEventFromGameEvent(event, conversation),
+        );
         return;
       }
       case "tick_complete": {
@@ -248,7 +294,7 @@ export class GameWebSocketServer {
   }
 
   private onConnection(ws: WebSocket): void {
-    const info: ClientInfo = { playerId: null, ws };
+    const info: ClientInfo = { playerId: null, debugSubscribed: false, ws };
     this.clients.set(ws, info);
 
     this.send(ws, { type: "state", data: this.buildFullState(info.playerId) });
@@ -285,6 +331,12 @@ export class GameWebSocketServer {
 
   private onMessage(ws: WebSocket, info: ClientInfo, msg: ClientMessage): void {
     switch (msg.type) {
+      case "subscribe_debug": {
+        info.debugSubscribed = true;
+        this.sendDebugBootstrap(ws);
+        return;
+      }
+
       case "join": {
         if (info.playerId) {
           this.sendError(ws, "Already joined");
