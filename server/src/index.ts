@@ -109,7 +109,12 @@ bearManager.seedInitialBears();
 console.log("Bear manager initialized with GoL spawning");
 
 // --- WebSocket ---
-const wsServer = new GameWebSocketServer(server, game, entityManager);
+const wsServer = new GameWebSocketServer(
+  server,
+  game,
+  entityManager,
+  autonomyManager,
+);
 wsServer.setBearManager(bearManager);
 
 // --- Event-driven broadcasting ---
@@ -150,6 +155,14 @@ autonomyManager.onPlayerSurvivalUpdate((playerId, needs) => {
     type: "player_survival",
     data: { playerId, ...needs },
   });
+});
+
+autonomyManager.onDebugStateUpdate((state) => {
+  wsServer.broadcastDebugAutonomyUpsert(state);
+});
+
+autonomyManager.onDebugEvent((event) => {
+  wsServer.publishDebugEvent(event);
 });
 
 // Start the realtime loop
