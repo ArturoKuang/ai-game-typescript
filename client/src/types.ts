@@ -33,6 +33,8 @@ export interface Player {
   vy: number;
   inputSpeed: number;
   radius: number;
+  hp?: number;
+  maxHp?: number;
 }
 
 export interface Activity {

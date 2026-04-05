@@ -51,10 +51,29 @@ interface PlayerSprite {
 
 /** Map entity types to emoji for rendering. */
 const ENTITY_EMOJI: Record<string, string> = {
-  berry_bush: "\uD83E\uDED0",
+  berry_bush: "\uD83C\uDF3F",
   bench: "\uD83E\uDE91",
   campfire: "\uD83D\uDD25",
+  bear: "\uD83D\uDC3B",
+  bear_meat: "\uD83E\uDD69",
 };
+
+function getEntityEmoji(entity: { type: string; properties: Record<string, boolean | number | string> }): string {
+  if (entity.type === "ground_item") {
+    switch (entity.properties.itemId) {
+      case "raw_food":
+        return "\uD83C\uDF4E";
+      case "cooked_food":
+        return "\uD83C\uDF72";
+      case "bear_meat":
+        return "\uD83E\uDD69";
+      default:
+        return "\uD83D\uDCE6";
+    }
+  }
+
+  return ENTITY_EMOJI[entity.type] ?? "\u2753";
+}
 
 export class GameRenderer {
   private app: Application;
@@ -183,6 +202,24 @@ export class GameRenderer {
         sprite.circle.stroke({ width: 1.5, color: CONVO_LINE_COLOR });
       }
 
+      // HP bar — show when damaged
+      const hp = player.hp ?? 100;
+      const maxHp = player.maxHp ?? 100;
+      if (hp < maxHp) {
+        const hpBarY = -TILE_SIZE * 0.5;
+        const hpBarW = TILE_SIZE * 0.7;
+        const hpRatio = hp / maxHp;
+
+        // Background
+        sprite.circle.rect(-hpBarW / 2, hpBarY, hpBarW, 3);
+        sprite.circle.fill({ color: 0x333333, alpha: 0.8 });
+
+        // Fill
+        const hpColor = hpRatio > 0.5 ? 0x2ecc71 : hpRatio > 0.25 ? 0xf39c12 : 0xe74c3c;
+        sprite.circle.rect(-hpBarW / 2, hpBarY, hpBarW * hpRatio, 3);
+        sprite.circle.fill(hpColor);
+      }
+
       this.updateWaitingIndicator(sprite, player.isWaitingForResponse === true);
     }
 
@@ -294,12 +331,12 @@ export class GameRenderer {
 
       let sprite = this.entitySprites.get(entity.id);
       if (!sprite) {
-        const emoji = ENTITY_EMOJI[entity.type] ?? "\u2753";
-        sprite = new Text({ text: emoji, style });
+        sprite = new Text({ text: getEntityEmoji(entity), style });
         sprite.anchor.set(0.5);
         this.entityContainer.addChild(sprite);
         this.entitySprites.set(entity.id, sprite);
       }
+      sprite.text = getEntityEmoji(entity);
 
       sprite.x = entity.x * TILE_SIZE + TILE_SIZE / 2;
       sprite.y = entity.y * TILE_SIZE + TILE_SIZE / 2;
@@ -323,12 +360,12 @@ export class GameRenderer {
     const style = new TextStyle({ fontSize: 16, fill: 0xffffff });
     let sprite = this.entitySprites.get(entity.id);
     if (!sprite) {
-      const emoji = ENTITY_EMOJI[entity.type] ?? "\u2753";
-      sprite = new Text({ text: emoji, style });
+      sprite = new Text({ text: getEntityEmoji(entity), style });
       sprite.anchor.set(0.5);
       this.entityContainer.addChild(sprite);
       this.entitySprites.set(entity.id, sprite);
     }
+    sprite.text = getEntityEmoji(entity);
 
     sprite.x = entity.x * TILE_SIZE + TILE_SIZE / 2;
     sprite.y = entity.y * TILE_SIZE + TILE_SIZE / 2;
