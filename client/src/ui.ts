@@ -95,7 +95,7 @@ export class UI {
     this.inventoryHeaderEl.addEventListener("click", () => this.toggleInventory());
   }
 
-  setSelfId(id: string): void {
+  setSelfId(id: string | null): void {
     this.selfId = id;
   }
 

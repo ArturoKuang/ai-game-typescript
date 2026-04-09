@@ -48,6 +48,7 @@ import { UI } from "./ui.js";
 // State
 let gameState: FullGameState | null = null;
 let selfId: string | null = null;
+let awaitingJoinConfirmation = false;
 let mapLoaded = false;
 let mapTiles: TileType[][] | null = null;
 const playerSurvival = new Map<string, PlayerSurvivalData>();
@@ -328,8 +329,9 @@ async function start() {
         }
 
         // If this is our join confirmation (first non-NPC join we see)
-        if (!selfId && !msg.data.isNpc) {
+        if (awaitingJoinConfirmation && !msg.data.isNpc) {
           selfId = msg.data.id;
+          awaitingJoinConfirmation = false;
           renderer.setSelfId(selfId);
           ui.setSelfId(selfId);
           ui.addChatMessage("", `You joined as ${msg.data.name}`, true);
@@ -345,8 +347,29 @@ async function start() {
         gameState.players = gameState.players.filter(
           (p) => p.id !== msg.data.id,
         );
-        if (name) ui.addChatMessage("", `${name} left`, true);
+        if (name) {
+          const detail =
+            msg.data.reason === "death" && msg.data.cause === "survival"
+              ? ` (${msg.data.depletedNeed ?? "survival"} reached 0)`
+              : "";
+          ui.addChatMessage(
+            "",
+            msg.data.reason === "death"
+              ? `${name} died${detail}`
+              : `${name} left`,
+            true,
+          );
+        }
         playerSurvival.delete(msg.data.id);
+        if (msg.data.id === selfId) {
+          selfId = null;
+          awaitingJoinConfirmation = false;
+          renderer.setSelfId(null);
+          ui.setSelfId(null);
+          ui.setStatus("You died. Enter a name to rejoin.");
+          joinBtn.removeAttribute("disabled");
+          nameInput.removeAttribute("disabled");
+        }
         refreshConversationUi();
         refreshSurvivalUi();
         break;
@@ -533,6 +556,7 @@ async function start() {
   joinBtn.addEventListener("click", () => {
     const name = nameInput.value.trim();
     if (!name) return;
+    awaitingJoinConfirmation = true;
     client.send({ type: "join", data: { name } });
     joinBtn.setAttribute("disabled", "true");
     nameInput.setAttribute("disabled", "true");
