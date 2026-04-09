@@ -121,6 +121,19 @@ CREATE TABLE IF NOT EXISTS llm_generations (
 CREATE INDEX IF NOT EXISTS idx_llm_generations_convo
     ON llm_generations (convo_id, created_at DESC);
 
+-- Snapshot of NPC debug state at time of death. Used to keep dead NPCs visible
+-- in the debug dashboard and survive server restarts.
+CREATE TABLE IF NOT EXISTS dead_npcs (
+    npc_id       TEXT PRIMARY KEY,
+    died_at_tick INT NOT NULL,
+    snapshot     JSONB NOT NULL,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dead_npcs_died_at_tick
+    ON dead_npcs (died_at_tick DESC);
+
 -- Game log for debugging
 CREATE TABLE IF NOT EXISTS game_log (
     id          SERIAL PRIMARY KEY,

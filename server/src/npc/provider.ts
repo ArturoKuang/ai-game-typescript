@@ -11,6 +11,9 @@ import type { Memory } from "../db/repository.js";
 import type { Message } from "../engine/conversation.js";
 import type { Player } from "../engine/types.js";
 
+const SURVIVAL_DEATH_RULE =
+  "If your health, food, water, or social value reaches 0, you die and disappear from town.";
+
 /** Input context assembled by the orchestrator for one NPC conversation turn. */
 export interface NpcReplyRequest {
   conversationId: number;
@@ -111,6 +114,7 @@ export function buildReplyPrompt(request: NpcReplyRequest): string {
     `Description: ${request.npc.description}`,
     `Personality: ${request.npc.personality ?? "Unknown"}`,
     `Conversation partner: ${request.partner.name}.`,
+    SURVIVAL_DEATH_RULE,
     "Respond with exactly one natural in-character chat message.",
     "Do not narrate actions, do not mention prompts, tools, policies, or being an AI.",
     "Keep the reply under 45 words unless the conversation clearly requires more detail.",
@@ -140,6 +144,7 @@ export function buildReflectionPrompt(request: NpcReflectionRequest): string {
     `NPC: ${request.npc.name}`,
     `Description: ${request.npc.description}`,
     `Personality: ${request.npc.personality ?? "Unknown"}`,
+    SURVIVAL_DEATH_RULE,
     "Write one short first-person reflection about what the NPC has learned or inferred.",
     "Keep it under 80 words. This is private memory, not spoken dialogue.",
     "",
@@ -183,6 +188,7 @@ export function buildGoalSelectionPrompt(request: NpcGoalRequest): string {
   return [
     `You are ${request.npc.name}. ${request.npc.description}`,
     `Personality: ${request.npc.personality ?? "Unknown"}`,
+    SURVIVAL_DEATH_RULE,
     "",
     "Current state:",
     needLines,

@@ -7,6 +7,7 @@
  * - {@link InMemoryNpcStore} — Map/array-based for tests and fallback mode.
  */
 import type { Pool } from "pg";
+import type { NpcAutonomyDebugState } from "../autonomy/types.js";
 import type { Conversation, Message } from "../engine/conversation.js";
 import type { Player } from "../engine/types.js";
 
@@ -30,6 +31,8 @@ export interface NpcPersistenceStore {
   upsertConversation(conversation: Conversation): Promise<void>;
   addMessage(message: Message): Promise<void>;
   addGeneration(record: GenerationRecord): Promise<void>;
+  recordDeadNpc(state: NpcAutonomyDebugState): Promise<void>;
+  getDeadNpcs(): Promise<NpcAutonomyDebugState[]>;
 }
 
 export interface StoredGeneration extends GenerationRecord {
@@ -41,10 +44,12 @@ export class InMemoryNpcStore implements NpcPersistenceStore {
   readonly conversations = new Map<number, Conversation>();
   readonly messages: Message[] = [];
   readonly generations: StoredGeneration[] = [];
+  readonly deadNpcs = new Map<string, NpcAutonomyDebugState>();
   private nextGenerationId = 1;
 
   async upsertPlayer(player: Player): Promise<void> {
     this.players.set(player.id, { ...player });
+    this.deadNpcs.delete(player.id);
   }
 
   async upsertConversation(conversation: Conversation): Promise<void> {
@@ -60,6 +65,16 @@ export class InMemoryNpcStore implements NpcPersistenceStore {
       id: this.nextGenerationId++,
       ...record,
     });
+  }
+
+  async recordDeadNpc(state: NpcAutonomyDebugState): Promise<void> {
+    this.deadNpcs.set(state.npcId, structuredClone(state));
+  }
+
+  async getDeadNpcs(): Promise<NpcAutonomyDebugState[]> {
+    return Array.from(this.deadNpcs.values()).map((state) =>
+      structuredClone(state),
+    );
   }
 }
 
@@ -103,6 +118,7 @@ export class PostgresNpcStore implements NpcPersistenceStore {
         null,
       ],
     );
+    await this.pool.query("DELETE FROM dead_npcs WHERE npc_id = $1", [player.id]);
   }
 
   async upsertConversation(conversation: Conversation): Promise<void> {
@@ -156,6 +172,29 @@ export class PostgresNpcStore implements NpcPersistenceStore {
         record.error ?? null,
         record.tick,
       ],
+    );
+  }
+
+  async recordDeadNpc(state: NpcAutonomyDebugState): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO dead_npcs (npc_id, died_at_tick, snapshot)
+       VALUES ($1, $2, $3::jsonb)
+       ON CONFLICT (npc_id) DO UPDATE SET
+         died_at_tick = EXCLUDED.died_at_tick,
+         snapshot = EXCLUDED.snapshot,
+         updated_at = NOW()`,
+      [state.npcId, state.death?.tick ?? 0, JSON.stringify(state)],
+    );
+  }
+
+  async getDeadNpcs(): Promise<NpcAutonomyDebugState[]> {
+    const result = await this.pool.query(
+      `SELECT snapshot
+       FROM dead_npcs
+       ORDER BY died_at_tick DESC, npc_id ASC`,
+    );
+    return result.rows.map((row: { snapshot: NpcAutonomyDebugState }) =>
+      row.snapshot,
     );
   }
 }

@@ -124,6 +124,14 @@ export interface NpcAutonomyDebugExecution {
   stepIndex: number;
 }
 
+export interface NpcAutonomyDebugDeath {
+  tick: number;
+  reason: "death";
+  cause?: string;
+  depletedNeed?: "health" | "food" | "water" | "social";
+  message: string;
+}
+
 export interface SurvivalSnapshot {
   health: number;
   food: number;
@@ -133,6 +141,11 @@ export interface SurvivalSnapshot {
 
 export interface NpcAutonomyDebugState {
   npcId: string;
+  name: string;
+  lastPosition?: Position;
+  lastState?: string;
+  isDead: boolean;
+  death?: NpcAutonomyDebugDeath;
   needs: SurvivalSnapshot;
   inventory: Record<string, number>;
   currentPlan: NpcAutonomyDebugPlan | null;
@@ -152,8 +165,23 @@ export interface DebugFeedEvent {
   subjectId: string;
   title: string;
   message: string;
+  plan?: NpcAutonomyDebugPlan;
   relatedConversationId?: number;
   relatedNpcId?: string;
+}
+
+export interface DebugActionDefinition {
+  id: string;
+  displayName: string;
+  preconditions: Record<string, boolean | number | string>;
+  effects: Record<string, boolean | number | string>;
+  cost: number;
+  estimatedDurationTicks: number;
+  proximityRequirement?: {
+    type: "activity" | "entity" | "position";
+    target: string;
+    distance?: number;
+  };
 }
 
 export interface DebugDashboardBootstrap {
@@ -162,6 +190,7 @@ export interface DebugDashboardBootstrap {
   conversations: Conversation[];
   autonomyStates: Record<string, NpcAutonomyDebugState>;
   recentEvents: DebugFeedEvent[];
+  actionDefinitions: Record<string, DebugActionDefinition>;
 }
 
 /** A dynamic world entity (berry bush, bench, etc.) rendered on the map. */
@@ -206,13 +235,20 @@ export interface PlayerSurvivalData {
   social: number;
 }
 
+export interface PlayerLeftData {
+  id: string;
+  reason?: "death";
+  cause?: string;
+  depletedNeed?: "health" | "food" | "water" | "social";
+}
+
 // Server -> Client
 export type ServerMessage =
   | { type: "state"; data: FullGameState }
   | { type: "tick"; data: { tick: number } }
   | { type: "player_update"; data: PublicPlayer }
   | { type: "player_joined"; data: PublicPlayer }
-  | { type: "player_left"; data: { id: string } }
+  | { type: "player_left"; data: PlayerLeftData }
   | { type: "convo_update"; data: Conversation }
   | { type: "message"; data: Message }
   | { type: "entity_update"; data: WorldEntity }

@@ -3,6 +3,9 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
+import { EntityManager } from "../src/autonomy/entityManager.js";
+import { NpcAutonomyManager } from "../src/autonomy/manager.js";
+import { InMemoryNpcStore } from "../src/db/npcStore.js";
 import { GameLoop } from "../src/engine/gameLoop.js";
 import type {
   ClientMessage,
@@ -463,5 +466,89 @@ describe("WebSocket protocol", () => {
     )) as Extract<ServerMessage, { type: "debug_event" }>;
 
     expect(debugEvent.data.message).toContain("secret");
+  });
+
+  it("includes dead NPCs in debug bootstrap with their death reason", async () => {
+    try {
+      const probe = createServer();
+      await new Promise<void>((resolve, reject) => {
+        probe.once("error", reject);
+        probe.listen(0, "127.0.0.1", () => {
+          probe.close();
+          resolve();
+        });
+      });
+    } catch {
+      console.log("Skipping: socket binding not permitted in this environment");
+      return;
+    }
+
+    game = new GameLoop({ mode: "stepped", tickRate: 20 });
+    game.loadWorld({
+      width: 5,
+      height: 5,
+      tiles: [
+        ["wall", "wall", "wall", "wall", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "wall", "wall", "wall", "wall"],
+      ],
+      activities: [],
+      spawnPoints: [{ x: 1, y: 1 }],
+    });
+    game.spawnPlayer({
+      id: "npc_alice",
+      name: "Alice NPC",
+      description: "Helpful NPC",
+      x: 2,
+      y: 2,
+      isNpc: true,
+    });
+
+    const autonomyManager = new NpcAutonomyManager(
+      game,
+      new EntityManager(),
+      { npcStore: new InMemoryNpcStore() },
+    );
+    autonomyManager.getState("npc_alice").needs.water = 0.001;
+
+    server = createServer();
+    wsServer = new GameWebSocketServer(server, game, undefined, autonomyManager);
+    game.on("*", (event) => wsServer!.broadcastGameEvent(event));
+
+    game.tick();
+
+    expect(game.getPlayer("npc_alice")).toBeUndefined();
+
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    sockets = await createHarnesses(1, `ws://127.0.0.1:${port}`);
+
+    const [dashboard] = sockets;
+    sendMessage(dashboard.ws, { type: "subscribe_debug" });
+    const bootstrap = (await waitForMessage(
+      dashboard.messages,
+      (message) => message.type === "debug_bootstrap",
+    )) as Extract<ServerMessage, { type: "debug_bootstrap" }>;
+
+    expect(
+      bootstrap.data.players.find((player) => player.id === "npc_alice"),
+    ).toBeUndefined();
+    expect(bootstrap.data.autonomyStates.npc_alice).toEqual(
+      expect.objectContaining({
+        npcId: "npc_alice",
+        name: "Alice NPC",
+        isDead: true,
+        lastPosition: { x: 2, y: 2 },
+        death: expect.objectContaining({
+          cause: "survival",
+          depletedNeed: "water",
+        }),
+      }),
+    );
+    expect(bootstrap.data.autonomyStates.npc_alice.death?.message).toContain(
+      "water reached 0",
+    );
   });
 });

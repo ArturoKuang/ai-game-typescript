@@ -126,14 +126,11 @@ describe("GameLoop smoke tests", () => {
     const convo = tg.game.conversations.getPlayerConversation("p1");
     expect(convo?.state).toBe("active");
 
-    // Remove p1 and end the conversation explicitly (active convos
-    // don't auto-detect missing players -- only walking state does)
-    tg.game.enqueue({
-      type: "end_convo",
-      playerId: "p2",
-      data: { convoId: convo!.id },
-    });
     tg.game.removePlayer("p1");
+    expect(tg.game.conversations.getConversation(convo!.id)?.state).toBe("ended");
+    expect(tg.game.conversations.getConversation(convo!.id)?.endedReason).toBe(
+      "missing_player",
+    );
     tg.tick();
 
     // p2 should go back to idle

@@ -1,4 +1,7 @@
-import type { NpcAutonomyDebugState } from "../autonomy/types.js";
+import type {
+  NpcAutonomyDebugPlan,
+  NpcAutonomyDebugState,
+} from "../autonomy/types.js";
 import type { Conversation } from "../engine/conversation.js";
 import type { PublicPlayer } from "../network/publicPlayer.js";
 
@@ -31,6 +34,7 @@ export interface DebugFeedEventPayload {
   subjectId: string;
   title: string;
   message: string;
+  plan?: NpcAutonomyDebugPlan;
   relatedConversationId?: number;
   relatedNpcId?: string;
 }
@@ -39,10 +43,25 @@ export interface DebugFeedEvent extends DebugFeedEventPayload {
   id: number;
 }
 
+export interface DebugActionDefinition {
+  id: string;
+  displayName: string;
+  preconditions: Record<string, boolean | number | string>;
+  effects: Record<string, boolean | number | string>;
+  cost: number;
+  estimatedDurationTicks: number;
+  proximityRequirement?: {
+    type: "activity" | "entity" | "position";
+    target: string;
+    distance?: number;
+  };
+}
+
 export interface DebugDashboardBootstrap {
   tick: number;
   players: PublicPlayer[];
   conversations: Conversation[];
   autonomyStates: Record<string, NpcAutonomyDebugState>;
   recentEvents: DebugFeedEvent[];
+  actionDefinitions: Record<string, DebugActionDefinition>;
 }

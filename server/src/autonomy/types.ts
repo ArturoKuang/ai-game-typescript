@@ -210,8 +210,21 @@ export interface NpcAutonomyDebugExecution {
   stepIndex: number;
 }
 
+export interface NpcAutonomyDebugDeath {
+  tick: number;
+  reason: "death";
+  cause?: string;
+  depletedNeed?: "health" | "food" | "water" | "social";
+  message: string;
+}
+
 export interface NpcAutonomyDebugState {
   npcId: string;
+  name: string;
+  lastPosition?: Position;
+  lastState?: string;
+  isDead: boolean;
+  death?: NpcAutonomyDebugDeath;
   needs: SurvivalSnapshot;
   inventory: Record<string, number>;
   currentPlan: NpcAutonomyDebugPlan | null;
@@ -297,8 +310,10 @@ export interface AutonomyGameRuntime extends GameLoopInterface {
   getPlayers(): AutonomyRuntimePlayer[];
   readonly world: AutonomyWorldInterface;
   readonly rng: AutonomyRngInterface;
+  emitEvent(event: GameEvent): void;
   on(type: string, handler: (event: GameEvent) => void): void;
   onAfterTick(callback: (result: TickResult) => void): void;
+  removePlayer(id: string, data?: Record<string, unknown>): void;
   setNpcInviteDecisionProvider(
     provider: NpcInviteDecisionProvider | undefined,
   ): void;

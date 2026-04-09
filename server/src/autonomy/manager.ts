@@ -14,9 +14,10 @@ import type {
   NpcInviteDecision,
 } from "../engine/conversation.js";
 import type { CharacterDef, Command, Position, TickResult } from "../engine/types.js";
+import type { NpcPersistenceStore } from "../db/npcStore.js";
 import type { MemoryManager } from "../npc/memory.js";
 import type { NpcModelProvider } from "../npc/provider.js";
-import type { DebugFeedEventPayload } from "../debug/streamTypes.js";
+import type { DebugActionDefinition, DebugFeedEventPayload } from "../debug/streamTypes.js";
 import { registerBuiltinActions } from "./actions/index.js";
 import type { EntityManager } from "./entityManager.js";
 import { executeAutonomyTick, invalidatePlan } from "./executor.js";
@@ -39,10 +40,13 @@ import type {
   AutonomyGameRuntime,
   GoalOption,
   NeedConfig,
+  NpcAutonomyDebugPlan,
   NpcAutonomyDebugState,
+  NpcAutonomyDebugDeath,
   NpcNeeds,
   NeedType,
   NpcAutonomyState,
+  Plan,
   PlanSource,
   SurvivalSnapshot,
   WorldState,
@@ -79,11 +83,14 @@ const POND_WATER_RESTORE_PER_TICK = 2;
 const AGGRESSIVE_BEAR_RADIUS = 4;
 /** Default health scale used by the survival UI. */
 const DEFAULT_PLAYER_MAX_HP = 100;
+type SurvivalNeed = keyof SurvivalSnapshot;
 
 export interface NpcAutonomyManagerOptions {
   needConfigs?: Record<NeedType, NeedConfig>;
   provider?: NpcModelProvider;
   memoryManager?: MemoryManager;
+  npcStore?: NpcPersistenceStore;
+  persistedDeadNpcs?: NpcAutonomyDebugState[];
   characters?: CharacterDef[];
 }
 
@@ -96,11 +103,13 @@ export class NpcAutonomyManager {
   private entityManager: EntityManager;
   private provider?: NpcModelProvider;
   private memoryManager?: MemoryManager;
+  private npcStore?: NpcPersistenceStore;
   /** Per-NPC need config overrides from character definitions. */
   private perNpcConfigs: Map<string, Record<NeedType, NeedConfig>> = new Map();
   private goalSelectionInFlight: Set<string> = new Set();
   /** Track which NPCs are in idle-wander cooldown and when it expires. */
   private idleCooldowns: Map<string, number> = new Map();
+  private deadDebugStates: Map<string, NpcAutonomyDebugState> = new Map();
   private needsListeners: Array<
     (
       npcId: string,
@@ -131,6 +140,10 @@ export class NpcAutonomyManager {
     this.needConfigs = options.needConfigs ?? DEFAULT_NEED_CONFIGS;
     this.provider = options.provider;
     this.memoryManager = options.memoryManager;
+    this.npcStore = options.npcStore;
+    for (const deadState of options.persistedDeadNpcs ?? []) {
+      this.deadDebugStates.set(deadState.npcId, structuredClone(deadState));
+    }
 
     // Build per-NPC configs from character overrides
     if (options.characters) {
@@ -201,12 +214,30 @@ export class NpcAutonomyManager {
 
     this.game.on("spawn", (event) => {
       if (!event.playerId) return;
+      const player = this.game.getPlayer(event.playerId);
+      if (player?.isNpc) {
+        this.deadDebugStates.delete(event.playerId);
+        this.debugStateHashes.delete(event.playerId);
+        this.publishDebugStateIfChanged(event.playerId, this.getState(event.playerId));
+      }
       this.broadcastCurrentSurvival(event.playerId);
     });
 
     this.game.on("despawn", (event) => {
       if (!event.playerId) return;
       this.playerSurvival.delete(event.playerId);
+      this.states.delete(event.playerId);
+      this.goalSelectionInFlight.delete(event.playerId);
+      this.idleCooldowns.delete(event.playerId);
+      const deadState = this.deadDebugStates.get(event.playerId);
+      if (deadState && event.data?.reason === "death") {
+        this.debugStateHashes.set(
+          event.playerId,
+          JSON.stringify(deadState),
+        );
+      } else {
+        this.debugStateHashes.delete(event.playerId);
+      }
     });
   }
 
@@ -240,14 +271,39 @@ export class NpcAutonomyManager {
   /** Serialize one NPC autonomy state with readable action labels for debug UI. */
   getDebugState(npcId: string): NpcAutonomyDebugState | undefined {
     const state = this.states.get(npcId);
-    return state ? this.buildDebugState(npcId, state) : undefined;
+    if (state) {
+      return this.buildDebugState(npcId, state);
+    }
+    const deadState = this.deadDebugStates.get(npcId);
+    return deadState ? structuredClone(deadState) : undefined;
   }
 
   /** Serialize all NPC autonomy states for the debug API. */
   getAllDebugStates(): Map<string, NpcAutonomyDebugState> {
     const result = new Map<string, NpcAutonomyDebugState>();
+    for (const [npcId, state] of this.deadDebugStates) {
+      result.set(npcId, structuredClone(state));
+    }
     for (const [npcId, state] of this.states) {
       result.set(npcId, this.buildDebugState(npcId, state));
+    }
+    return result;
+  }
+
+  /** Serialize all action definitions for the debug dashboard. */
+  getActionDefinitions(): Record<string, DebugActionDefinition> {
+    const result: Record<string, DebugActionDefinition> = {};
+    for (const action of this.registry.getAll()) {
+      const cost = typeof action.cost === "function" ? 0 : action.cost;
+      result[action.id] = {
+        id: action.id,
+        displayName: action.displayName,
+        preconditions: Object.fromEntries(action.preconditions),
+        effects: Object.fromEntries(action.effects),
+        cost,
+        estimatedDurationTicks: action.estimatedDurationTicks,
+        proximityRequirement: action.proximityRequirement,
+      };
     }
     return result;
   }
@@ -330,6 +386,9 @@ export class NpcAutonomyManager {
       const needs = this.getOrCreateHumanSurvival(player.id);
       tickNeeds(needs, this.needConfigs);
       this.replenishWaterAtPond(player, needs);
+      if (this.maybeKillForDepletedSurvival(player.id, needs)) {
+        continue;
+      }
       if (shouldBroadcast) {
         this.broadcastPlayerSurvival(player.id, needs);
       }
@@ -351,7 +410,8 @@ export class NpcAutonomyManager {
 
       // 1. Once a conversation is active, the social action owns the NPC.
       if (npc.state === "conversing") {
-        const clearedGoalId = state.currentPlan?.goalId;
+        const clearedPlan = this.buildCurrentDebugPlan(state);
+        const clearedGoalId = clearedPlan?.goalId;
         this.clearPlanForConversation(state);
         if (clearedGoalId) {
           this.emitDebugEvent(
@@ -360,11 +420,20 @@ export class NpcAutonomyManager {
               severity: "info",
               title: "Plan cleared",
               message: `${this.getNpcLabel(npc.id)} handed control to an active conversation and cleared ${this.formatGoal(clearedGoalId)}.`,
+              plan: clearedPlan,
             }),
           );
         }
         tickNeeds(state.needs, npcConfigs);
         this.replenishWaterAtPond(npc, state.needs);
+        if (
+          this.maybeKillForDepletedSurvival(
+            npc.id,
+            this.buildNpcSurvivalSnapshot(npc.id, state, npc),
+          )
+        ) {
+          continue;
+        }
         if (shouldBroadcast) {
           this.broadcastNeeds(npc.id, state);
           this.broadcastPlayerSurvival(
@@ -379,10 +448,19 @@ export class NpcAutonomyManager {
       // 2. Decay needs
       const needsResult = tickNeeds(state.needs, npcConfigs);
       this.replenishWaterAtPond(npc, state.needs);
+      if (
+        this.maybeKillForDepletedSurvival(
+          npc.id,
+          this.buildNpcSurvivalSnapshot(npc.id, state, npc),
+        )
+      ) {
+        continue;
+      }
 
       // 3. Check for critical need crossing → interrupt current plan
       if (needsResult.newCritical.length > 0 && state.currentPlan) {
-        const interruptedGoalId = state.currentPlan.goalId;
+        const interruptedPlan = this.buildCurrentDebugPlan(state);
+        const interruptedGoalId = interruptedPlan?.goalId ?? state.currentPlan.goalId;
         invalidatePlan(
           npc.id,
           state,
@@ -397,6 +475,7 @@ export class NpcAutonomyManager {
             severity: "warning",
             title: "Plan interrupted",
             message: `${this.getNpcLabel(npc.id)} interrupted ${this.formatGoal(interruptedGoalId)} because of a critical need.`,
+            plan: interruptedPlan ?? undefined,
           }),
         );
       }
@@ -407,7 +486,9 @@ export class NpcAutonomyManager {
         (!state.currentPlan || state.currentPlan.goalId !== "escape_danger")
       ) {
         if (state.currentPlan) {
-          const interruptedGoalId = state.currentPlan.goalId;
+          const interruptedPlan = this.buildCurrentDebugPlan(state);
+          const interruptedGoalId =
+            interruptedPlan?.goalId ?? state.currentPlan.goalId;
           invalidatePlan(
             npc.id, state, this.registry,
             this.game,
@@ -419,6 +500,7 @@ export class NpcAutonomyManager {
               severity: "warning",
               title: "Plan interrupted",
               message: `${this.getNpcLabel(npc.id)} interrupted ${this.formatGoal(interruptedGoalId)} to flee danger.`,
+              plan: interruptedPlan ?? undefined,
             }),
           );
         }
@@ -462,7 +544,12 @@ export class NpcAutonomyManager {
 
       // 5. Execute current plan step
       if (state.currentPlan) {
-        const planBeforeExecution = state.currentPlan;
+        const planBeforeExecution = this.buildDebugPlan(
+          state.currentPlan,
+          state.currentPlanSource,
+          state.currentPlanReasoning,
+          state.currentStepIndex,
+        );
         const result = executeAutonomyTick(
           npc.id,
           state,
@@ -480,6 +567,7 @@ export class NpcAutonomyManager {
               severity: "warning",
               title: "Plan failed",
               message: `${this.getNpcLabel(npc.id)} failed ${this.formatGoal(planBeforeExecution.goalId)}${result.failReason ? `: ${result.failReason}` : "."}`,
+              plan: planBeforeExecution,
             }),
           );
           if (state.consecutivePlanFailures >= MAX_CONSECUTIVE_FAILURES) {
@@ -498,6 +586,7 @@ export class NpcAutonomyManager {
               severity: "info",
               title: "Plan completed",
               message: `${this.getNpcLabel(npc.id)} completed ${this.formatGoal(planBeforeExecution.goalId)}.`,
+              plan: planBeforeExecution,
             }),
           );
         }
@@ -791,6 +880,7 @@ export class NpcAutonomyManager {
           severity: "info",
           title: "Plan started",
           message: `${this.getNpcLabel(npcId)} started ${this.formatGoal(goalId)} via ${provenance.source}.`,
+          plan: this.buildCurrentDebugPlan(state) ?? undefined,
         }),
       );
       this.publishDebugStateIfChanged(npcId, state);
@@ -806,43 +896,20 @@ export class NpcAutonomyManager {
     npcId: string,
     state: NpcAutonomyState,
   ): NpcAutonomyDebugState {
-    const currentPlan = state.currentPlan
-      ? {
-          goalId: state.currentPlan.goalId,
-          totalCost: state.currentPlan.totalCost,
-          createdAtTick: state.currentPlan.createdAtTick,
-          source: state.currentPlanSource ?? "scripted",
-          llmGenerated: state.currentPlanSource === "llm",
-          reasoning: state.currentPlanReasoning ?? undefined,
-          steps: state.currentPlan.steps.map((step, index) => ({
-            index,
-            actionId: step.actionId,
-            actionLabel: this.registry.get(step.actionId)?.displayName ?? step.actionId,
-            targetPosition: step.targetPosition,
-            isCurrent: index === state.currentStepIndex,
-          })),
-        }
-      : null;
-
-    const currentExecution = state.currentExecution
-      ? {
-          actionId: state.currentExecution.actionId,
-          actionLabel:
-            this.registry.get(state.currentExecution.actionId)?.displayName ??
-            state.currentExecution.actionId,
-          startedAtTick: state.currentExecution.startedAtTick,
-          status: state.currentExecution.status,
-          stepIndex: state.currentStepIndex,
-        }
-      : null;
+    const player = this.game.getPlayer(npcId);
+    const currentPlan = this.buildCurrentDebugPlan(state);
 
     return {
       npcId,
-      needs: this.buildNpcSurvivalSnapshot(npcId, state),
+      name: player?.name ?? npcId,
+      lastPosition: player ? { x: player.x, y: player.y } : undefined,
+      lastState: player?.state,
+      isDead: false,
+      needs: this.buildNpcSurvivalSnapshot(npcId, state, player),
       inventory: Object.fromEntries(state.inventory),
       currentPlan,
       currentStepIndex: state.currentStepIndex,
-      currentExecution,
+      currentExecution: this.buildDebugExecution(state),
       consecutivePlanFailures: state.consecutivePlanFailures,
       goalSelectionInFlight: this.goalSelectionInFlight.has(npcId),
       goalSelectionStartedAtTick: state.goalSelectionStartedAtTick,
@@ -853,13 +920,16 @@ export class NpcAutonomyManager {
     npcId: string,
     state: NpcAutonomyState,
   ): void {
-    const debugState = this.buildDebugState(npcId, state);
+    this.publishDebugSnapshot(this.buildDebugState(npcId, state));
+  }
+
+  private publishDebugSnapshot(debugState: NpcAutonomyDebugState): void {
     const serialized = JSON.stringify(debugState);
-    if (this.debugStateHashes.get(npcId) === serialized) {
+    if (this.debugStateHashes.get(debugState.npcId) === serialized) {
       return;
     }
 
-    this.debugStateHashes.set(npcId, serialized);
+    this.debugStateHashes.set(debugState.npcId, serialized);
     for (const listener of this.debugStateListeners) {
       listener(debugState);
     }
@@ -940,6 +1010,100 @@ export class NpcAutonomyManager {
     return goalId.replaceAll("_", " ");
   }
 
+  private buildCurrentDebugPlan(
+    state: NpcAutonomyState,
+  ): NpcAutonomyDebugPlan | null {
+    if (!state.currentPlan) {
+      return null;
+    }
+
+    return this.buildDebugPlan(
+      state.currentPlan,
+      state.currentPlanSource,
+      state.currentPlanReasoning,
+      state.currentStepIndex,
+    );
+  }
+
+  private buildDebugPlan(
+    plan: Plan,
+    source: PlanSource | null,
+    reasoning: string | null,
+    currentStepIndex: number,
+  ): NpcAutonomyDebugPlan {
+    return {
+      goalId: plan.goalId,
+      totalCost: plan.totalCost,
+      createdAtTick: plan.createdAtTick,
+      source: source ?? "scripted",
+      llmGenerated: source === "llm",
+      reasoning: reasoning ?? undefined,
+      steps: plan.steps.map((step, index) => ({
+        index,
+        actionId: step.actionId,
+        actionLabel:
+          this.registry.get(step.actionId)?.displayName ?? step.actionId,
+        targetPosition: step.targetPosition,
+        isCurrent: index === currentStepIndex,
+      })),
+    };
+  }
+
+  private buildDebugExecution(
+    state: NpcAutonomyState,
+  ): NpcAutonomyDebugState["currentExecution"] {
+    if (!state.currentExecution) {
+      return null;
+    }
+
+    return {
+      actionId: state.currentExecution.actionId,
+      actionLabel:
+        this.registry.get(state.currentExecution.actionId)?.displayName ??
+        state.currentExecution.actionId,
+      startedAtTick: state.currentExecution.startedAtTick,
+      status: state.currentExecution.status,
+      stepIndex: state.currentStepIndex,
+    };
+  }
+
+  private recordDeadNpcState(
+    player: {
+      id: string;
+      name: string;
+      x: number;
+      y: number;
+      state: string;
+      hp?: number;
+      maxHp?: number;
+    },
+    state: NpcAutonomyState,
+    death: NpcAutonomyDebugDeath,
+  ): void {
+    const deadState: NpcAutonomyDebugState = {
+      npcId: player.id,
+      name: player.name,
+      lastPosition: { x: player.x, y: player.y },
+      lastState: player.state,
+      isDead: true,
+      death,
+      needs: this.buildNpcSurvivalSnapshot(player.id, state, player),
+      inventory: Object.fromEntries(state.inventory),
+      currentPlan: this.buildCurrentDebugPlan(state),
+      currentStepIndex: state.currentStepIndex,
+      currentExecution: this.buildDebugExecution(state),
+      consecutivePlanFailures: state.consecutivePlanFailures,
+      goalSelectionInFlight: false,
+      goalSelectionStartedAtTick: null,
+    };
+
+    this.deadDebugStates.set(player.id, deadState);
+    this.publishDebugSnapshot(deadState);
+    void this.npcStore?.recordDeadNpc(deadState).catch((error) => {
+      console.error(`Failed to persist dead NPC snapshot for ${player.id}:`, error);
+    });
+  }
+
   private idleWander(npcId: string, _state: NpcAutonomyState): void {
     const npc = this.game.getPlayer(npcId);
     if (!npc) return;
@@ -1010,7 +1174,7 @@ export class NpcAutonomyManager {
   private buildNpcSurvivalSnapshot(
     npcId: string,
     state: NpcAutonomyState,
-    player = this.game.getPlayer(npcId),
+    player: { hp?: number; maxHp?: number } | undefined = this.game.getPlayer(npcId),
   ): SurvivalSnapshot {
     return {
       health: player ? this.healthFromPlayer(player) : 100,
@@ -1024,6 +1188,78 @@ export class NpcAutonomyManager {
     const maxHp = player.maxHp ?? DEFAULT_PLAYER_MAX_HP;
     const currentHp = player.hp ?? maxHp;
     return Math.max(0, Math.min(100, (currentHp / maxHp) * 100));
+  }
+
+  private depletedSurvivalNeed(
+    survival: SurvivalSnapshot,
+  ): SurvivalNeed | null {
+    for (const need of ["health", "food", "water", "social"] as const) {
+      if (survival[need] <= 0) {
+        return need;
+      }
+    }
+    return null;
+  }
+
+  private maybeKillForDepletedSurvival(
+    playerId: string,
+    survival: SurvivalSnapshot,
+  ): boolean {
+    const depletedNeed = this.depletedSurvivalNeed(survival);
+    if (!depletedNeed) {
+      return false;
+    }
+
+    const player = this.game.getPlayer(playerId);
+    if (!player) {
+      return false;
+    }
+
+    if (player.isNpc) {
+      const state = this.states.get(playerId);
+      const interruptedPlan = state ? this.buildCurrentDebugPlan(state) : null;
+      if (state) {
+        this.recordDeadNpcState(player, state, {
+          tick: this.game.currentTick,
+          reason: "death",
+          cause: "survival",
+          depletedNeed,
+          message: `${this.getNpcLabel(playerId)} died because ${depletedNeed} reached 0.`,
+        });
+      }
+      this.emitDebugEvent(
+        this.createNpcDebugEvent(playerId, interruptedPlan
+          ? {
+              type: "plan_cleared",
+              severity: "warning",
+              title: "NPC died",
+              message: `${this.getNpcLabel(playerId)} died because ${depletedNeed} reached 0.`,
+              plan: interruptedPlan,
+            }
+          : {
+              type: "error",
+              severity: "error",
+              title: "NPC died",
+              message: `${this.getNpcLabel(playerId)} died because ${depletedNeed} reached 0.`,
+            }),
+      );
+    }
+
+    this.game.emitEvent({
+      tick: this.game.currentTick,
+      type: "player_death",
+      playerId,
+      data: {
+        cause: "survival",
+        depletedNeed,
+      },
+    });
+    this.game.removePlayer(playerId, {
+      reason: "death",
+      cause: "survival",
+      depletedNeed,
+    });
+    return true;
   }
 
   private replenishWaterAtPond(

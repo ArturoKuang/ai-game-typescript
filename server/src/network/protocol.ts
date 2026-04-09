@@ -44,12 +44,19 @@ export interface PlayerSurvivalData {
   social: number;
 }
 
+export interface PlayerLeftData {
+  id: string;
+  reason?: "death";
+  cause?: string;
+  depletedNeed?: "health" | "food" | "water" | "social";
+}
+
 export type ServerMessage =
   | { type: "state"; data: FullGameState }
   | { type: "tick"; data: { tick: number } }
   | { type: "player_update"; data: PublicPlayer }
   | { type: "player_joined"; data: PublicPlayer }
-  | { type: "player_left"; data: { id: string } }
+  | { type: "player_left"; data: PlayerLeftData }
   | { type: "convo_update"; data: Conversation }
   | { type: "message"; data: Message }
   | { type: "entity_update"; data: WorldEntityData }

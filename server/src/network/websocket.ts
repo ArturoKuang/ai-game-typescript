@@ -144,7 +144,28 @@ export class GameWebSocketServer {
       }
       case "despawn": {
         if (event.playerId) {
-          this.broadcast({ type: "player_left", data: { id: event.playerId } });
+          const reason =
+            event.data?.reason === "death" ? "death" : undefined;
+          const cause =
+            typeof event.data?.cause === "string"
+              ? event.data.cause
+              : undefined;
+          const depletedNeed =
+            event.data?.depletedNeed === "health" ||
+            event.data?.depletedNeed === "food" ||
+            event.data?.depletedNeed === "water" ||
+            event.data?.depletedNeed === "social"
+              ? event.data.depletedNeed
+              : undefined;
+          this.broadcast({
+            type: "player_left",
+            data: {
+              id: event.playerId,
+              reason,
+              cause,
+              depletedNeed,
+            },
+          });
         }
         return;
       }
@@ -249,11 +270,12 @@ export class GameWebSocketServer {
       }
       case "player_damage":
       case "player_death": {
+        const survivalDeath = event.data?.cause === "survival";
         // Broadcast updated player state + combat event
         const player = event.playerId
           ? this.game.getPlayer(event.playerId)
           : undefined;
-        if (player) {
+        if (player && !survivalDeath) {
           this.broadcast({
             type: "player_update",
             data: toPublicPlayer(player),
@@ -339,10 +361,11 @@ export class GameWebSocketServer {
       }
 
       case "join": {
-        if (info.playerId) {
+        if (info.playerId && this.game.getPlayer(info.playerId)) {
           this.sendError(ws, "Already joined");
           return;
         }
+        info.playerId = null;
         humanCounter++;
         const id = `human_${humanCounter}`;
         const spawns = this.game.world.getSpawnPoints();
@@ -621,6 +644,7 @@ export class GameWebSocketServer {
       conversations: this.game.conversations.getAllConversations(),
       autonomyStates,
       recentEvents: [...this.debugEvents],
+      actionDefinitions: this.autonomyManager?.getActionDefinitions() ?? {},
     };
   }
 

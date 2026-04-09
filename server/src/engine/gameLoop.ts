@@ -190,10 +190,32 @@ export class GameLoop {
     return player;
   }
 
-  removePlayer(id: string): void {
+  removePlayer(id: string, data?: Record<string, unknown>): void {
+    const player = this.players_.get(id);
+    if (!player) {
+      return;
+    }
+
+    const convo = this.convoManager_.getPlayerConversation(id);
+    if (convo && convo.state !== "ended") {
+      const ended = this.convoManager_.endConversation(
+        convo.id,
+        this.tick_,
+        "missing_player",
+      );
+      this.emit({
+        tick: this.tick_,
+        type: "convo_ended",
+        playerId: id,
+        data: this.buildConversationEventData(ended, {
+          reason: ended.endedReason,
+        }),
+      });
+    }
+
     this.players_.delete(id);
     this.heldKeys_.delete(id);
-    this.emit({ tick: this.tick_, type: "despawn", playerId: id });
+    this.emit({ tick: this.tick_, type: "despawn", playerId: id, data });
   }
 
   getPlayer(id: string): Player | undefined {

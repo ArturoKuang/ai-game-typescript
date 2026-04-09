@@ -78,6 +78,7 @@ export async function createGameServerRuntime(options?: {
 
   const game = new GameLoop({ mode: "realtime", tickRate: 20 });
   const { pool, repo, npcStore } = await createPersistence(env);
+  const persistedDeadNpcs = await npcStore.getDeadNpcs();
   const { memoryManager, provider, claudeCommand, resolvedClaudeCommand } =
     createNpcServices(repo, env, serverRoot);
 
@@ -93,9 +94,16 @@ export async function createGameServerRuntime(options?: {
   const autonomyManager = new NpcAutonomyManager(game, entityManager, {
     provider,
     memoryManager,
+    npcStore,
+    persistedDeadNpcs,
   });
 
-  spawnDefaultNpcs(game, CHARACTERS);
+  wirePersistence(game, npcStore);
+  spawnDefaultNpcs(
+    game,
+    CHARACTERS,
+    new Set(persistedDeadNpcs.map((state) => state.npcId)),
+  );
 
   const bearManager = new BearManager(game, entityManager);
   bearManager.seedInitialBears();
@@ -182,8 +190,16 @@ function createEntityManager(mapData: MapData): EntityManager {
   return entityManager;
 }
 
-function spawnDefaultNpcs(game: GameLoop, characters: CharacterDef[]): void {
+function spawnDefaultNpcs(
+  game: GameLoop,
+  characters: CharacterDef[],
+  deadNpcIds: ReadonlySet<string> = new Set(),
+): void {
   for (const char of characters) {
+    if (deadNpcIds.has(char.id)) {
+      console.log(`Skipping dead NPC: ${char.name} (${char.id})`);
+      continue;
+    }
     try {
       game.spawnPlayer({
         id: char.id,
@@ -201,6 +217,24 @@ function spawnDefaultNpcs(game: GameLoop, characters: CharacterDef[]): void {
       console.error(`Failed to spawn ${char.name}:`, error);
     }
   }
+}
+
+function wirePersistence(
+  game: GameLoop,
+  npcStore: NpcPersistenceStore,
+): void {
+  game.on("spawn", (event) => {
+    if (!event.playerId) {
+      return;
+    }
+    const player = game.getPlayer(event.playerId);
+    if (!player) {
+      return;
+    }
+    void npcStore.upsertPlayer(player).catch((error) => {
+      console.error(`Failed to persist player ${player.id}:`, error);
+    });
+  });
 }
 
 function createWebSocketRuntime(
