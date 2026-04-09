@@ -24,7 +24,9 @@ Codex runs in an isolated sandbox. These constraints shape what you can and cann
 ```
 server/              # Game server (Docker in prod, host-mode for dev/test)
   src/
-    index.ts         # Entry point -- Express + WebSocket bootstrap
+    index.ts         # Thin entry point -> bootstrap/runtime.ts
+    bootstrap/
+      runtime.ts     # Composition root for Express, WS, NPC, autonomy, and debug routes
     engine/          # Core simulation (NO I/O -- fully testable in isolation)
       gameLoop.ts    # Tick-based game loop (stepped or realtime mode)
       world.ts       # Immutable tile grid, walkability, spawn points
@@ -34,9 +36,12 @@ server/              # Game server (Docker in prod, host-mode for dev/test)
       types.ts       # ALL shared data models (Player, Activity, Position, etc.)
       logger.ts      # In-memory ring-buffer event log (1000 events)
       rng.ts         # Seeded xorshift128 PRNG -- deterministic sequences
+    autonomy/        # NPC needs + GOAP planner/executor; state lives outside Player
+    bears/           # Bear combat/spawn subsystem
     network/
       websocket.ts   # WebSocket server -- translates events <-> messages
       protocol.ts    # Client/server message discriminated unions
+      publicPlayer.ts# Stable player DTO exposed to clients/debug dashboard
     db/
       client.ts      # PostgreSQL connection pool (pg)
       migrate.ts     # Schema migration runner
@@ -47,7 +52,10 @@ server/              # Game server (Docker in prod, host-mode for dev/test)
       memory.ts      # Memory manager (scoring, retrieval, reflection)
     debug/
       router.ts      # Express debug API routes
+      admin.ts       # Debug write facade; may process queued commands immediately
       asciiMap.ts    # Terminal map renderer
+      movementHarness.ts     # In-process deterministic movement/collision harness
+      conversationHarness.ts # Live HTTP/WS harness for end-to-end convo verification
       scenarios.ts   # Pre-built test scenarios
   test/              # Vitest test files
     helpers/
@@ -57,8 +65,10 @@ client/              # Browser client (runs on host, NOT in Docker)
     main.ts          # Entry point -- wires PixiJS, WebSocket, UI
     renderer.ts      # PixiJS tile map + player sprites
     network.ts       # WebSocket client (connects to :3001)
+    prediction.ts    # Client movement predictor; keep parity with server tests
+    debugDashboard.ts# Live debug stream UI
     ui.ts            # Chat panel, player list, status bar
-    types.ts         # Mirrors server protocol types (manually synced)
+    types.ts         # Mirrors protocol/PublicPlayer/debug stream types
 data/
   map.json           # 20x20 town map (tiles, activities, spawn points)
   characters.ts      # NPC personality definitions
@@ -71,10 +81,17 @@ docs/
 ## Commands
 
 ```bash
+npm test                             # Root shortcut for server Vitest suite
+npm run check                        # Biome static checks for the monorepo
 cd server && npm test                # Run all tests (Vitest) -- this is your primary feedback loop
 cd server && npx vitest run          # Same thing, explicit
 cd server && npx vitest run test/conversation.test.ts   # Run a single test file
+cd server && npm run debug:movement  # Run deterministic movement harness scenarios
+cd server && npm run debug:conversation # Run live conversation harness scenarios
+cd server && npm run dev             # Start host-mode server on :3001
 cd server && npx tsc --noEmit        # Type-check without emitting (fast)
+cd client && npm run build           # Client type-check + production build
+cd client && npm run dev -- --host 127.0.0.1   # Start client for browser QA
 ```
 
 You do NOT have access to these:
@@ -112,6 +129,7 @@ WebSocket handlers and the debug API do NOT mutate game state directly. They cal
 - No race conditions between WebSocket handlers and the tick loop
 
 **The one exception:** `setPlayerInput()` for WASD held-key state is applied immediately (not queued) because it represents continuous input, not a discrete command.
+**Debug-route nuance:** `debug/admin.ts` may enqueue commands and call `processPendingCommands()` immediately so admin writes become visible without waiting for the next tick, but the router still should not reach into `GameLoop` or `ConversationManager` directly.
 
 **If you are adding a new player action:** Add a new variant to the `Command` union in `engine/types.ts`, handle it in the `processCommands` method of `gameLoop.ts`, and enqueue it from the WebSocket handler in `websocket.ts`. Do NOT call `game.spawnPlayer()`, `game.setPlayerTarget()`, etc. directly from network handlers.
 
@@ -168,13 +186,20 @@ This is required by TypeScript's NodeNext module resolution with `"type": "modul
 ### 7. Types go in specific files
 
 - Game entity types (Player, Position, Activity, etc.): `engine/types.ts`
+- Public player DTO exposed over the network: `network/publicPlayer.ts`
 - Wire protocol types (ClientMessage, ServerMessage): `network/protocol.ts`
 - Conversation types (Conversation, Message, ConvoState): `engine/conversation.ts`
+- Autonomy state, needs, plans, and debug projections: `autonomy/types.ts`
+- Debug dashboard stream payloads: `debug/streamTypes.ts`
 - Memory types (Memory, ScoredMemory, MemoryStore): `db/repository.ts`
 
 Do not scatter type definitions across implementation files.
 
-### 8. No `any` in TypeScript
+### 8. Autonomy state does not belong on `Player`
+
+NPC needs, inventory, GOAP plans, and debug-plan state live in `autonomy/` manager-owned maps and types. The autonomy system reads world/player state and drives behavior through commands and hooks; do not add autonomy-only fields to `engine/Player`, `network/PublicPlayer`, or `client/src/types.ts` unless they are truly part of the public runtime model.
+
+### 9. No `any` in TypeScript
 
 Strict mode is enabled. Use proper types. If you truly cannot avoid it, use `unknown` with a type guard.
 
@@ -207,27 +232,32 @@ gameLoop.ts  <-->  pathfinding.ts    (setPlayerTarget calls findPath)
 gameLoop.ts  <-->  world.ts          (all spatial queries go through World)
 gameLoop.ts  <-->  types.ts          (Player, Command, GameEvent, TickResult)
 websocket.ts <-->  protocol.ts       (message type definitions)
+websocket.ts <-->  publicPlayer.ts   (server serializes player state through a stable DTO)
 websocket.ts <-->  gameLoop.ts       (enqueues commands, reads state for snapshots)
+publicPlayer.ts <--> client/types.ts (client mirrors the public player wire shape, not full engine Player)
+autonomy/manager.ts <--> autonomy/types.ts <--> gameLoop.ts (NPC plans/needs live outside engine state and act via commands/hooks)
+debug/router.ts <--> debug/admin.ts  (admin routes reuse command paths and may flush them immediately)
 memory.ts    <-->  repository.ts     (MemoryStore interface)
 memory.ts    <-->  embedding.ts      (Embedder interface)
-client/types.ts <-> server types     (manually synced -- update both sides)
+client/types.ts <-> server protocol/public DTOs (manually synced -- update both sides)
 ```
 
-**When you edit `engine/types.ts`:** Check if `client/src/types.ts` needs a matching update.
+**When you edit fields that cross the network boundary:** update `network/publicPlayer.ts`, `network/protocol.ts`, and `client/src/types.ts` together. The client mirrors `PublicPlayer` and protocol/debug payloads, not the full engine `Player`.
 
 ## Testing
 
 ### Your edit-run-test loop
 
-Since you cannot run a live server, your workflow is:
+You can run host-mode servers and browser QA in this sandbox. Default to a layered workflow:
 
 1. Read the relevant source files.
-2. Run `cd server && npm test` to confirm green baseline.
-3. Write a failing test (or modify an existing one) that captures the desired behavior.
-4. Implement the change.
-5. Run `cd server && npm test` until green.
-6. Run `cd server && npx tsc --noEmit` to catch any type errors tests might miss.
-7. If the change affects behavior that would normally need E2E verification, state explicitly: "E2E verification required: [describe what to check against a live server]."
+2. For engine-only bugs, start with a targeted Vitest file or `TestGame`, then use `server/src/debug/movementHarness.ts` if the issue is movement/collision ordering.
+3. For protocol, WebSocket, debug-dashboard, or conversation lifecycle bugs, use `server/src/debug/conversationHarness.ts` or a real host-mode server plus browser/Playwright QA.
+4. Write a failing test (or extend an existing harness scenario) that captures the behavior.
+5. Implement the change.
+6. Run `cd server && npm test` and `cd server && npx tsc --noEmit`.
+7. If you changed client/protocol/debug-stream code, also run `cd client && npm run build`.
+8. If behavior still needs live verification, state explicitly: "E2E verification required: [describe what to check against a live server]."
 
 ### Test fixtures
 
@@ -287,7 +317,8 @@ test('manhattan distance', () => {
 
 1. **Runtime contract tests** -- held-key ordering, integer positions after path, collision ownership.
 2. **Client/server parity tests** -- run the same input through `GameLoop` and the client prediction helpers.
-3. **Debug invariant tests** -- use `validateInvariants: true` to catch overlap, wall penetration, invalid paths.
+3. **Movement harness scenarios** -- use `movementHarness.ts` when you need replayable snapshots, ASCII maps, and event traces for handoff/collision regressions.
+4. **Debug invariant tests** -- use `validateInvariants: true` to catch overlap, wall penetration, invalid paths.
 
 ## Common Pitfalls (things Codex agents get wrong)
 
@@ -325,8 +356,8 @@ Runtime coordinates are **centered on integer tiles**: tile (2, 3) has center at
 ### 9. Mixing up the two movement systems
 If a player has `path` set, they are using A* movement. If they have `inputX`/`inputY` non-zero, they are using WASD movement. These are mutually exclusive. Do not set both.
 
-### 10. Forgetting to update client types
-`client/src/types.ts` is manually synced with the server. If you add a field to `Player` in `engine/types.ts`, add it to `client/src/types.ts` too.
+### 10. Forgetting the public DTO boundary
+The browser mirrors `network/publicPlayer.ts` and `network/protocol.ts`, not the full engine `Player`. If a field changes on the wire, update `toPublicPlayer()`, protocol types, and `client/src/types.ts` together.
 
 ## Architecture Notes
 
@@ -335,7 +366,10 @@ If a player has `path` set, they are using A* movement. If they have `inputX`/`i
 - **ConversationManager** owns the conversation state machine and a `playerToConvo` reverse index for O(1) "is this player in a conversation?" checks.
 - **GameLogger** is a fixed-size ring buffer (1000 events). Events older than the buffer size are silently dropped.
 - **Two modes**: `stepped` (tests, debug API) and `realtime` (production, 20 ticks/sec). Tests always use stepped mode.
-- **WebSocket protocol** uses discriminated unions (`ClientMessage`, `ServerMessage`) defined in `network/protocol.ts`. The server sends a full `FullGameState` snapshot on connect, then streams incremental updates.
+- **Bootstrap/runtime**: `server/src/index.ts` is intentionally thin. Runtime wiring for Express, WebSocket, NPC services, autonomy, bears, and debug routes lives in `bootstrap/runtime.ts`.
+- **WebSocket protocol** uses discriminated unions (`ClientMessage`, `ServerMessage`) defined in `network/protocol.ts`. The server sends a full `FullGameState` snapshot on connect, then streams incremental updates, and player payloads are serialized through `network/publicPlayer.ts`.
+- **Autonomy split**: `NpcAutonomyManager` owns needs/inventory/plans and runs after each tick; `NpcOrchestrator` handles LLM replies, memory persistence, and reflections. Both live outside `engine/` and should influence gameplay through commands/events instead of mutating engine internals directly.
+- **Debug writes**: `debug/admin.ts` is the sanctioned debug write surface. It exists so routes can reuse the production command path and occasionally flush queued commands immediately.
 - **Memory system**: NPC memories stored in PostgreSQL with pgvector embeddings. Retrieval uses a composite score: `0.99^ticksAgo + importance/10 + cosineSimilarity`. `InMemoryRepository` provides a test-friendly fallback.
 
 ## Debug API Reference
@@ -353,11 +387,13 @@ These endpoints are available when you have the server running locally. Use them
 | GET | /api/debug/activities | Activity locations |
 | GET | /api/debug/log | Filtered event log (?since=N&limit=N&playerId=X&type=X) |
 | GET | /api/debug/scenarios | List available scenarios |
+| GET | /api/debug/npc-provider | NPC provider diagnostics / retry status |
 | GET | /api/debug/memories/:playerId | NPC memories (?type=X&limit=N) |
 | GET | /api/debug/memories/:playerId/search | Vector search (?q=text&k=N) |
 | POST | /api/debug/tick | Advance N ticks ({ "count": N }) |
 | POST | /api/debug/spawn | Add a player ({ "id", "name", "x", "y", "isNpc" }) |
 | POST | /api/debug/move | Set movement target ({ "playerId", "x", "y" }) |
+| POST | /api/debug/input | Toggle held input ({ "playerId", "direction", "active" }) |
 | POST | /api/debug/start-convo | Start conversation ({ "player1Id", "player2Id" }) |
 | POST | /api/debug/say | Send message ({ "playerId", "convoId", "content" }) |
 | POST | /api/debug/end-convo | End conversation ({ "convoId" }) |
@@ -402,11 +438,12 @@ When `DATABASE_URL` is unset, the server falls back to `InMemoryRepository` for 
 
 - [ ] `cd server && npm test` passes
 - [ ] `cd server && npx tsc --noEmit` passes
+- [ ] If client/protocol/debug-stream code changed, `cd client && npm run build` passes
 - [ ] No `any` types introduced
 - [ ] All imports use `.js` extensions
 - [ ] No I/O imports in `engine/`
 - [ ] No `Math.random()` in game logic
-- [ ] New types added to the correct file (`types.ts`, `protocol.ts`, `conversation.ts`, or `repository.ts`)
-- [ ] If `engine/types.ts` changed, `client/src/types.ts` updated to match
+- [ ] New types added to the correct file (`types.ts`, `publicPlayer.ts`, `protocol.ts`, `streamTypes.ts`, `conversation.ts`, `repository.ts`, or `autonomy/types.ts`)
+- [ ] If the wire shape changed, `network/publicPlayer.ts`, `network/protocol.ts`, and `client/src/types.ts` stay aligned
 - [ ] If behavior needs live verification, stated explicitly what to check
 - [ ] New game actions use the command queue, not direct mutation
