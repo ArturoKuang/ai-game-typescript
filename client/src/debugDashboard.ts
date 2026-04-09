@@ -5,7 +5,9 @@ import {
 import { GameClient } from "./network.js";
 import type {
   Conversation,
+  DebugActionDefinition,
   DebugFeedEvent,
+  NpcAutonomyDebugPlan,
   NpcAutonomyDebugState,
   Player,
   PublicPlayer,
@@ -43,6 +45,20 @@ interface DashboardAlert {
   targetConversationId?: number;
   targetNpcId?: string;
 }
+
+interface PlanHistoryEntry {
+  goalId: string;
+  source: string;
+  startedTick: number;
+  endedTick: number | null;
+  outcome: "running" | "completed" | "failed" | "interrupted";
+  failReason?: string;
+  message: string;
+  steps: NpcAutonomyDebugPlan["steps"];
+  reasoning?: string;
+}
+
+const MAX_PLAN_HISTORY = 30;
 
 interface DashboardState {
   connected: boolean;
@@ -82,6 +98,112 @@ let renderScheduled = false;
 const RENDER_THROTTLE_MS = 200;
 let lastRenderTime = 0;
 let pendingThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+let npcDetailHoverLock = false;
+let pendingNpcDetailRefresh = false;
+let lastRenderedNpcDetailId: string | null = null;
+let forceNpcDetailRefresh = false;
+
+// Stash the last known plan per NPC so idle NPCs still show what they just did
+const lastKnownPlans = new Map<string, NpcAutonomyDebugPlan>();
+
+// Action definitions from the server (populated on bootstrap)
+let actionDefs: Record<string, DebugActionDefinition> = {};
+
+// Track NPCs that have died (player_left) so we keep their cards
+const deadNpcIds = new Set<string>();
+// Cache NPC names so dead NPCs still show their name
+const npcNameCache = new Map<string, string>();
+
+// Currently expanded actions (keyed by unique step key, not just actionId)
+const expandedActions = new Set<string>();
+
+// Per-NPC plan history built from debug events + plan snapshots
+const planHistory = new Map<string, PlanHistoryEntry[]>();
+
+function getOrCreateHistory(npcId: string): PlanHistoryEntry[] {
+  let h = planHistory.get(npcId);
+  if (!h) { h = []; planHistory.set(npcId, h); }
+  return h;
+}
+
+function clonePlanSteps(plan?: NpcAutonomyDebugPlan): NpcAutonomyDebugPlan["steps"] {
+  return plan?.steps ? [...plan.steps] : [];
+}
+
+function resolveHistoryPlan(
+  npcId: string,
+  plan?: NpcAutonomyDebugPlan,
+): NpcAutonomyDebugPlan | undefined {
+  return plan ?? lastKnownPlans.get(npcId);
+}
+
+function applyPlanSnapshot(
+  entry: PlanHistoryEntry,
+  plan: NpcAutonomyDebugPlan,
+): void {
+  entry.goalId = plan.goalId;
+  entry.source = plan.source;
+  entry.steps = clonePlanSteps(plan);
+  entry.reasoning = plan.reasoning;
+}
+
+/** Called when we see a plan_started event for an NPC */
+function recordPlanStarted(
+  npcId: string,
+  tick: number,
+  message: string,
+  eventPlan?: NpcAutonomyDebugPlan,
+): void {
+  const h = getOrCreateHistory(npcId);
+  const plan = resolveHistoryPlan(npcId, eventPlan);
+  h.push({
+    goalId: plan?.goalId ?? "unknown",
+    source: plan?.source ?? "unknown",
+    startedTick: tick,
+    endedTick: null,
+    outcome: "running",
+    message,
+    steps: clonePlanSteps(plan),
+    reasoning: plan?.reasoning,
+  });
+  if (h.length > MAX_PLAN_HISTORY) h.splice(0, h.length - MAX_PLAN_HISTORY);
+}
+
+/** Called when we see plan_cleared or plan_failed */
+function recordPlanEnded(
+  npcId: string,
+  tick: number,
+  outcome: "completed" | "failed" | "interrupted",
+  message: string,
+  failReason?: string,
+  eventPlan?: NpcAutonomyDebugPlan,
+): void {
+  const h = getOrCreateHistory(npcId);
+  const plan = resolveHistoryPlan(npcId, eventPlan);
+  // Find the most recent running entry to close
+  const running = [...h].reverse().find((e) => e.outcome === "running");
+  if (running) {
+    running.endedTick = tick;
+    running.outcome = outcome;
+    running.message = message;
+    if (failReason) running.failReason = failReason;
+    if (plan) applyPlanSnapshot(running, plan);
+  } else {
+    // No running entry — create a synthetic one
+    h.push({
+      goalId: plan?.goalId ?? "unknown",
+      source: plan?.source ?? "unknown",
+      startedTick: tick,
+      endedTick: tick,
+      outcome,
+      message,
+      failReason,
+      steps: clonePlanSteps(plan),
+      reasoning: plan?.reasoning,
+    });
+    if (h.length > MAX_PLAN_HISTORY) h.splice(0, h.length - MAX_PLAN_HISTORY);
+  }
+}
 
 // Cache last rendered HTML per section to avoid DOM thrashing / blinking
 const htmlCache = new Map<string, string>();
@@ -150,12 +272,41 @@ function formatPoint(player: PublicPlayer | undefined): string {
   return `${Math.round(player.x)}, ${Math.round(player.y)}`;
 }
 
+function formatNpcPoint(s: NpcAutonomyDebugState, player: PublicPlayer | undefined): string {
+  if (player) {
+    return formatPoint(player);
+  }
+  if (s.lastPosition) {
+    return `${Math.round(s.lastPosition.x)}, ${Math.round(s.lastPosition.y)}`;
+  }
+  return "unknown";
+}
+
 function getPlayer(playerId: string): PublicPlayer | undefined {
   return state.players.get(playerId);
 }
 
 function getPlayerLabel(playerId: string): string {
-  return getPlayer(playerId)?.name ?? playerId;
+  return getPlayer(playerId)?.name
+    ?? state.autonomy.get(playerId)?.name
+    ?? npcNameCache.get(playerId)
+    ?? playerId;
+}
+
+function getNpcDeathSummary(s: NpcAutonomyDebugState): string {
+  if (!s.death) {
+    return "Cause unknown.";
+  }
+  if (s.death.cause === "survival" && s.death.depletedNeed) {
+    return `${s.death.depletedNeed} reached 0.`;
+  }
+  if (s.death.message) {
+    return s.death.message;
+  }
+  if (s.death.cause) {
+    return s.death.cause.replaceAll("_", " ");
+  }
+  return "Cause unknown.";
 }
 
 // ---------------------------------------------------------------------------
@@ -221,13 +372,81 @@ function getNpcSearchBlob(s: NpcAutonomyDebugState): string {
   const p = getPlayer(s.npcId);
   const goal = s.currentPlan?.goalId ?? "";
   const action = s.currentExecution?.actionLabel ?? "";
-  return `${s.npcId} ${p?.name ?? ""} ${goal} ${action}`.toLowerCase();
+  const death = s.death?.message ?? "";
+  return `${s.npcId} ${s.name} ${p?.name ?? ""} ${goal} ${action} ${death}`.toLowerCase();
 }
 
 function needFillClass(value: number): string {
   if (value >= 50) return "good";
   if (value >= 25) return "mid";
   return "low";
+}
+
+// ---------------------------------------------------------------------------
+// Action detail rendering
+// ---------------------------------------------------------------------------
+
+function renderActionDetail(actionId: string): string {
+  const def = actionDefs[actionId];
+  if (!def) return `<div class="action-detail"><div class="action-detail-empty">No definition found for <strong>${escapeHtml(actionId)}</strong></div></div>`;
+
+  const precondEntries = Object.entries(def.preconditions);
+  const effectEntries = Object.entries(def.effects);
+
+  const precondHtml = precondEntries.length > 0
+    ? precondEntries.map(([k, v]) => `<div class="action-predicate"><span class="predicate-key">${escapeHtml(k)}</span> <span class="predicate-op">=</span> <span class="predicate-val">${escapeHtml(String(v))}</span><span class="predicate-desc">${escapeHtml(describeGamePredicate(k, true))}</span></div>`).join("")
+    : '<div class="action-predicate muted">None</div>';
+
+  const effectHtml = effectEntries.length > 0
+    ? effectEntries.map(([k, v]) => `<div class="action-predicate"><span class="predicate-key">${escapeHtml(k)}</span> <span class="predicate-op">\u2192</span> <span class="predicate-val">${escapeHtml(String(v))}</span><span class="predicate-desc">${escapeHtml(describeGamePredicate(k, false))}</span></div>`).join("")
+    : '<div class="action-predicate muted">Dynamic (set by planner)</div>';
+
+  let proximityHtml = "";
+  if (def.proximityRequirement) {
+    const pr = def.proximityRequirement;
+    proximityHtml = `
+      <div class="action-field">
+        <span class="action-field-label">Proximity</span>
+        <span>Must be near <strong>${escapeHtml(pr.target)}</strong> (${escapeHtml(pr.type)}, ${pr.distance ?? 1} tile${(pr.distance ?? 1) !== 1 ? "s" : ""})</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="action-detail">
+      <div class="action-detail-header">${escapeHtml(def.displayName)} <span class="action-detail-id">${escapeHtml(def.id)}</span></div>
+      <div class="action-detail-row">
+        <div class="action-field"><span class="action-field-label">Cost</span><span>${def.cost}</span></div>
+        <div class="action-field"><span class="action-field-label">Duration</span><span>${def.estimatedDurationTicks} ticks (~${(def.estimatedDurationTicks / 20).toFixed(1)}s)</span></div>
+      </div>
+      ${proximityHtml}
+      <div class="action-section-label">Preconditions (what the world must look like)</div>
+      ${precondHtml}
+      <div class="action-section-label">Effects (what changes after)</div>
+      ${effectHtml}
+    </div>
+  `;
+}
+
+/** Map GOAP predicates to human-readable game descriptions */
+function describeGamePredicate(key: string, isPrecondition: boolean): string {
+  const descriptions: Record<string, [string, string]> = {
+    "has_raw_food": ["NPC has raw food in inventory", "Adds raw food to inventory"],
+    "has_cooked_food": ["NPC has cooked food in inventory", "Adds cooked food to inventory"],
+    "near_campfire": ["NPC is next to a campfire", "Moves NPC near a campfire"],
+    "near_berry_bush": ["NPC is next to a berry bush", "Moves NPC near a berry bush"],
+    "near_water_source": ["NPC is next to water", "Moves NPC near water"],
+    "near_pickupable": ["NPC is next to a pickupable item", "Moves NPC near a pickupable"],
+    "near_player": ["NPC is near another player", "Moves NPC near another player"],
+    "near_hostile": ["NPC is near a hostile entity", "Moves NPC near a hostile"],
+    "need_food_satisfied": ["Food need is above threshold", "Satisfies food need"],
+    "need_water_satisfied": ["Water need is above threshold", "Satisfies water need"],
+    "need_social_satisfied": ["Social need is above threshold", "Satisfies social need"],
+    "escaped_hostile": ["NPC has escaped danger", "NPC flees to safety"],
+  };
+  const pair = descriptions[key];
+  if (!pair) return "";
+  return ` \u2014 ${isPrecondition ? pair[0] : pair[1]}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +486,9 @@ function deriveAlerts(): DashboardAlert[] {
   }
 
   for (const s of state.autonomy.values()) {
+    if (s.isDead) {
+      continue;
+    }
     const label = getPlayerLabel(s.npcId);
 
     if (s.currentExecution) {
@@ -356,6 +578,9 @@ function getSortedEvents(): DebugFeedEvent[] {
 
 function syncPlayers(players: readonly Player[]): void {
   state.players = new Map(players.map((p) => [p.id, { ...p }]));
+  for (const p of players) {
+    if (p.isNpc) npcNameCache.set(p.id, p.name);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +608,39 @@ document.querySelectorAll<HTMLElement>(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     switchTab(btn.dataset.tab as TabId);
   });
+});
+
+// Capture conversation selection on pointer down so a live rerender cannot
+// detach the card before the user's click completes.
+dom.convoList.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  const card = (event.target as HTMLElement).closest<HTMLElement>("[data-convo-id]");
+  if (!card) return;
+
+  const convoId = Number(card.dataset.convoId);
+  if (Number.isNaN(convoId) || state.selectedConversationId === convoId) {
+    return;
+  }
+
+  state.selectedConversationId = convoId;
+  scheduleRender(true);
+});
+
+// Capture NPC selection on pointer down so a live rerender cannot detach the
+// card before the user's click completes.
+dom.npcList.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  const card = (event.target as HTMLElement).closest<HTMLElement>("[data-npc-id]");
+  if (!card) return;
+
+  const npcId = card.dataset.npcId;
+  if (!npcId || state.selectedNpcId === npcId) {
+    return;
+  }
+
+  state.selectedNpcId = npcId;
+  expandedActions.clear();
+  scheduleRender(true);
 });
 
 // ---------------------------------------------------------------------------
@@ -416,6 +674,7 @@ function focusConversation(convoId: number): void {
 function focusNpc(npcId: string): void {
   dom.npcSearch.value = "";
   state.selectedNpcId = npcId;
+  expandedActions.clear();
   switchTab("npcs"); // already calls scheduleRender(true)
 }
 
@@ -483,17 +742,12 @@ function renderConversations(): void {
     .filter((c) => matchesConversationFilter(c, state.conversationFilter))
     .sort((a, b) => getConversationLastActivityTick(b) - getConversationLastActivityTick(a) || b.id - a.id);
 
-  // Auto-select if needed
+  // Clear selection only when the conversation no longer exists in state
   if (
-    state.selectedConversationId === null ||
+    state.selectedConversationId !== null &&
     !state.conversations.some((c) => c.id === state.selectedConversationId)
   ) {
-    state.selectedConversationId = filtered[0]?.id ?? null;
-  } else if (
-    filtered.length > 0 &&
-    !filtered.some((c) => c.id === state.selectedConversationId)
-  ) {
-    state.selectedConversationId = filtered[0].id;
+    state.selectedConversationId = null;
   }
 
   // Group into active / ended
@@ -515,18 +769,8 @@ function renderConversations(): void {
     listHtml = '<div class="empty-state">No conversations match your search.</div>';
   }
 
-  const listChanged = setHtml(dom.convoList, "convo-list", listHtml);
+  setHtml(dom.convoList, "convo-list", listHtml);
   renderConvoDetail();
-
-  // Only re-bind click handlers when DOM actually changed
-  if (listChanged) {
-    dom.convoList.querySelectorAll<HTMLElement>("[data-convo-id]").forEach((card) => {
-      card.addEventListener("click", () => {
-        state.selectedConversationId = Number(card.dataset.convoId);
-        scheduleRender(true);
-      });
-    });
-  }
 }
 
 function renderConvoCard(c: Conversation): string {
@@ -619,7 +863,7 @@ function renderConvoDetail(): void {
 // Render: NPCs
 // ---------------------------------------------------------------------------
 
-function renderNpcs(stalledNpcIds: ReadonlySet<string>): void {
+function renderNpcs(stalledNpcIds: ReadonlySet<string>, alerts: readonly DashboardAlert[]): void {
   const search = dom.npcSearch.value.trim().toLowerCase();
 
   // Always sort alphabetically for stable ordering
@@ -627,11 +871,9 @@ function renderNpcs(stalledNpcIds: ReadonlySet<string>): void {
     .filter((s) => !search || getNpcSearchBlob(s).includes(search))
     .sort((a, b) => collator.compare(getPlayerLabel(a.npcId), getPlayerLabel(b.npcId)));
 
-  // Auto-select
-  if (!state.selectedNpcId || !state.autonomy.has(state.selectedNpcId)) {
-    state.selectedNpcId = filtered[0]?.npcId ?? null;
-  } else if (filtered.length > 0 && !filtered.some((s) => s.npcId === state.selectedNpcId)) {
-    state.selectedNpcId = filtered[0].npcId;
+  // Clear selection only when the NPC no longer exists in state
+  if (state.selectedNpcId && !state.autonomy.has(state.selectedNpcId)) {
+    state.selectedNpcId = null;
   }
 
   let listHtml: string;
@@ -641,17 +883,8 @@ function renderNpcs(stalledNpcIds: ReadonlySet<string>): void {
     listHtml = filtered.map((s) => renderNpcCard(s, stalledNpcIds)).join("");
   }
 
-  const listChanged = setHtml(dom.npcList, "npc-list", listHtml);
-  renderNpcDetail(stalledNpcIds);
-
-  if (listChanged) {
-    dom.npcList.querySelectorAll<HTMLElement>("[data-npc-id]").forEach((card) => {
-      card.addEventListener("click", () => {
-        state.selectedNpcId = card.dataset.npcId!;
-        scheduleRender(true);
-      });
-    });
-  }
+  setHtml(dom.npcList, "npc-list", listHtml);
+  renderNpcDetail(stalledNpcIds, alerts);
 }
 
 function renderNpcCard(s: NpcAutonomyDebugState, stalledNpcIds: ReadonlySet<string>): string {
@@ -659,8 +892,12 @@ function renderNpcCard(s: NpcAutonomyDebugState, stalledNpcIds: ReadonlySet<stri
   const selected = state.selectedNpcId === s.npcId;
   const stalled = stalledNpcIds.has(s.npcId);
 
+  const isDead = s.isDead || deadNpcIds.has(s.npcId);
+
   let statusChip = "";
-  if (stalled) {
+  if (isDead) {
+    statusChip = '<span class="chip dead">Dead</span>';
+  } else if (stalled) {
     statusChip = '<span class="chip danger">Stalled</span>';
   } else if (s.currentExecution) {
     statusChip = '<span class="chip active">Executing</span>';
@@ -676,34 +913,65 @@ function renderNpcCard(s: NpcAutonomyDebugState, stalledNpcIds: ReadonlySet<stri
     ? `<span class="chip${s.currentPlan.source === "llm" ? " llm" : ""}">${escapeHtml(s.currentPlan.source)}</span>`
     : "";
 
+  // Show current plan, or fall back to last known plan for idle NPCs
+  const activePlan = s.currentPlan;
+  const displayPlan = activePlan ?? lastKnownPlans.get(s.npcId) ?? null;
+  const isStale = !activePlan && displayPlan !== null;
+
+  let planHtml = "";
+  if (displayPlan?.steps.length) {
+    const label = isStale ? "Last plan" : "Plan";
+    const goalLabel = escapeHtml(displayPlan.goalId.replaceAll("_", " "));
+    planHtml = `<div class="card-plan${isStale ? " stale" : ""}">
+      <div class="card-plan-label">${label}: ${goalLabel}</div>
+      ${displayPlan.steps.map((step) =>
+        `<div class="card-step${!isStale && step.isCurrent ? " current" : ""}"><span class="card-step-num">${step.index + 1}</span>${escapeHtml(step.actionLabel)}${step.targetPosition ? ` \u2192 ${step.targetPosition.x},${step.targetPosition.y}` : ""}</div>`
+      ).join("")}</div>`;
+  }
+
+  const deathHtml = isDead && s.death
+    ? `<div class="inventory-text">Died: ${escapeHtml(getNpcDeathSummary(s))}</div>`
+    : "";
+
   return `
     <div class="list-card${selected ? " selected" : ""}" data-npc-id="${escapeHtml(s.npcId)}">
       <div class="list-card-header">
-        <span class="list-card-title">${escapeHtml(player?.name ?? s.npcId)}</span>
+        <span class="list-card-title">${escapeHtml(s.name ?? player?.name ?? npcNameCache.get(s.npcId) ?? s.npcId)}</span>
         ${statusChip}
       </div>
       <div class="list-card-meta">
-        ${escapeHtml(player?.state ?? "unknown")} \u2022 ${escapeHtml(formatPoint(player))}${s.currentPlan ? ` \u2022 ${escapeHtml(s.currentPlan.goalId.replaceAll("_", " "))}` : ""}
+        ${isDead ? "dead" : escapeHtml(s.lastState ?? player?.state ?? "unknown")} \u2022 ${escapeHtml(formatNpcPoint(s, player))}${activePlan ? ` \u2022 ${escapeHtml(activePlan.goalId.replaceAll("_", " "))}` : ""}
       </div>
       ${sourceChip ? `<div class="list-card-chips">${sourceChip}</div>` : ""}
+      ${deathHtml}
+      ${planHtml}
     </div>
   `;
 }
 
-function renderNpcDetail(stalledNpcIds: ReadonlySet<string>): void {
+function renderNpcDetail(stalledNpcIds: ReadonlySet<string>, alerts: readonly DashboardAlert[]): void {
   const s = state.selectedNpcId ? state.autonomy.get(state.selectedNpcId) : undefined;
   if (!s) {
+    lastRenderedNpcDetailId = null;
+    pendingNpcDetailRefresh = false;
+    forceNpcDetailRefresh = false;
     setHtml(dom.npcDetail, "npc-detail", '<div class="detail-empty">Select an NPC</div>');
+    return;
+  }
+
+  if (npcDetailHoverLock && !forceNpcDetailRefresh && lastRenderedNpcDetailId === s.npcId) {
+    pendingNpcDetailRefresh = true;
     return;
   }
 
   const player = getPlayer(s.npcId);
   const actionAge = s.currentExecution ? state.tick - s.currentExecution.startedAtTick : null;
+  const isDead = s.isDead || deadNpcIds.has(s.npcId);
 
   const metrics = [
-    { label: "Position", value: formatPoint(player) },
-    { label: "State", value: player?.state ?? "unknown" },
-    { label: "Plan Source", value: s.currentPlan?.source ?? "idle" },
+    { label: "Position", value: formatNpcPoint(s, player) },
+    { label: "State", value: isDead ? "dead" : s.lastState ?? player?.state ?? "unknown" },
+    { label: "Plan Source", value: s.currentPlan?.source ?? (isDead ? "dead" : "idle") },
     { label: "Current Action", value: s.currentExecution?.actionLabel ?? "none" },
     { label: "Action Age", value: typeof actionAge === "number" ? formatAge(actionAge) : "\u2014" },
     { label: "Failures", value: String(s.consecutivePlanFailures) },
@@ -726,17 +994,55 @@ function renderNpcDetail(stalledNpcIds: ReadonlySet<string>): void {
     `)
     .join("");
 
+  // Stalled reasons: filter alerts targeting this NPC
+  const npcAlerts = alerts.filter((a) => a.targetNpcId === s.npcId);
+  let stalledHtml = "";
+  if (npcAlerts.length > 0) {
+    stalledHtml = `
+      <div class="stalled-section">
+        <div class="section-label">Stalled \u2014 Why?</div>
+        ${npcAlerts.map((a) => `
+          <div class="stalled-reason ${a.severity}">
+            <div class="stalled-reason-title">${escapeHtml(a.title)}</div>
+            <div class="stalled-reason-msg">${escapeHtml(a.message)}</div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  const deathHtml = isDead && s.death
+    ? `
+      <div class="stalled-section">
+        <div class="section-label">Death</div>
+        <div class="stalled-reason danger">
+          <div class="stalled-reason-title">${escapeHtml(formatTick(s.death.tick))}</div>
+          <div class="stalled-reason-msg">${escapeHtml(getNpcDeathSummary(s))}</div>
+        </div>
+      </div>
+    `
+    : "";
+
+  const detailPlan = s.currentPlan ?? lastKnownPlans.get(s.npcId) ?? null;
+  const detailPlanStale = !s.currentPlan && detailPlan !== null;
+
   let stepsHtml = "";
-  if (s.currentPlan?.steps.length) {
+  if (detailPlan?.steps.length) {
+    const stepsLabel = detailPlanStale
+      ? `Last Plan: ${escapeHtml(detailPlan.goalId.replaceAll("_", " "))}`
+      : "Plan Steps";
     stepsHtml = `
-      <div class="plan-steps">
-        <div class="detail-section-label">Plan Steps</div>
-        ${s.currentPlan.steps.map((step) => `
-          <div class="step-item${step.isCurrent ? " current" : ""}">
+      <div class="plan-steps${detailPlanStale ? " stale" : ""}">
+        <div class="detail-section-label">${stepsLabel}</div>
+        ${detailPlan.steps.map((step) => {
+          const stepKey = `plan-${step.index}-${step.actionId}`;
+          return `
+          <div class="step-item clickable${!detailPlanStale && step.isCurrent ? " current" : ""}" data-step-key="${escapeHtml(stepKey)}" data-action-id="${escapeHtml(step.actionId)}">
             <span class="step-num">${step.index + 1}</span>
             <span>${escapeHtml(step.actionLabel)}${step.targetPosition ? ` \u2192 ${step.targetPosition.x},${step.targetPosition.y}` : ""}</span>
           </div>
-        `).join("")}
+          ${expandedActions.has(stepKey) ? renderActionDetail(step.actionId) : ""}
+        `;}).join("")}
       </div>
     `;
   }
@@ -746,8 +1052,62 @@ function renderNpcDetail(stalledNpcIds: ReadonlySet<string>): void {
     ? `<div class="inventory-text">Inventory: ${escapeHtml(inventoryEntries.map(([item, count]) => `${item} \u00d7${count}`).join(", "))}</div>`
     : '<div class="inventory-text">Inventory empty.</div>';
 
+  // Plan history timeline
+  const history = planHistory.get(s.npcId) ?? [];
+  const reversedHistory = [...history].reverse(); // newest first
+  let historyHtml = "";
+  if (reversedHistory.length > 0) {
+    const failCount = reversedHistory.filter((e) => e.outcome === "failed").length;
+    const retryCount = reversedHistory.filter((e, i) => {
+      if (e.outcome !== "failed" || i >= reversedHistory.length - 1) return false;
+      // A retry is when the next entry (older) also targeted the same goal and failed
+      return reversedHistory[i + 1]?.goalId === e.goalId;
+    }).length;
+    const summaryParts = [pluralize(reversedHistory.length, "plan")];
+    if (failCount > 0) summaryParts.push(`${failCount} failed`);
+    if (retryCount > 0) summaryParts.push(`${retryCount} ${retryCount === 1 ? "retry" : "retries"}`);
+
+    historyHtml = `
+      <div class="plan-history-section">
+        <div class="section-label">Plan History (${summaryParts.join(" \u2022 ")})</div>
+        <div class="plan-history-timeline">
+          ${reversedHistory.map((entry, hi) => {
+            const outcomeClass = entry.outcome === "completed" ? "completed"
+              : entry.outcome === "failed" ? "failed"
+              : entry.outcome === "interrupted" ? "interrupted"
+              : "running";
+            const duration = entry.endedTick !== null
+              ? formatAge(entry.endedTick - entry.startedTick)
+              : "in progress";
+            return `
+              <div class="history-entry ${outcomeClass}">
+                <div class="history-dot"></div>
+                <div class="history-content">
+                  <div class="history-header">
+                    <span class="history-goal">${escapeHtml(entry.goalId.replaceAll("_", " "))}</span>
+                    <span class="chip ${entry.source === "llm" ? "llm" : entry.source === "emergency" ? "danger" : ""}">${escapeHtml(entry.source)}</span>
+                    <span class="chip ${outcomeClass}">${escapeHtml(entry.outcome)}</span>
+                  </div>
+                  <div class="history-meta">${escapeHtml(formatTick(entry.startedTick))}${entry.endedTick !== null ? ` \u2192 ${escapeHtml(formatTick(entry.endedTick))}` : ""} \u2022 ${escapeHtml(duration)}</div>
+                  ${entry.outcome === "failed" && entry.failReason ? `<div class="history-fail-reason">${escapeHtml(entry.failReason)}</div>` : ""}
+                  ${entry.reasoning ? `<div class="history-reasoning">${escapeHtml(entry.reasoning)}</div>` : ""}
+                  ${entry.steps.length > 0 ? `<div class="history-steps">${entry.steps.map((step, si) => {
+                    const stepKey = `hist-${hi}-${si}-${step.actionId}`;
+                    return `<span class="history-step-chip clickable" data-step-key="${escapeHtml(stepKey)}" data-action-id="${escapeHtml(step.actionId)}">${escapeHtml(step.actionLabel)}</span>${expandedActions.has(stepKey) ? renderActionDetail(step.actionId) : ""}`;
+                  }).join("")}</div>` : ""}
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    `;
+  }
+
   let headerChips = "";
-  if (s.currentPlan) {
+  if (isDead) {
+    headerChips += '<span class="chip dead">Dead</span>';
+  } else if (s.currentPlan) {
     headerChips += `<span class="chip ${s.currentPlan.source === "llm" ? "llm" : ""}">${escapeHtml(s.currentPlan.source)} plan</span>`;
   } else {
     headerChips += '<span class="chip ended">idle</span>';
@@ -762,11 +1122,16 @@ function renderNpcDetail(stalledNpcIds: ReadonlySet<string>): void {
   setHtml(dom.npcDetail, "npc-detail", `
     <div class="detail-header">
       <div>
-        <div class="detail-title">${escapeHtml(player?.name ?? s.npcId)}</div>
+        <div class="detail-title">${escapeHtml(s.name ?? player?.name ?? s.npcId)}</div>
         <div class="detail-subtitle">${escapeHtml(s.npcId)}</div>
       </div>
-      <div class="detail-chips">${headerChips}</div>
+      <div class="detail-chips">
+        ${headerChips}
+        ${expandedActions.size > 0 ? '<button class="collapse-all-btn" id="collapse-all-actions">Collapse all</button>' : ""}
+      </div>
     </div>
+    ${deathHtml}
+    ${stalledHtml}
     <div class="metrics">
       ${metrics.map((m) => `
         <div class="metric">
@@ -782,7 +1147,11 @@ function renderNpcDetail(stalledNpcIds: ReadonlySet<string>): void {
     ${s.currentPlan?.reasoning ? `<div class="inventory-text">${escapeHtml(s.currentPlan.reasoning)}</div>` : ""}
     ${stepsHtml}
     ${inventoryHtml}
+    ${historyHtml}
   `);
+  lastRenderedNpcDetailId = s.npcId;
+  pendingNpcDetailRefresh = false;
+  forceNpcDetailRefresh = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -878,7 +1247,7 @@ function render(): void {
       renderConversations();
       break;
     case "npcs":
-      renderNpcs(stalledNpcIds);
+      renderNpcs(stalledNpcIds, alerts);
       break;
     case "activity":
       renderActivity(alerts);
@@ -892,6 +1261,91 @@ function render(): void {
 
 dom.convoSearch.addEventListener("input", () => scheduleRender(true));
 dom.npcSearch.addEventListener("input", () => scheduleRender(true));
+
+// Single delegated handler for action detail expansion (bound once, never re-bound)
+function handleNpcDetailInteraction(target: HTMLElement): boolean {
+  if (target.closest("#collapse-all-actions")) {
+    expandedActions.clear();
+    htmlCache.delete("npc-detail");
+    forceNpcDetailRefresh = true;
+    scheduleRender(true);
+    return true;
+  }
+
+  const stepEl = target.closest<HTMLElement>("[data-step-key]");
+  if (!stepEl) {
+    return false;
+  }
+
+  const key = stepEl.dataset.stepKey;
+  if (!key) {
+    return false;
+  }
+
+  if (expandedActions.has(key)) {
+    expandedActions.delete(key);
+  } else {
+    expandedActions.add(key);
+  }
+  htmlCache.delete("npc-detail");
+  forceNpcDetailRefresh = true;
+  scheduleRender(true);
+  return true;
+}
+
+function isNpcDetailInteractiveTarget(target: EventTarget | null): target is HTMLElement {
+  return target instanceof HTMLElement
+    && Boolean(target.closest("[data-step-key], #collapse-all-actions"));
+}
+
+function releaseNpcDetailHoverLock(): void {
+  if (!npcDetailHoverLock) {
+    return;
+  }
+  npcDetailHoverLock = false;
+  if (pendingNpcDetailRefresh) {
+    htmlCache.delete("npc-detail");
+    scheduleRender(true);
+  }
+}
+
+dom.npcDetail.addEventListener("pointerover", (event) => {
+  if (!isNpcDetailInteractiveTarget(event.target)) {
+    return;
+  }
+  npcDetailHoverLock = true;
+});
+
+dom.npcDetail.addEventListener("pointerout", (event) => {
+  if (!isNpcDetailInteractiveTarget(event.target)) {
+    return;
+  }
+  if (isNpcDetailInteractiveTarget(event.relatedTarget)) {
+    return;
+  }
+  releaseNpcDetailHoverLock();
+});
+
+dom.npcDetail.addEventListener("pointerleave", () => {
+  releaseNpcDetailHoverLock();
+});
+
+// Capture NPC detail interactions on pointer down so live rerenders cannot
+// detach the target before click dispatch.
+dom.npcDetail.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  pendingNpcDetailRefresh = false;
+  handleNpcDetailInteraction(event.target as HTMLElement);
+});
+
+// Preserve keyboard activation for the real button in the detail header.
+dom.npcDetail.addEventListener("click", (event) => {
+  const mouseEvent = event as MouseEvent;
+  if (mouseEvent.detail !== 0) {
+    return;
+  }
+  handleNpcDetailInteraction(event.target as HTMLElement);
+});
 
 // ---------------------------------------------------------------------------
 // WebSocket
@@ -909,17 +1363,59 @@ function handleMessage(message: ServerMessage): void {
     case "player_joined":
     case "player_update":
       state.players.set(message.data.id, { ...message.data });
+      if (message.data.isNpc) npcNameCache.set(message.data.id, message.data.name);
       break;
     case "player_left":
+      // Keep autonomy state for dead NPCs so their card stays visible
+      if (state.autonomy.has(message.data.id)) {
+        deadNpcIds.add(message.data.id);
+      }
       state.players.delete(message.data.id);
-      state.autonomy.delete(message.data.id);
       break;
     case "debug_bootstrap":
       state.tick = message.data.tick;
       syncPlayers(message.data.players);
       state.conversations = [...message.data.conversations];
       state.autonomy = new Map(Object.entries(message.data.autonomyStates));
+      lastKnownPlans.clear();
+      deadNpcIds.clear();
+      for (const [npcId, s] of state.autonomy) {
+        npcNameCache.set(npcId, s.name);
+        if (s.currentPlan) lastKnownPlans.set(npcId, s.currentPlan);
+        if (s.isDead) deadNpcIds.add(npcId);
+      }
+      actionDefs = message.data.actionDefinitions ?? {};
       state.events = [...message.data.recentEvents];
+      // Reset session state on fresh bootstrap
+      planHistory.clear();
+      for (const ev of message.data.recentEvents) {
+        if (ev.subjectType !== "npc") continue;
+        if (ev.plan) {
+          lastKnownPlans.set(ev.subjectId, ev.plan);
+        }
+        if (ev.type === "plan_started") {
+          recordPlanStarted(ev.subjectId, ev.tick, ev.message, ev.plan);
+        } else if (ev.type === "plan_cleared") {
+          const outcome = ev.severity === "info" ? "completed" : "interrupted";
+          recordPlanEnded(
+            ev.subjectId,
+            ev.tick,
+            outcome,
+            ev.message,
+            undefined,
+            ev.plan,
+          );
+        } else if (ev.type === "plan_failed") {
+          recordPlanEnded(
+            ev.subjectId,
+            ev.tick,
+            "failed",
+            ev.message,
+            ev.message,
+            ev.plan,
+          );
+        }
+      }
       break;
     case "debug_conversation_upsert":
       state.conversations = upsertConversationSnapshot(
@@ -931,11 +1427,50 @@ function handleMessage(message: ServerMessage): void {
       state.conversations = appendConversationMessage(state.conversations, message.data);
       break;
     case "debug_autonomy_upsert":
+      npcNameCache.set(message.data.npcId, message.data.name);
+      if (message.data.currentPlan) {
+        lastKnownPlans.set(message.data.npcId, message.data.currentPlan);
+      }
+      if (message.data.isDead) {
+        deadNpcIds.add(message.data.npcId);
+      } else {
+        deadNpcIds.delete(message.data.npcId);
+      }
       state.autonomy.set(message.data.npcId, message.data);
       break;
-    case "debug_event":
+    case "debug_event": {
       pushEvent(message.data);
+      const ev = message.data;
+      if (ev.subjectType === "npc") {
+        if (ev.plan) {
+          lastKnownPlans.set(ev.subjectId, ev.plan);
+        }
+        if (ev.type === "plan_started") {
+          recordPlanStarted(ev.subjectId, ev.tick, ev.message, ev.plan);
+        } else if (ev.type === "plan_cleared") {
+          // Distinguish completed vs interrupted by severity
+          const outcome = ev.severity === "info" ? "completed" : "interrupted";
+          recordPlanEnded(
+            ev.subjectId,
+            ev.tick,
+            outcome,
+            ev.message,
+            undefined,
+            ev.plan,
+          );
+        } else if (ev.type === "plan_failed") {
+          recordPlanEnded(
+            ev.subjectId,
+            ev.tick,
+            "failed",
+            ev.message,
+            ev.message,
+            ev.plan,
+          );
+        }
+      }
       break;
+    }
     case "error":
       pushEvent({
         id: nextSyntheticEventId--,
@@ -951,11 +1486,14 @@ function handleMessage(message: ServerMessage): void {
     default:
       break;
   }
-  // Bootstrap and conversation events render immediately; ticks are throttled
+  // Keep the selected detail pane responsive, but throttle unrelated conversation
+  // updates so new conversations do not jolt the current selection view.
   const isImmediate = message.type === "debug_bootstrap"
-    || message.type === "debug_conversation_upsert"
-    || message.type === "debug_conversation_message"
-    || message.type === "error";
+    || message.type === "error"
+    || (message.type === "debug_conversation_upsert"
+      && message.data.id === state.selectedConversationId)
+    || (message.type === "debug_conversation_message"
+      && message.data.convoId === state.selectedConversationId);
   scheduleRender(isImmediate);
 }
 
