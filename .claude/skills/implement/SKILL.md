@@ -79,9 +79,11 @@ If tests fail, fix the issues and re-run until all tests pass. Do not proceed un
 
 ### Step 5: Full QA Pass
 
-Run the `/qa` skill to perform the full QA suite — unit tests, type checking, lint, movement harness invariants, live scenario play testing with screenshots, and log analysis.
+Delegate final verification to the `senior-qa-tester` subagent. Its job is to run the mandatory ship-readiness QA pass after implementation — automated checks, risk-based runtime verification, and a clear verdict.
 
-This is mandatory. Do not skip this step. The QA report determines whether the feature is ready to ship.
+If subagents are unavailable, run the equivalent `/qa` skill manually and report that the QA handoff was performed without delegation.
+
+This is mandatory. Do not skip this step. A feature is not complete until the QA handoff finishes with a verdict.
 
 ### Step 6: Report
 

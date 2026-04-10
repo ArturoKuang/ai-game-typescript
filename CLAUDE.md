@@ -62,11 +62,12 @@ When implementing features or fixing bugs, follow this workflow:
 4. **Implement** -- write the code changes
 5. **Add parity or invariant coverage when relevant** -- use client/server parity tests and `validateInvariants` for movement bugs
 6. **Run tests** -- `docker compose exec game-server npx vitest run` or `cd server && npm test` -- fix until green
-7. **Verify live end-to-end** -- always run at least one E2E check of the finished feature against a running server using the real interface involved (WebSocket, debug API, movement harness, or browser flow)
-8. **Inspect live state** -- check the result via debug API (`GET /api/debug/map`, `GET /api/debug/state`, logs, or conversation endpoints)
-9. **Report** -- show test results, the repro artifact used, and an ASCII map snapshot. If E2E verification was blocked, state the blocker explicitly instead of claiming completion.
+7. **Hand off to QA** -- run the `senior-qa-tester` subagent for the completed feature so a separate verifier owns the final ship/no-ship decision
+8. **Verify live end-to-end** -- the QA handoff must include at least one E2E check of the finished feature against a running server using the real interface involved (WebSocket, debug API, movement harness, or browser flow)
+9. **Inspect live state** -- check the result via debug API (`GET /api/debug/map`, `GET /api/debug/state`, logs, or conversation endpoints)
+10. **Report** -- show test results, the repro artifact used, the QA verdict, and an ASCII map snapshot. If E2E verification was blocked, state the blocker explicitly instead of claiming completion.
 
-Before committing, always run tests and perform at least one live end-to-end verification of the completed feature.
+Before committing, always run tests, hand the change to `senior-qa-tester`, and perform at least one live end-to-end verification of the completed feature.
 
 ## Tech Stack
 
@@ -140,7 +141,7 @@ Bad test smell:
 
 Completion rule:
 
-- Feature work is not complete until it has both automated test coverage and at least one live end-to-end verification through the real runtime path it affects.
+- Feature work is not complete until `senior-qa-tester` has reviewed it and it has both automated test coverage and at least one live end-to-end verification through the real runtime path it affects.
 - For gameplay, NPC, WebSocket, persistence, or UI behavior, prefer a running server check over unit-only validation.
 - If the change touches Docker, startup/bootstrap code, filesystem paths, environment wiring, or the normal `npm run dev` flow, the live verification must include the Docker path (`docker compose ...` or `npm run dev`), not just host-mode startup.
 - If an end-to-end check cannot be run, stop and report the exact blocker.
@@ -178,7 +179,7 @@ The debug API is mounted at `/api/debug/` and is the primary interface for obser
 - `POST /say` -- send a message (`{ "playerId", "convoId", "content" }`)
 - `POST /end-convo` -- end a conversation (`{ "convoId" }`)
 - `POST /reset` -- clear all game state
-- `POST /scenario` -- load a preset (`{ "name": "crowded_town" }`)
+- `POST /scenario` -- load a preset (`{ "name": "founding_band" }`)
 - `POST /mode` -- switch mode (`{ "mode": "realtime" }` or `"stepped"`)
 - `POST /memories` -- create a memory directly
 - `POST /remember-convo` -- generate memories for both conversation participants
