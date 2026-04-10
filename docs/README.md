@@ -1,7 +1,7 @@
 # Documentation Index
 
-This folder only tracks docs that describe the current codebase. Stale design
-notes and speculative pages were removed so the remaining set can stay useful.
+This folder tracks docs that describe the current codebase, plus a small set
+of design notes that still guide in-progress work.
 
 If a behavior is not covered here, the source of truth is the code in
 `client/`, `server/src/`, and `data/`.
@@ -39,6 +39,18 @@ If a behavior is not covered here, the source of truth is the code in
 - [Debugging workflow](debugging-workflow.md): recommended bug-repro loop for
   movement and simulation issues.
 
+## Design Notes
+
+These pages are partly aspirational. They mix shipped behavior with direction
+for in-progress systems, so read them as context rather than API reference.
+
+- [Civilization design](civilization-design.md): long-form NPC redesign toward
+  a primordial civilization-building simulation. Includes a Current State
+  section describing what already ships.
+- [Art and UI redesign spec](art-redesign-spec.md): art direction pass for a
+  cohesive primordial aesthetic, with implementation notes tracking which
+  phases have landed.
+
 ## Quick File Navigation
 
 | File | What it does | Doc page |
@@ -56,4 +68,5 @@ If a behavior is not covered here, the source of truth is the code in
 
 - Prefer stable behavior over exact counts when writing docs.
 - Call out caveats when a route or workflow bypasses the normal runtime path.
-- Keep docs scoped to shipped behavior, not planned systems.
+- Keep reference pages scoped to shipped behavior. Direction for unshipped
+  work belongs under Design Notes and must mark what is already landed.
