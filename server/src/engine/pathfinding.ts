@@ -5,6 +5,7 @@
  * position keys to avoid string allocation. The heuristic is Manhattan
  * distance (admissible for 4-directional movement with unit cost).
  */
+import { manhattanDistance } from "./spatial.js";
 import type { Position } from "./types.js";
 import type { World } from "./world.js";
 
@@ -20,10 +21,6 @@ interface Node {
   f: number;
   /** Previous node in the shortest path; null for the start node. Followed to reconstruct the path. */
   parent: Node | null;
-}
-
-function manhattan(a: Position, b: Position): number {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
 /** Encode (x, y) as a single integer key to avoid string allocation. */
@@ -49,7 +46,10 @@ class MinHeap {
     const { data } = this;
     if (data.length === 0) return undefined;
     const top = data[0];
-    const last = data.pop()!;
+    const last = data.pop();
+    if (!last) {
+      return top;
+    }
     if (data.length > 0) {
       data[0] = last;
       this.siftDown(0);
@@ -59,26 +59,28 @@ class MinHeap {
 
   private bubbleUp(i: number): void {
     const { data } = this;
-    while (i > 0) {
-      const parent = (i - 1) >> 1;
-      if (data[i].f >= data[parent].f) break;
-      [data[i], data[parent]] = [data[parent], data[i]];
-      i = parent;
+    let index = i;
+    while (index > 0) {
+      const parent = (index - 1) >> 1;
+      if (data[index].f >= data[parent].f) break;
+      [data[index], data[parent]] = [data[parent], data[index]];
+      index = parent;
     }
   }
 
   private siftDown(i: number): void {
     const { data } = this;
     const n = data.length;
+    let index = i;
     while (true) {
-      let smallest = i;
-      const left = 2 * i + 1;
-      const right = 2 * i + 2;
+      let smallest = index;
+      const left = 2 * index + 1;
+      const right = 2 * index + 2;
       if (left < n && data[left].f < data[smallest].f) smallest = left;
       if (right < n && data[right].f < data[smallest].f) smallest = right;
-      if (smallest === i) break;
-      [data[i], data[smallest]] = [data[smallest], data[i]];
-      i = smallest;
+      if (smallest === index) break;
+      [data[index], data[smallest]] = [data[smallest], data[index]];
+      index = smallest;
     }
   }
 }
@@ -110,8 +112,8 @@ export function findPath(
     x: start.x,
     y: start.y,
     g: 0,
-    h: manhattan(start, goal),
-    f: manhattan(start, goal),
+    h: manhattanDistance(start, goal),
+    f: manhattanDistance(start, goal),
     parent: null,
   };
   open.push(startNode);
@@ -121,7 +123,10 @@ export function findPath(
   bestG.set(posKey(start.x, start.y, height), 0);
 
   while (open.size > 0) {
-    const current = open.pop()!;
+    const current = open.pop();
+    if (!current) {
+      break;
+    }
 
     // Reached goal
     if (current.x === goal.x && current.y === goal.y) {
@@ -142,7 +147,7 @@ export function findPath(
       if (existing !== undefined && g >= existing) continue;
 
       bestG.set(nKey, g);
-      const h = manhattan(neighbor, goal);
+      const h = manhattanDistance(neighbor, goal);
       open.push({
         x: neighbor.x,
         y: neighbor.y,

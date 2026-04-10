@@ -19,10 +19,6 @@ const RECENCY_DECAY = 0.99;
 const REFLECTION_THRESHOLD = 50;
 /** Minimum ticks between updating a memory's last-accessed timestamp */
 const MEMORY_ACCESS_THROTTLE = 30;
-/** Number of recent messages used as the memory retrieval query */
-const MEMORY_CONTEXT_MESSAGES = 4;
-/** Maximum related memory IDs attached to a reflection */
-const MAX_RELATED_MEMORIES = 4;
 
 export class MemoryManager {
   constructor(

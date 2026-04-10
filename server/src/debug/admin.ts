@@ -1,7 +1,12 @@
 import type { Pool } from "pg";
 import type { Conversation, Message } from "../engine/conversation.js";
 import type { GameLoop } from "../engine/gameLoop.js";
-import type { Orientation, Player, Position } from "../engine/types.js";
+import type {
+  Command,
+  Orientation,
+  Player,
+  Position,
+} from "../engine/types.js";
 import type { ScenarioDef } from "./scenarios.js";
 
 export class DebugRouteError extends Error {
@@ -46,7 +51,7 @@ export class DebugGameAdmin {
       throw new DebugRouteError(400, `Player ${params.id} already exists`);
     }
 
-    this.game.enqueue({
+    this.enqueueAndFlush({
       type: "spawn",
       playerId: params.id,
       data: {
@@ -59,7 +64,6 @@ export class DebugGameAdmin {
         speed: params.speed,
       },
     });
-    this.game.processPendingCommands();
 
     const player = this.game.getPlayer(params.id);
     if (!player) {
@@ -73,12 +77,11 @@ export class DebugGameAdmin {
   movePlayer(playerId: string, x: number, y: number): Position[] {
     this.requirePlayer(playerId);
 
-    this.game.enqueue({
+    this.enqueueAndFlush({
       type: "move_to",
       playerId,
       data: { x, y },
     });
-    this.game.processPendingCommands();
 
     const player = this.requirePlayer(playerId);
     if (!player.path || player.targetX !== x || player.targetY !== y) {
@@ -101,7 +104,10 @@ export class DebugGameAdmin {
     return this.requirePlayer(playerId);
   }
 
-  async loadScenario(name: string, scenario: ScenarioDef): Promise<{
+  async loadScenario(
+    name: string,
+    scenario: ScenarioDef,
+  ): Promise<{
     ok: true;
     scenario: string;
     playerCount: number;
@@ -131,23 +137,32 @@ export class DebugGameAdmin {
     this.requirePlayer(player1Id);
     this.requirePlayer(player2Id);
     if (player1Id === player2Id) {
-      throw new DebugRouteError(400, "Cannot start a conversation with yourself");
+      throw new DebugRouteError(
+        400,
+        "Cannot start a conversation with yourself",
+      );
     }
     if (this.game.conversations.getPlayerConversation(player1Id)) {
-      throw new DebugRouteError(400, "That player is already in a conversation");
+      throw new DebugRouteError(
+        400,
+        "That player is already in a conversation",
+      );
     }
     if (this.game.conversations.getPlayerConversation(player2Id)) {
-      throw new DebugRouteError(400, "That player is already in a conversation");
+      throw new DebugRouteError(
+        400,
+        "That player is already in a conversation",
+      );
     }
 
-    this.game.enqueue({
+    this.enqueueAndFlush({
       type: "start_convo",
       playerId: player1Id,
       data: { targetId: player2Id },
     });
-    this.game.processPendingCommands();
 
-    const conversation = this.game.conversations.getPlayerConversation(player1Id);
+    const conversation =
+      this.game.conversations.getPlayerConversation(player1Id);
     if (!conversation || conversation.player2Id !== player2Id) {
       throw new DebugRouteError(400, "Failed to start conversation");
     }
@@ -158,12 +173,11 @@ export class DebugGameAdmin {
   endConversation(convoId: number): Conversation {
     const conversation = this.requireConversation(convoId);
 
-    this.game.enqueue({
+    this.enqueueAndFlush({
       type: "end_convo",
       playerId: conversation.player1Id,
       data: { convoId },
     });
-    this.game.processPendingCommands();
 
     const endedConversation = this.requireConversation(convoId);
     if (endedConversation.state !== "ended") {
@@ -188,19 +202,20 @@ export class DebugGameAdmin {
     }
 
     const previousCount = conversation.messages.length;
-    this.game.enqueue({
+    this.enqueueAndFlush({
       type: "say",
       playerId,
       data: { convoId, content },
     });
-    this.game.processPendingCommands();
 
     const updatedConversation = this.requireConversation(convoId);
     if (updatedConversation.messages.length !== previousCount + 1) {
       throw new DebugRouteError(400, "Failed to add message");
     }
 
-    return updatedConversation.messages[updatedConversation.messages.length - 1];
+    return updatedConversation.messages[
+      updatedConversation.messages.length - 1
+    ];
   }
 
   private requirePlayer(playerId: string): Player {
@@ -217,6 +232,11 @@ export class DebugGameAdmin {
       throw new DebugRouteError(404, "Conversation not found");
     }
     return conversation;
+  }
+
+  private enqueueAndFlush(command: Command): void {
+    this.game.enqueue(command);
+    this.game.processPendingCommands();
   }
 }
 

@@ -6,6 +6,7 @@
  * completes once the NPC enters a conversation, which also boosts
  * social need via the autonomy manager.
  */
+import { manhattanDistance } from "../../engine/spatial.js";
 import type {
   ActionDefinition,
   ActionTickResult,
@@ -39,8 +40,7 @@ export const socializeAction: ActionDefinition = {
     const target = players.find((p) => {
       if (p.id === ctx.npcId) return false;
       if (p.state === "conversing") return false;
-      const dist = Math.abs(p.x - pos.x) + Math.abs(p.y - pos.y);
-      return dist <= 6;
+      return manhattanDistance(p, pos) <= 6;
     });
 
     if (!target) return "No nearby available player";

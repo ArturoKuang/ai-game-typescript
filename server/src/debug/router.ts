@@ -10,16 +10,19 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Router } from "express";
+import { type Response, Router } from "express";
 import type { Pool } from "pg";
-import { DebugGameAdmin, DebugRouteError, errorMessage } from "./admin.js";
 import type { NpcAutonomyManager } from "../autonomy/manager.js";
 import type { BearManager } from "../bears/bearManager.js";
 import type { GameLoop } from "../engine/gameLoop.js";
-import type { MapData } from "../engine/types.js";
+import type { GameWebSocketServer } from "../network/websocket.js";
 import type { MemoryManager } from "../npc/memory.js";
 import type { NpcProviderDiagnosticsSource } from "../npc/resilientProvider.js";
-import type { GameWebSocketServer } from "../network/websocket.js";
+import {
+  serializeDebugWorldEntity,
+  snapshotMapData,
+} from "../stateSnapshots.js";
+import { DebugGameAdmin, DebugRouteError, errorMessage } from "./admin.js";
 import { renderAsciiMap } from "./asciiMap.js";
 import { SCENARIOS, listScenarios } from "./scenarios.js";
 
@@ -35,8 +38,34 @@ export function createDebugRouter(
   const router = Router();
   const admin = new DebugGameAdmin(game, pool);
 
-  // --- Read endpoints ---
+  registerReadRoutes(router, game, autonomyManager, providerDiagnostics);
+  registerCommandRoutes(router, game, admin);
 
+  if (memoryManager) {
+    registerMemoryRoutes(router, game, memoryManager);
+  }
+
+  if (autonomyManager) {
+    registerAutonomyRoutes(router, game, autonomyManager);
+  }
+
+  if (bearManager) {
+    registerBearRoutes(router, bearManager);
+  }
+
+  if (wsServer) {
+    registerScreenshotRoutes(router, wsServer);
+  }
+
+  return router;
+}
+
+function registerReadRoutes(
+  router: Router,
+  game: GameLoop,
+  autonomyManager?: NpcAutonomyManager,
+  providerDiagnostics?: NpcProviderDiagnosticsSource,
+): void {
   router.get("/state", (_req, res) => {
     res.json({
       tick: game.currentTick,
@@ -54,9 +83,9 @@ export function createDebugRouter(
     const { ascii, legend } = renderAsciiMap(game, em);
     if (req.query.format === "json") {
       res.json({ ascii, legend });
-    } else {
-      res.type("text/plain").send(ascii);
+      return;
     }
+    res.type("text/plain").send(ascii);
   });
 
   router.get("/players", (_req, res) => {
@@ -77,20 +106,11 @@ export function createDebugRouter(
   });
 
   router.get("/log", (req, res) => {
-    const since = req.query.since
-      ? Number.parseInt(req.query.since as string, 10)
-      : undefined;
-    const limit = req.query.limit
-      ? Number.parseInt(req.query.limit as string, 10)
-      : 50;
-    const playerId = req.query.playerId as string | undefined;
-    const types =
-      typeof req.query.type === "string"
-        ? req.query.type
-            .split(",")
-            .map((value) => value.trim())
-            .filter(Boolean)
-        : undefined;
+    const since = parseOptionalInteger(req.query.since);
+    const limit = parseIntegerOrFallback(req.query.limit, 50);
+    const playerId =
+      typeof req.query.playerId === "string" ? req.query.playerId : undefined;
+    const types = parseCsvQuery(req.query.type);
     res.json(game.logger.getEvents({ since, limit, playerId, types }));
   });
 
@@ -120,9 +140,13 @@ export function createDebugRouter(
     }
     res.json(providerDiagnostics.getDiagnostics());
   });
+}
 
-  // --- Command endpoints ---
-
+function registerCommandRoutes(
+  router: Router,
+  game: GameLoop,
+  admin: DebugGameAdmin,
+): void {
   router.post("/tick", (req, res) => {
     const count = req.body?.count ?? 1;
     const allEvents = [];
@@ -133,16 +157,15 @@ export function createDebugRouter(
     res.json({ tick: game.currentTick, events: allEvents });
   });
 
-  router.post("/spawn", async (req, res) => {
-    const { id, name, x, y, isNpc, description, personality, speed } = req.body;
-    if (!id || !name || x === undefined || y === undefined) {
-      res
-        .status(400)
-        .json({ error: "Missing required fields: id, name, x, y" });
-      return;
-    }
-    try {
-      const player = await admin.spawnPlayer({
+  router.post("/spawn", (req, res) => {
+    handleRoute(res, async () => {
+      const { id, name, x, y, isNpc, description, personality, speed } =
+        req.body ?? {};
+      ensureRouteCondition(
+        id && name && x !== undefined && y !== undefined,
+        "Missing required fields: id, name, x, y",
+      );
+      return admin.spawnPlayer({
         id,
         name,
         x,
@@ -152,202 +175,159 @@ export function createDebugRouter(
         personality,
         speed,
       });
-      res.json(player);
-    } catch (error) {
-      const status = error instanceof DebugRouteError ? error.status : 400;
-      res.status(status).json({ error: errorMessage(error) });
-    }
+    });
   });
 
   router.post("/move", (req, res) => {
-    const { playerId, x, y } = req.body;
-    if (!playerId || x === undefined || y === undefined) {
-      res
-        .status(400)
-        .json({ error: "Missing required fields: playerId, x, y" });
-      return;
-    }
-    try {
-      const path = admin.movePlayer(playerId, x, y);
-      res.json({ path });
-    } catch (error) {
-      const status = error instanceof DebugRouteError ? error.status : 400;
-      res.status(status).json({ error: errorMessage(error) });
-    }
+    handleRoute(res, () => {
+      const { playerId, x, y } = req.body ?? {};
+      ensureRouteCondition(
+        playerId && x !== undefined && y !== undefined,
+        "Missing required fields: playerId, x, y",
+      );
+      return { path: admin.movePlayer(playerId, x, y) };
+    });
   });
 
   router.post("/input", (req, res) => {
-    const { playerId, direction, active } = req.body;
-    if (
-      !playerId ||
-      !direction ||
-      !["up", "down", "left", "right"].includes(direction) ||
-      typeof active !== "boolean"
-    ) {
-      res.status(400).json({
-        error:
-          "Missing/invalid fields: playerId (string), direction (up|down|left|right), active (boolean)",
-      });
-      return;
-    }
-    try {
-      const player = admin.setPlayerInput(playerId, direction, active);
-      res.json(player);
-    } catch (error) {
-      const status = error instanceof DebugRouteError ? error.status : 400;
-      res.status(status).json({ error: errorMessage(error) });
-    }
+    handleRoute(res, () => {
+      const { playerId, direction, active } = req.body ?? {};
+      ensureRouteCondition(
+        playerId &&
+          direction &&
+          ["up", "down", "left", "right"].includes(direction) &&
+          typeof active === "boolean",
+        "Missing/invalid fields: playerId (string), direction (up|down|left|right), active (boolean)",
+      );
+      return admin.setPlayerInput(playerId, direction, active);
+    });
   });
 
   router.post("/reset", (_req, res) => {
-    const mapData = snapshotWorld(game);
+    const mapData = snapshotMapData(game.world);
     game.reset();
     game.loadWorld(mapData);
     res.json({ ok: true });
   });
 
-  router.post("/scenario", async (req, res) => {
-    const { name } = req.body;
-    if (!name || !SCENARIOS[name]) {
-      res.status(400).json({
-        error: `Unknown scenario. Available: ${Object.keys(SCENARIOS).join(", ")}`,
-      });
-      return;
-    }
-    const result = await admin.loadScenario(name, SCENARIOS[name]);
-    res.json(result);
+  router.post("/scenario", (req, res) => {
+    handleRoute(res, async () => {
+      const { name } = req.body ?? {};
+      ensureRouteCondition(
+        name && SCENARIOS[name],
+        `Unknown scenario. Available: ${Object.keys(SCENARIOS).join(", ")}`,
+      );
+      return admin.loadScenario(name, SCENARIOS[name]);
+    });
   });
 
   router.post("/start-convo", (req, res) => {
-    const { player1Id, player2Id } = req.body;
-    if (!player1Id || !player2Id) {
-      res
-        .status(400)
-        .json({ error: "Missing required fields: player1Id, player2Id" });
-      return;
-    }
-    try {
-      const convo = admin.startConversation(player1Id, player2Id);
-      res.json(convo);
-    } catch (error) {
-      const status = error instanceof DebugRouteError ? error.status : 400;
-      res.status(status).json({ error: errorMessage(error) });
-    }
+    handleRoute(res, () => {
+      const { player1Id, player2Id } = req.body ?? {};
+      ensureRouteCondition(
+        player1Id && player2Id,
+        "Missing required fields: player1Id, player2Id",
+      );
+      return admin.startConversation(player1Id, player2Id);
+    });
   });
 
   router.post("/end-convo", (req, res) => {
-    const { convoId } = req.body;
-    if (!convoId) {
-      res.status(400).json({ error: "Missing required field: convoId" });
-      return;
-    }
-    try {
-      const convo = admin.endConversation(convoId);
-      res.json(convo);
-    } catch (error) {
-      const status = error instanceof DebugRouteError ? error.status : 400;
-      res.status(status).json({ error: errorMessage(error) });
-    }
+    handleRoute(res, () => {
+      const { convoId } = req.body ?? {};
+      ensureRouteCondition(convoId, "Missing required field: convoId");
+      return admin.endConversation(convoId);
+    });
   });
 
   router.post("/say", (req, res) => {
-    const { playerId, convoId, content } = req.body;
-    if (!playerId || !convoId || !content) {
-      res
-        .status(400)
-        .json({ error: "Missing required fields: playerId, convoId, content" });
-      return;
-    }
-    try {
-      const msg = admin.addConversationMessage(playerId, convoId, content);
-      res.json(msg);
-    } catch (error) {
-      const status = error instanceof DebugRouteError ? error.status : 400;
-      res.status(status).json({ error: errorMessage(error) });
-    }
+    handleRoute(res, () => {
+      const { playerId, convoId, content } = req.body ?? {};
+      ensureRouteCondition(
+        playerId && convoId && content,
+        "Missing required fields: playerId, convoId, content",
+      );
+      return admin.addConversationMessage(playerId, convoId, content);
+    });
   });
 
   router.post("/mode", (req, res) => {
-    const { mode, tickRate } = req.body;
+    const { mode, tickRate } = req.body ?? {};
     if (mode && (mode === "stepped" || mode === "realtime")) {
       game.mode = mode;
     }
     res.json({ mode: game.mode, tickRate: game.tickRate });
   });
+}
 
-  // --- Memory endpoints (require memoryManager) ---
-
-  if (memoryManager) {
-    router.get("/memories/:playerId", async (req, res) => {
-      try {
-        const limit = req.query.limit
-          ? Number.parseInt(req.query.limit as string, 10)
-          : undefined;
-        const type = req.query.type as string | undefined;
-        const memories = await memoryManager.getMemories(req.params.playerId, {
+function registerMemoryRoutes(
+  router: Router,
+  game: GameLoop,
+  memoryManager: MemoryManager,
+): void {
+  router.get("/memories/:playerId", (req, res) => {
+    handleRoute(
+      res,
+      async () => {
+        const limit = parseOptionalInteger(req.query.limit);
+        const type =
+          typeof req.query.type === "string" ? req.query.type : undefined;
+        return memoryManager.getMemories(req.params.playerId, {
           limit,
           type,
         });
-        res.json(memories);
-      } catch (err: any) {
-        res.status(500).json({ error: err.message });
-      }
-    });
+      },
+      500,
+    );
+  });
 
-    router.get("/memories/:playerId/search", async (req, res) => {
-      try {
-        const q = req.query.q as string;
-        if (!q) {
-          res.status(400).json({ error: "Missing query parameter: q" });
-          return;
-        }
-        const k = req.query.k ? Number.parseInt(req.query.k as string, 10) : 5;
-        const memories = await memoryManager.searchMemories({
+  router.get("/memories/:playerId/search", (req, res) => {
+    handleRoute(
+      res,
+      async () => {
+        const query = typeof req.query.q === "string" ? req.query.q : undefined;
+        ensureRouteCondition(query, "Missing query parameter: q");
+        const k = parseIntegerOrFallback(req.query.k, 5);
+        return memoryManager.searchMemories({
           playerId: req.params.playerId,
-          query: q,
+          query,
           k,
         });
-        res.json(memories);
-      } catch (err: any) {
-        res.status(500).json({ error: err.message });
-      }
-    });
+      },
+      500,
+    );
+  });
 
-    router.post("/memories", async (req, res) => {
-      try {
-        const { playerId, type, content, importance, tick } = req.body;
-        if (!playerId || !type || !content) {
-          res.status(400).json({
-            error: "Missing required fields: playerId, type, content",
-          });
-          return;
-        }
-        const memory = await memoryManager.addMemory({
+  router.post("/memories", (req, res) => {
+    handleRoute(
+      res,
+      async () => {
+        const { playerId, type, content, importance, tick } = req.body ?? {};
+        ensureRouteCondition(
+          playerId && type && content,
+          "Missing required fields: playerId, type, content",
+        );
+        return memoryManager.addMemory({
           playerId,
           type,
           content,
           importance: importance ?? 5,
           tick: tick ?? game.currentTick,
         });
-        res.json(memory);
-      } catch (err: any) {
-        res.status(500).json({ error: err.message });
-      }
-    });
+      },
+      500,
+    );
+  });
 
-    router.post("/remember-convo", async (req, res) => {
-      try {
-        const { convoId } = req.body;
-        if (!convoId) {
-          res.status(400).json({ error: "Missing required field: convoId" });
-          return;
-        }
+  router.post("/remember-convo", (req, res) => {
+    handleRoute(
+      res,
+      async () => {
+        const { convoId } = req.body ?? {};
+        ensureRouteCondition(convoId, "Missing required field: convoId");
         const convo = game.conversations.getConversation(convoId);
-        if (!convo) {
-          res.status(404).json({ error: "Conversation not found" });
-          return;
-        }
-        // Create memories for both participants
+        ensureRouteCondition(convo, "Conversation not found", 404);
+
         const memories = [];
         for (const pid of [convo.player1Id, convo.player2Id]) {
           const partner =
@@ -361,154 +341,178 @@ export function createDebugRouter(
           });
           memories.push(memory);
         }
-        res.json(memories);
-      } catch (err: any) {
-        res.status(500).json({ error: err.message });
-      }
-    });
-  }
-
-  // --- Autonomy endpoints (require autonomyManager) ---
-
-  if (autonomyManager) {
-    router.get("/autonomy/state", (_req, res) => {
-      const states: Record<string, unknown> = {};
-      for (const [npcId, state] of autonomyManager.getAllDebugStates()) {
-        states[npcId] = state;
-      }
-      res.json(states);
-    });
-
-    router.get("/autonomy/:npcId", (req, res) => {
-      const state = autonomyManager.getDebugState(req.params.npcId);
-      if (!state) {
-        res.status(404).json({ error: "NPC autonomy state not found" });
-        return;
-      }
-      res.json(state);
-    });
-
-    router.post("/autonomy/:npcId/needs", (req, res) => {
-      const state = autonomyManager.getState(req.params.npcId);
-      const player = game.getPlayer(req.params.npcId);
-      const { health, food, water, social } = req.body;
-      if (health !== undefined && player) {
-        const maxHp = player.maxHp ?? 100;
-        player.hp = Math.max(0, Math.min(maxHp, (health / 100) * maxHp));
-      }
-      if (food !== undefined) state.needs.food = food;
-      if (water !== undefined) state.needs.water = water;
-      if (social !== undefined) state.needs.social = social;
-      res.json(autonomyManager.getDebugState(req.params.npcId)?.needs ?? state.needs);
-    });
-
-    router.get("/entities", (_req, res) => {
-      const em = autonomyManager.getEntityManager();
-      res.json(
-        em.getAll().map((e) => ({
-          id: e.id,
-          type: e.type,
-          position: e.position,
-          properties: e.properties,
-          destroyed: e.destroyed,
-        })),
-      );
-    });
-  }
-
-  // --- Bear endpoints (require bearManager) ---
-
-  if (bearManager) {
-    router.get("/bears", (_req, res) => {
-      res.json(
-        bearManager.getBears().map((b) => ({
-          id: b.id,
-          position: b.position,
-          properties: b.properties,
-        })),
-      );
-    });
-
-    router.post("/spawn-bear", (req, res) => {
-      const { x, y } = req.body;
-      if (x === undefined || y === undefined) {
-        res.status(400).json({ error: "Missing required fields: x, y" });
-        return;
-      }
-      const bearId = bearManager.debugSpawnBear(x, y);
-      res.json({ ok: true, bearId });
-    });
-
-    router.post("/kill-bear", (req, res) => {
-      const { bearId } = req.body;
-      if (!bearId) {
-        res.status(400).json({ error: "Missing required field: bearId" });
-        return;
-      }
-      const killed = bearManager.debugKillBear(bearId);
-      if (!killed) {
-        res.status(404).json({ error: "Bear not found or already dead" });
-        return;
-      }
-      res.json({ ok: true, bearId });
-    });
-
-    router.get("/inventory/:playerId", (_req, res) => {
-      const inv = bearManager.getInventory(_req.params.playerId);
-      res.json(Object.fromEntries(inv));
-    });
-  }
-
-  // --- Screenshot endpoints (require wsServer) ---
-
-  if (wsServer) {
-    router.post("/capture-screenshot", async (_req, res) => {
-      const png = await wsServer.requestScreenshot();
-      if (!png) {
-        res.status(503).json({ error: "No connected client or capture timed out" });
-        return;
-      }
-      // Save to temp file for CLI tools to read
-      const tmpDir = process.env.TMPDIR || "/tmp";
-      const outPath = join(tmpDir, "claude", "qa-screenshot.png");
-      try {
-        const base64 = png.replace(/^data:image\/png;base64,/, "");
-        writeFileSync(outPath, Buffer.from(base64, "base64"));
-      } catch {
-        // ignore write errors — the API response is the primary output
-      }
-      res.json({ ok: true, savedTo: outPath });
-    });
-
-    router.get("/screenshot", (_req, res) => {
-      const png = wsServer.getLatestScreenshot();
-      if (!png) {
-        res.status(404).json({ error: "No screenshot available. POST /capture-screenshot first." });
-        return;
-      }
-      const base64 = png.replace(/^data:image\/png;base64,/, "");
-      res.type("image/png").send(Buffer.from(base64, "base64"));
-    });
-  }
-
-  return router;
+        return memories;
+      },
+      500,
+    );
+  });
 }
 
-function snapshotWorld(game: GameLoop): MapData {
-  const tiles: MapData["tiles"] = [];
-  for (let y = 0; y < game.world.height; y++) {
-    const row: MapData["tiles"][number] = [];
-    for (let x = 0; x < game.world.width; x++) {
-      row.push(game.world.getTile(x, y)?.type ?? "wall");
+function registerAutonomyRoutes(
+  router: Router,
+  game: GameLoop,
+  autonomyManager: NpcAutonomyManager,
+): void {
+  router.get("/autonomy/state", (_req, res) => {
+    const states: Record<string, unknown> = {};
+    for (const [npcId, state] of autonomyManager.getAllDebugStates()) {
+      states[npcId] = state;
     }
-    tiles.push(row);
-  }
+    res.json(states);
+  });
 
-  return {
-    width: game.world.width,
-    height: game.world.height,
-    tiles,
-    activities: game.world.getActivities().map((activity) => ({ ...activity })),
-    spawnPoints: game.world.getSpawnPoints().map((spawn) => ({ ...spawn })),
-  };
+  router.get("/autonomy/:npcId", (req, res) => {
+    const state = autonomyManager.getDebugState(req.params.npcId);
+    if (!state) {
+      res.status(404).json({ error: "NPC autonomy state not found" });
+      return;
+    }
+    res.json(state);
+  });
+
+  router.post("/autonomy/:npcId/needs", (req, res) => {
+    const state = autonomyManager.getState(req.params.npcId);
+    const player = game.getPlayer(req.params.npcId);
+    const { health, food, water, social } = req.body ?? {};
+    if (health !== undefined && player) {
+      const maxHp = player.maxHp ?? 100;
+      player.hp = Math.max(0, Math.min(maxHp, (health / 100) * maxHp));
+    }
+    if (food !== undefined) state.needs.food = food;
+    if (water !== undefined) state.needs.water = water;
+    if (social !== undefined) state.needs.social = social;
+    res.json(
+      autonomyManager.getDebugState(req.params.npcId)?.needs ?? state.needs,
+    );
+  });
+
+  router.get("/entities", (_req, res) => {
+    const em = autonomyManager.getEntityManager();
+    res.json(em.getAll().map((entity) => serializeDebugWorldEntity(entity)));
+  });
+}
+
+function registerBearRoutes(router: Router, bearManager: BearManager): void {
+  router.get("/bears", (_req, res) => {
+    res.json(
+      bearManager.getBears().map((bear) => ({
+        id: bear.id,
+        position: bear.position,
+        properties: bear.properties,
+      })),
+    );
+  });
+
+  router.post("/spawn-bear", (req, res) => {
+    handleRoute(res, () => {
+      const { x, y } = req.body ?? {};
+      ensureRouteCondition(
+        x !== undefined && y !== undefined,
+        "Missing required fields: x, y",
+      );
+      return { ok: true, bearId: bearManager.debugSpawnBear(x, y) };
+    });
+  });
+
+  router.post("/kill-bear", (req, res) => {
+    handleRoute(res, () => {
+      const { bearId } = req.body ?? {};
+      ensureRouteCondition(bearId, "Missing required field: bearId");
+      const killed = bearManager.debugKillBear(bearId);
+      ensureRouteCondition(killed, "Bear not found or already dead", 404);
+      return { ok: true, bearId };
+    });
+  });
+
+  router.get("/inventory/:playerId", (req, res) => {
+    const inventory = bearManager.getInventory(req.params.playerId);
+    res.json(Object.fromEntries(inventory));
+  });
+}
+
+function registerScreenshotRoutes(
+  router: Router,
+  wsServer: GameWebSocketServer,
+): void {
+  router.post("/capture-screenshot", (req, res) => {
+    handleRoute(
+      res,
+      async () => {
+        const png = await wsServer.requestScreenshot();
+        ensureRouteCondition(
+          png,
+          "No connected client or capture timed out",
+          503,
+        );
+
+        const tmpDir = process.env.TMPDIR || "/tmp";
+        const outPath = join(tmpDir, "claude", "qa-screenshot.png");
+        try {
+          const base64 = png.replace(/^data:image\/png;base64,/, "");
+          writeFileSync(outPath, Buffer.from(base64, "base64"));
+        } catch {
+          // ignore write errors — the API response is the primary output
+        }
+        return { ok: true, savedTo: outPath };
+      },
+      500,
+    );
+  });
+
+  router.get("/screenshot", (_req, res) => {
+    const png = wsServer.getLatestScreenshot();
+    if (!png) {
+      res.status(404).json({
+        error: "No screenshot available. POST /capture-screenshot first.",
+      });
+      return;
+    }
+    const base64 = png.replace(/^data:image\/png;base64,/, "");
+    res.type("image/png").send(Buffer.from(base64, "base64"));
+  });
+}
+
+function handleRoute<T>(
+  res: Response,
+  action: () => Promise<T> | T,
+  fallbackStatus = 400,
+): void {
+  void Promise.resolve()
+    .then(action)
+    .then((result) => {
+      res.json(result);
+    })
+    .catch((error) => {
+      const status =
+        error instanceof DebugRouteError ? error.status : fallbackStatus;
+      res.status(status).json({ error: errorMessage(error) });
+    });
+}
+
+function ensureRouteCondition(
+  condition: unknown,
+  message: string,
+  status = 400,
+): asserts condition {
+  if (!condition) {
+    throw new DebugRouteError(status, message);
+  }
+}
+
+function parseOptionalInteger(value: unknown): number | undefined {
+  return typeof value === "string" ? Number.parseInt(value, 10) : undefined;
+}
+
+function parseIntegerOrFallback(value: unknown, fallback: number): number {
+  return typeof value === "string" ? Number.parseInt(value, 10) : fallback;
+}
+
+function parseCsvQuery(value: unknown): string[] | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }

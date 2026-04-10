@@ -18,6 +18,12 @@ import type {
 const DEFAULT_RECOVERY_MS = 30_000;
 const DEFAULT_MAX_EVENTS = 25;
 
+type ProviderRequest = NpcReplyRequest | NpcReflectionRequest | NpcGoalRequest;
+
+type PrimaryAttemptResult<T> =
+  | { status: "success"; result: T }
+  | { status: "failed" | "skipped" };
+
 export interface ProviderErrorDetails {
   name: string;
   message: string;
@@ -88,156 +94,102 @@ export class ResilientNpcProvider
   }
 
   async generateReply(request: NpcReplyRequest): Promise<NpcModelResponse> {
-    if (this.isPrimaryReady()) {
-      const hadRecentFailure = this.primaryFailedAt !== null;
-      try {
-        const result = await this.primary.generateReply(request);
-        if (hadRecentFailure) {
-          const event = this.buildEvent(
-            "reply",
-            request,
-            "primary_recovered",
-            `Primary provider ${this.primary.name} recovered and handled a reply request.`,
-          );
-          this.recordEvent(event);
-          console.info("NPC provider recovered:", event);
-        }
-        this.primaryFailedAt = null;
-        return result;
-      } catch (error) {
-        this.primaryFailedAt = Date.now();
-        this.lastError = toProviderErrorDetails(error);
-        const failureEvent = this.buildEvent(
-          "reply",
-          request,
-          "primary_failure",
-          `Primary provider ${this.primary.name} failed during reply generation.`,
-          { error: this.lastError },
-        );
-        this.recordEvent(failureEvent);
-        console.warn("Primary NPC provider failed; falling back:", failureEvent);
-        const fallbackResult = await this.fallback.generateReply(request);
-        this.recordEvent(
-          this.buildEvent(
-            "reply",
-            request,
-            "fallback_used",
-            `Fallback provider ${this.fallback.name} handled the reply request after primary failure.`,
-          ),
-        );
-        return fallbackResult;
-      }
-    }
-    const fallbackEvent = this.buildEvent(
+    const primaryAttempt = await this.attemptPrimary(
       "reply",
       request,
-      "primary_skipped",
-      `Primary provider ${this.primary.name} is cooling down; using fallback ${this.fallback.name}.`,
-      { cooldownRemainingMs: this.cooldownRemainingMs() },
+      () => this.primary.generateReply(request),
+      {
+        recovered: `Primary provider ${this.primary.name} recovered and handled a reply request.`,
+        failed: `Primary provider ${this.primary.name} failed during reply generation.`,
+        warning: "Primary NPC provider failed; falling back:",
+      },
     );
-    this.recordEvent(fallbackEvent);
-    return this.fallback.generateReply(request);
+    if (primaryAttempt.status === "success") {
+      return primaryAttempt.result;
+    }
+    if (primaryAttempt.status === "skipped") {
+      this.recordDiagnostic(
+        "reply",
+        request,
+        "primary_skipped",
+        `Primary provider ${this.primary.name} is cooling down; using fallback ${this.fallback.name}.`,
+        { cooldownRemainingMs: this.cooldownRemainingMs() },
+      );
+    }
+    const fallbackResult = await this.fallback.generateReply(request);
+    if (primaryAttempt.status === "failed") {
+      this.recordDiagnostic(
+        "reply",
+        request,
+        "fallback_used",
+        `Fallback provider ${this.fallback.name} handled the reply request after primary failure.`,
+      );
+    }
+    return fallbackResult;
   }
 
   async generateReflection(
     request: NpcReflectionRequest,
   ): Promise<NpcModelResponse> {
-    if (this.isPrimaryReady()) {
-      const hadRecentFailure = this.primaryFailedAt !== null;
-      try {
-        const result = await this.primary.generateReflection(request);
-        if (hadRecentFailure) {
-          const event = this.buildEvent(
-            "reflection",
-            request,
-            "primary_recovered",
-            `Primary provider ${this.primary.name} recovered and handled a reflection request.`,
-          );
-          this.recordEvent(event);
-          console.info("NPC provider recovered:", event);
-        }
-        this.primaryFailedAt = null;
-        return result;
-      } catch (error) {
-        this.primaryFailedAt = Date.now();
-        this.lastError = toProviderErrorDetails(error);
-        const failureEvent = this.buildEvent(
-          "reflection",
-          request,
-          "primary_failure",
-          `Primary provider ${this.primary.name} failed during reflection generation.`,
-          { error: this.lastError },
-        );
-        this.recordEvent(failureEvent);
-        console.warn("Primary NPC provider failed; falling back:", failureEvent);
-        const fallbackResult = await this.fallback.generateReflection(request);
-        this.recordEvent(
-          this.buildEvent(
-            "reflection",
-            request,
-            "fallback_used",
-            `Fallback provider ${this.fallback.name} handled the reflection request after primary failure.`,
-          ),
-        );
-        return fallbackResult;
-      }
+    const primaryAttempt = await this.attemptPrimary(
+      "reflection",
+      request,
+      () => this.primary.generateReflection(request),
+      {
+        recovered: `Primary provider ${this.primary.name} recovered and handled a reflection request.`,
+        failed: `Primary provider ${this.primary.name} failed during reflection generation.`,
+        warning: "Primary NPC provider failed; falling back:",
+      },
+    );
+    if (primaryAttempt.status === "success") {
+      return primaryAttempt.result;
     }
-    this.recordEvent(
-      this.buildEvent(
+    if (primaryAttempt.status === "skipped") {
+      this.recordDiagnostic(
         "reflection",
         request,
         "primary_skipped",
         `Primary provider ${this.primary.name} is cooling down; using fallback ${this.fallback.name}.`,
         { cooldownRemainingMs: this.cooldownRemainingMs() },
-      ),
-    );
-    return this.fallback.generateReflection(request);
+      );
+    }
+    const fallbackResult = await this.fallback.generateReflection(request);
+    if (primaryAttempt.status === "failed") {
+      this.recordDiagnostic(
+        "reflection",
+        request,
+        "fallback_used",
+        `Fallback provider ${this.fallback.name} handled the reflection request after primary failure.`,
+      );
+    }
+    return fallbackResult;
   }
 
   async generateGoalSelection(
     request: NpcGoalRequest,
   ): Promise<NpcGoalResponse> {
-    if (this.isPrimaryReady() && this.primary.generateGoalSelection) {
-      const hadRecentFailure = this.primaryFailedAt !== null;
-      try {
-        const result = await this.primary.generateGoalSelection(request);
-        if (hadRecentFailure) {
-          const event = this.buildEvent(
-            "goal",
-            request,
-            "primary_recovered",
-            `Primary provider ${this.primary.name} recovered and handled a goal selection request.`,
-          );
-          this.recordEvent(event);
-          console.info("NPC provider recovered:", event);
-        }
-        this.primaryFailedAt = null;
-        return result;
-      } catch (error) {
-        this.primaryFailedAt = Date.now();
-        this.lastError = toProviderErrorDetails(error);
-        const failureEvent = this.buildEvent(
-          "goal",
-          request,
-          "primary_failure",
-          `Primary provider ${this.primary.name} failed during goal selection.`,
-          { error: this.lastError },
-        );
-        this.recordEvent(failureEvent);
-        console.warn(
-          "Primary NPC provider failed goal selection; falling back:",
-          failureEvent,
-        );
-      }
+    const primaryGoalSelection = this.primary.generateGoalSelection;
+    const primaryAttempt = await this.attemptPrimary(
+      "goal",
+      request,
+      primaryGoalSelection
+        ? () => primaryGoalSelection.call(this.primary, request)
+        : undefined,
+      {
+        recovered: `Primary provider ${this.primary.name} recovered and handled a goal selection request.`,
+        failed: `Primary provider ${this.primary.name} failed during goal selection.`,
+        warning: "Primary NPC provider failed goal selection; falling back:",
+      },
+    );
+    if (primaryAttempt.status === "success") {
+      return primaryAttempt.result;
     }
-    this.recordEvent(
-      this.buildEvent(
-        "goal",
-        request,
-        "fallback_used",
-        `Fallback provider ${this.fallback.name} handled the goal selection request.`,
-        { cooldownRemainingMs: this.cooldownRemainingMs() },
-      ),
+    this.recordDiagnostic(
+      "goal",
+      request,
+      "fallback_used",
+      `Fallback provider ${this.fallback.name} handled the goal selection request.`,
+      { cooldownRemainingMs: this.cooldownRemainingMs() },
     );
     if (this.fallback.generateGoalSelection) {
       return this.fallback.generateGoalSelection(request);
@@ -248,6 +200,41 @@ export class ResilientNpcProvider
       prompt: "",
       latencyMs: 0,
     };
+  }
+
+  private async attemptPrimary<TResponse>(
+    phase: ProviderDiagnosticEvent["phase"],
+    request: ProviderRequest,
+    primaryCall: (() => Promise<TResponse>) | undefined,
+    messages: {
+      recovered: string;
+      failed: string;
+      warning: string;
+    },
+  ): Promise<PrimaryAttemptResult<TResponse>> {
+    if (!primaryCall || !this.isPrimaryReady()) {
+      return { status: "skipped" };
+    }
+    const hadRecentFailure = this.primaryFailedAt !== null;
+    try {
+      const result = await primaryCall();
+      this.handlePrimarySuccess(
+        phase,
+        request,
+        hadRecentFailure,
+        messages.recovered,
+      );
+      return { status: "success", result };
+    } catch (error) {
+      this.handlePrimaryFailure(
+        phase,
+        request,
+        messages.failed,
+        messages.warning,
+        error,
+      );
+      return { status: "failed" };
+    }
   }
 
   private isPrimaryReady(): boolean {
@@ -284,15 +271,61 @@ export class ResilientNpcProvider
     return Math.max(this.recoveryMs - (Date.now() - this.primaryFailedAt), 0);
   }
 
-  private buildEvent(
+  private handlePrimarySuccess(
     phase: ProviderDiagnosticEvent["phase"],
-    request: NpcReplyRequest | NpcReflectionRequest | NpcGoalRequest,
+    request: ProviderRequest,
+    hadRecentFailure: boolean,
+    message: string,
+  ): void {
+    if (hadRecentFailure) {
+      const event = this.buildEvent(
+        phase,
+        request,
+        "primary_recovered",
+        message,
+      );
+      this.recordEvent(event);
+      console.info("NPC provider recovered:", event);
+    }
+    this.primaryFailedAt = null;
+  }
+
+  private handlePrimaryFailure(
+    phase: ProviderDiagnosticEvent["phase"],
+    request: ProviderRequest,
+    message: string,
+    warning: string,
+    error: unknown,
+  ): void {
+    this.primaryFailedAt = Date.now();
+    this.lastError = toProviderErrorDetails(error);
+    const failureEvent = this.buildEvent(
+      phase,
+      request,
+      "primary_failure",
+      message,
+      { error: this.lastError },
+    );
+    this.recordEvent(failureEvent);
+    console.warn(warning, failureEvent);
+  }
+
+  private recordDiagnostic(
+    phase: ProviderDiagnosticEvent["phase"],
+    request: ProviderRequest,
     outcome: ProviderDiagnosticEvent["outcome"],
     message: string,
-    extras: Pick<
-      ProviderDiagnosticEvent,
-      "cooldownRemainingMs" | "error"
-    > = {},
+    extras: Pick<ProviderDiagnosticEvent, "cooldownRemainingMs" | "error"> = {},
+  ): void {
+    this.recordEvent(this.buildEvent(phase, request, outcome, message, extras));
+  }
+
+  private buildEvent(
+    phase: ProviderDiagnosticEvent["phase"],
+    request: ProviderRequest,
+    outcome: ProviderDiagnosticEvent["outcome"],
+    message: string,
+    extras: Pick<ProviderDiagnosticEvent, "cooldownRemainingMs" | "error"> = {},
   ): ProviderDiagnosticEvent {
     const context = getRequestContext(request);
     return {
@@ -318,9 +351,7 @@ export class ResilientNpcProvider
   }
 }
 
-function getRequestContext(
-  request: NpcReplyRequest | NpcReflectionRequest | NpcGoalRequest,
-): {
+function getRequestContext(request: ProviderRequest): {
   npcId?: string;
   partnerId?: string;
   conversationId?: number;

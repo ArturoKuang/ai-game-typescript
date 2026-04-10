@@ -14,8 +14,13 @@
  */
 import type { NpcPersistenceStore } from "../db/npcStore.js";
 import type { Memory } from "../db/repository.js";
-import type { Conversation, Message } from "../engine/conversation.js";
+import {
+  type Conversation,
+  type Message,
+  resolveConversationFromEvent,
+} from "../engine/conversation.js";
 import type { GameLoop } from "../engine/gameLoop.js";
+import { manhattanDistance } from "../engine/spatial.js";
 import type { GameEvent, Player } from "../engine/types.js";
 import type { MemoryManager } from "./memory.js";
 import type { NpcModelProvider } from "./provider.js";
@@ -159,12 +164,9 @@ export class NpcOrchestrator {
   }
 
   private resolveConversation(event: GameEvent): Conversation | undefined {
-    const fromEvent = event.data?.conversation as Conversation | undefined;
-    if (fromEvent) return fromEvent;
-    const convoId = event.data?.convoId as number | undefined;
-    return convoId !== undefined
-      ? this.game.conversations.getConversation(convoId)
-      : undefined;
+    return resolveConversationFromEvent(event, (convoId) =>
+      this.game.conversations.getConversation(convoId),
+    );
   }
 
   /**
@@ -540,8 +542,4 @@ export class NpcOrchestrator {
   private reflectionRuntimeKey(npcId: string): string {
     return `reflection:${npcId}`;
   }
-}
-
-function manhattanDistance(left: Player, right: Player): number {
-  return Math.abs(left.x - right.x) + Math.abs(left.y - right.y);
 }

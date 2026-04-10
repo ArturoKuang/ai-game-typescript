@@ -13,21 +13,28 @@
  */
 import type { Server } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
+import type { EntityManager } from "../autonomy/entityManager.js";
 import type { NpcAutonomyManager } from "../autonomy/manager.js";
 import type { NpcAutonomyDebugState } from "../autonomy/types.js";
+import type { BearManager } from "../bears/bearManager.js";
 import type {
   DebugDashboardBootstrap,
   DebugFeedEvent,
   DebugFeedEventPayload,
 } from "../debug/streamTypes.js";
-import type { Conversation, Message } from "../engine/conversation.js";
+import {
+  type Conversation,
+  type Message,
+  resolveConversationFromEvent,
+  resolveConversationParticipantIds,
+} from "../engine/conversation.js";
 import type { GameLoop } from "../engine/gameLoop.js";
-import type { GameEvent, Player } from "../engine/types.js";
-import type { EntityManager } from "../autonomy/entityManager.js";
-import type { BearManager } from "../bears/bearManager.js";
+import type { Command, GameEvent, Player } from "../engine/types.js";
+import { serializeWorldEntity } from "../stateSnapshots.js";
 import type {
   ClientMessage,
   FullGameState,
+  MoveDirection,
   ServerMessage,
 } from "./protocol.js";
 import { createJoinPreviewPlayer, toPublicPlayer } from "./publicPlayer.js";
@@ -131,42 +138,11 @@ export class GameWebSocketServer {
   broadcastGameEvent(event: GameEvent): void {
     switch (event.type) {
       case "spawn": {
-        const player = event.playerId
-          ? this.game.getPlayer(event.playerId)
-          : undefined;
-        if (player) {
-          this.broadcast({
-            type: "player_joined",
-            data: toPublicPlayer(player),
-          });
-        }
+        this.broadcastSpawnEvent(event);
         return;
       }
       case "despawn": {
-        if (event.playerId) {
-          const reason =
-            event.data?.reason === "death" ? "death" : undefined;
-          const cause =
-            typeof event.data?.cause === "string"
-              ? event.data.cause
-              : undefined;
-          const depletedNeed =
-            event.data?.depletedNeed === "health" ||
-            event.data?.depletedNeed === "food" ||
-            event.data?.depletedNeed === "water" ||
-            event.data?.depletedNeed === "social"
-              ? event.data.depletedNeed
-              : undefined;
-          this.broadcast({
-            type: "player_left",
-            data: {
-              id: event.playerId,
-              reason,
-              cause,
-              depletedNeed,
-            },
-          });
-        }
+        this.broadcastDespawnEvent(event);
         return;
       }
       case "move_direction":
@@ -174,74 +150,26 @@ export class GameWebSocketServer {
       case "input_move":
       case "player_update":
       case "move_end": {
-        const player =
-          (event.data?.player as Player | undefined) ??
-          (event.playerId ? this.game.getPlayer(event.playerId) : undefined);
-        if (player) {
-          this.broadcast({
-            type: "player_update",
-            data: toPublicPlayer(player),
-          });
-        }
+        this.broadcastPlayerEventUpdate(event);
         return;
       }
       case "convo_started":
       case "convo_accepted":
       case "convo_active":
       case "convo_ended": {
-        const conversation = this.resolveConversation(event);
-        if (!conversation) return;
-        this.sendToPlayers(this.resolveParticipantIds(event, conversation), {
-          type: "convo_update",
-          data: conversation,
-        });
-        this.broadcastToDebugSubscribers({
-          type: "debug_conversation_upsert",
-          data: conversation,
-        });
-        this.publishDebugEventIfPresent(
-          this.buildDebugEventFromGameEvent(event, conversation),
-        );
+        this.broadcastConversationEventUpdate(event, true);
         return;
       }
       case "convo_declined": {
-        const conversation = this.resolveConversation(event);
-        if (conversation) {
-          this.broadcastToDebugSubscribers({
-            type: "debug_conversation_upsert",
-            data: conversation,
-          });
-          this.publishDebugEventIfPresent(
-            this.buildDebugEventFromGameEvent(event, conversation),
-          );
-        }
+        this.broadcastConversationEventUpdate(event, false);
         return;
       }
       case "convo_message": {
-        const message = event.data?.message as Message | undefined;
-        if (!message) return;
-        const conversation =
-          this.resolveConversation(event) ??
-          this.game.conversations.getConversation(message.convoId);
-        if (!conversation) return;
-        this.sendToPlayers(this.resolveParticipantIds(event, conversation), {
-          type: "message",
-          data: message,
-        });
-        this.broadcastToDebugSubscribers({
-          type: "debug_conversation_message",
-          data: message,
-        });
-        this.publishDebugEventIfPresent(
-          this.buildDebugEventFromGameEvent(event, conversation),
-        );
+        this.broadcastConversationMessageEvent(event);
         return;
       }
       case "tick_complete": {
-        const tick = event.data?.tick;
-        if (typeof tick === "number") {
-          this.broadcast({ type: "tick", data: { tick } });
-        }
+        this.broadcastTickEvent(event);
         return;
       }
 
@@ -251,66 +179,31 @@ export class GameWebSocketServer {
       case "bear_attack":
       case "player_attack":
       case "item_drop": {
-        this.broadcast({
-          type: "combat_event",
-          data: { eventType: event.type, ...event.data },
-        });
+        this.broadcastCombatEvent(event);
         return;
       }
       case "item_pickup": {
-        this.broadcast({
-          type: "combat_event",
-          data: { eventType: event.type, ...event.data },
-        });
-        // Send inventory_update to the player who picked up
-        if (event.playerId && this.bearManager) {
-          this.sendInventoryUpdate(event.playerId);
-        }
+        this.broadcastCombatEvent(event);
+        this.sendInventoryUpdateIfPossible(event.playerId);
         return;
       }
       case "player_damage":
       case "player_death": {
         const survivalDeath = event.data?.cause === "survival";
-        // Broadcast updated player state + combat event
-        const player = event.playerId
-          ? this.game.getPlayer(event.playerId)
-          : undefined;
-        if (player && !survivalDeath) {
-          this.broadcast({
-            type: "player_update",
-            data: toPublicPlayer(player),
-          });
+        if (!survivalDeath) {
+          this.broadcastPlayerEventUpdate(event);
         }
-        this.broadcast({
-          type: "combat_event",
-          data: { eventType: event.type, ...event.data },
-        });
+        this.broadcastCombatEvent(event);
         return;
       }
       case "player_heal": {
-        const player = event.playerId
-          ? this.game.getPlayer(event.playerId)
-          : undefined;
-        if (player) {
-          this.broadcast({
-            type: "player_update",
-            data: toPublicPlayer(player),
-          });
-        }
-        this.broadcast({
-          type: "combat_event",
-          data: { eventType: event.type, ...event.data },
-        });
-        // Eating consumes an item — send updated inventory
-        if (event.playerId && this.bearManager) {
-          this.sendInventoryUpdate(event.playerId);
-        }
+        this.broadcastPlayerEventUpdate(event);
+        this.broadcastCombatEvent(event);
+        this.sendInventoryUpdateIfPossible(event.playerId);
         return;
       }
       case "item_consumed": {
-        if (event.playerId && this.bearManager) {
-          this.sendInventoryUpdate(event.playerId);
-        }
+        this.sendInventoryUpdateIfPossible(event.playerId);
         return;
       }
     }
@@ -332,22 +225,7 @@ export class GameWebSocketServer {
     });
 
     ws.on("close", () => {
-      if (info.playerId) {
-        const convo = this.game.conversations.getPlayerConversation(
-          info.playerId,
-        );
-        if (convo) {
-          this.game.enqueue({
-            type: "end_convo",
-            playerId: info.playerId,
-            data: { convoId: convo.id },
-          });
-        }
-        this.game.enqueue({
-          type: "remove",
-          playerId: info.playerId,
-        });
-      }
+      this.handleConnectionClose(info);
       this.clients.delete(ws);
     });
   }
@@ -355,234 +233,98 @@ export class GameWebSocketServer {
   private onMessage(ws: WebSocket, info: ClientInfo, msg: ClientMessage): void {
     switch (msg.type) {
       case "subscribe_debug": {
-        info.debugSubscribed = true;
-        this.sendDebugBootstrap(ws);
+        this.handleDebugSubscription(ws, info);
         return;
       }
 
       case "join": {
-        if (info.playerId && this.game.getPlayer(info.playerId)) {
-          this.sendError(ws, "Already joined");
-          return;
-        }
-        info.playerId = null;
-        humanCounter++;
-        const id = `human_${humanCounter}`;
-        const spawns = this.game.world.getSpawnPoints();
-        const spawn = spawns[humanCounter % spawns.length] ?? { x: 1, y: 1 };
-        info.playerId = id;
-
-        this.game.enqueue({
-          type: "spawn",
-          playerId: id,
-          data: {
-            name: msg.data.name,
-            x: spawn.x,
-            y: spawn.y,
-            isNpc: false,
-            description: msg.data.description ?? "",
-          },
-        });
-
-        this.send(ws, {
-          type: "player_joined",
-          data: createJoinPreviewPlayer({
-            id,
-            name: msg.data.name,
-            description: msg.data.description ?? "",
-            x: spawn.x,
-            y: spawn.y,
-          }),
-        });
-        // Send initial (empty) inventory
-        if (this.bearManager) {
-          const items = this.bearManager.getInventoryItems(id);
-          const capacity = this.bearManager.getInventoryCapacity();
-          this.send(ws, {
-            type: "inventory_update",
-            data: { playerId: id, items, capacity },
-          });
-        }
+        this.handleJoinMessage(
+          ws,
+          info,
+          msg.data.name,
+          msg.data.description ?? "",
+        );
         return;
       }
 
       case "move": {
-        if (!info.playerId) return;
-        this.game.enqueue({
-          type: "move_to",
-          playerId: info.playerId,
-          data: { x: msg.data.x, y: msg.data.y },
-        });
+        this.handleMoveMessage(info.playerId, msg.data.x, msg.data.y);
         return;
       }
 
       case "move_direction": {
-        if (!info.playerId) return;
-        this.game.enqueue({
-          type: "move_direction",
-          playerId: info.playerId,
-          data: { direction: msg.data.direction },
-        });
+        this.handleMoveDirectionMessage(info.playerId, msg.data.direction);
         return;
       }
 
       case "input_start": {
-        if (!info.playerId) return;
-        this.game.setPlayerInput(info.playerId, msg.data.direction, true);
+        this.handleInputMessage(info.playerId, msg.data.direction, true);
         return;
       }
 
       case "input_stop": {
-        if (!info.playerId) return;
-        this.game.setPlayerInput(info.playerId, msg.data.direction, false);
+        this.handleInputMessage(info.playerId, msg.data.direction, false);
         return;
       }
 
       case "say": {
-        if (!info.playerId) return;
-        const convo = this.game.conversations.getPlayerConversation(
-          info.playerId,
-        );
-        if (!convo || convo.state !== "active") {
-          this.sendError(ws, "Not in an active conversation");
-          return;
-        }
-        this.game.enqueue({
-          type: "say",
-          playerId: info.playerId,
-          data: { convoId: convo.id, content: msg.data.content },
-        });
+        this.handleSayMessage(ws, info.playerId, msg.data.content);
         return;
       }
 
       case "start_convo": {
-        if (!info.playerId) return;
-        if (msg.data.targetId === info.playerId) {
-          this.sendError(ws, "Cannot start a conversation with yourself");
-          return;
-        }
-        const target = this.game.getPlayer(msg.data.targetId);
-        if (!target) {
-          this.sendError(ws, "Conversation target not found");
-          return;
-        }
-        if (this.game.conversations.getPlayerConversation(info.playerId)) {
-          this.sendError(ws, "You are already in a conversation");
-          return;
-        }
-        if (this.game.conversations.getPlayerConversation(msg.data.targetId)) {
-          this.sendError(ws, "That player is already in a conversation");
-          return;
-        }
-        this.game.enqueue({
-          type: "start_convo",
-          playerId: info.playerId,
-          data: { targetId: msg.data.targetId },
-        });
+        this.handleStartConversationMessage(
+          ws,
+          info.playerId,
+          msg.data.targetId,
+        );
         return;
       }
 
       case "accept_convo": {
-        if (!info.playerId) return;
-        const convo = this.game.conversations.getConversation(msg.data.convoId);
-        if (!convo || convo.state !== "invited") {
-          this.sendError(ws, "Conversation invite is no longer available");
-          return;
-        }
-        if (convo.player2Id !== info.playerId) {
-          this.sendError(
-            ws,
-            "Only the invited player can accept this conversation",
-          );
-          return;
-        }
-        this.game.enqueue({
-          type: "accept_convo",
-          playerId: info.playerId,
-          data: { convoId: msg.data.convoId },
-        });
+        this.handleInviteResponseMessage(
+          ws,
+          info.playerId,
+          msg.data.convoId,
+          "accept_convo",
+          "Only the invited player can accept this conversation",
+        );
         return;
       }
 
       case "decline_convo": {
-        if (!info.playerId) return;
-        const convo = this.game.conversations.getConversation(msg.data.convoId);
-        if (!convo || convo.state !== "invited") {
-          this.sendError(ws, "Conversation invite is no longer available");
-          return;
-        }
-        if (convo.player2Id !== info.playerId) {
-          this.sendError(
-            ws,
-            "Only the invited player can decline this conversation",
-          );
-          return;
-        }
-        this.game.enqueue({
-          type: "decline_convo",
-          playerId: info.playerId,
-          data: { convoId: msg.data.convoId },
-        });
+        this.handleInviteResponseMessage(
+          ws,
+          info.playerId,
+          msg.data.convoId,
+          "decline_convo",
+          "Only the invited player can decline this conversation",
+        );
         return;
       }
 
       case "end_convo": {
-        if (!info.playerId) return;
-        const convo = this.game.conversations.getPlayerConversation(
-          info.playerId,
-        );
-        if (!convo) {
-          this.sendError(ws, "Not currently in a conversation");
-          return;
-        }
-        this.game.enqueue({
-          type: "end_convo",
-          playerId: info.playerId,
-          data: { convoId: convo.id },
-        });
+        this.handleEndConversationMessage(ws, info.playerId);
         return;
       }
 
       case "attack": {
-        if (!info.playerId) return;
-        this.game.enqueue({
-          type: "attack",
-          playerId: info.playerId,
-          data: { targetId: msg.data.targetId },
-        });
+        this.handleAttackMessage(info.playerId, msg.data.targetId);
         return;
       }
 
       case "pickup": {
-        if (!info.playerId) return;
-        this.game.enqueue({
-          type: "pickup",
-          playerId: info.playerId,
-          data: { entityId: msg.data.entityId },
-        });
+        this.handlePickupMessage(info.playerId, msg.data.entityId);
         return;
       }
 
       case "pickup_nearby": {
-        if (!info.playerId || !this.bearManager) return;
-        const nearestId = this.bearManager.findNearestPickupable(info.playerId);
-        if (nearestId) {
-          this.game.enqueue({
-            type: "pickup",
-            playerId: info.playerId,
-            data: { entityId: nearestId },
-          });
-        }
+        this.handlePickupNearbyMessage(info.playerId);
         return;
       }
 
       case "eat": {
-        if (!info.playerId) return;
-        this.game.enqueue({
-          type: "eat",
-          playerId: info.playerId,
-          data: { item: msg.data.item },
-        });
+        this.handleEatMessage(info.playerId, msg.data.item);
         return;
       }
 
@@ -599,6 +341,399 @@ export class GameWebSocketServer {
     }
   }
 
+  private broadcastSpawnEvent(event: GameEvent): void {
+    this.broadcastPlayerJoined(this.resolvePlayerFromEvent(event));
+  }
+
+  private broadcastDespawnEvent(event: GameEvent): void {
+    if (!event.playerId) {
+      return;
+    }
+    const reason = event.data?.reason === "death" ? "death" : undefined;
+    const cause =
+      typeof event.data?.cause === "string" ? event.data.cause : undefined;
+    const depletedNeed =
+      event.data?.depletedNeed === "health" ||
+      event.data?.depletedNeed === "food" ||
+      event.data?.depletedNeed === "water" ||
+      event.data?.depletedNeed === "social"
+        ? event.data.depletedNeed
+        : undefined;
+    this.broadcast({
+      type: "player_left",
+      data: {
+        id: event.playerId,
+        reason,
+        cause,
+        depletedNeed,
+      },
+    });
+  }
+
+  private broadcastPlayerEventUpdate(event: GameEvent): void {
+    this.broadcastPlayerUpdate(this.resolvePlayerFromEvent(event));
+  }
+
+  private broadcastConversationEventUpdate(
+    event: GameEvent,
+    notifyParticipants: boolean,
+  ): void {
+    const conversation = this.resolveConversationForEvent(event);
+    if (!conversation) {
+      return;
+    }
+    if (notifyParticipants) {
+      this.sendConversationUpdate(event, conversation);
+    }
+    this.broadcastConversationDebugUpdate(event, conversation);
+  }
+
+  private broadcastConversationMessageEvent(event: GameEvent): void {
+    const message = event.data?.message as Message | undefined;
+    if (!message) {
+      return;
+    }
+    const conversation =
+      this.resolveConversationForEvent(event) ??
+      this.game.conversations.getConversation(message.convoId);
+    if (!conversation) {
+      return;
+    }
+    this.sendToPlayers(resolveConversationParticipantIds(event, conversation), {
+      type: "message",
+      data: message,
+    });
+    this.broadcastToDebugSubscribers({
+      type: "debug_conversation_message",
+      data: message,
+    });
+    this.publishDebugEventIfPresent(
+      this.buildDebugEventFromGameEvent(event, conversation),
+    );
+  }
+
+  private broadcastTickEvent(event: GameEvent): void {
+    const tick = event.data?.tick;
+    if (typeof tick !== "number") {
+      return;
+    }
+    this.broadcast({ type: "tick", data: { tick } });
+  }
+
+  private broadcastCombatEvent(event: GameEvent): void {
+    this.broadcast({
+      type: "combat_event",
+      data: { eventType: event.type, ...event.data },
+    });
+  }
+
+  private broadcastPlayerJoined(player: Player | undefined): void {
+    if (!player) {
+      return;
+    }
+    this.broadcast({
+      type: "player_joined",
+      data: toPublicPlayer(player),
+    });
+  }
+
+  private broadcastPlayerUpdate(player: Player | undefined): void {
+    if (!player) {
+      return;
+    }
+    this.broadcast({
+      type: "player_update",
+      data: toPublicPlayer(player),
+    });
+  }
+
+  private resolvePlayerFromEvent(event: GameEvent): Player | undefined {
+    return (
+      (event.data?.player as Player | undefined) ??
+      (event.playerId ? this.game.getPlayer(event.playerId) : undefined)
+    );
+  }
+
+  private resolveConversationForEvent(event: GameEvent): Conversation | null {
+    return (
+      resolveConversationFromEvent(event, (convoId) =>
+        this.game.conversations.getConversation(convoId),
+      ) ?? null
+    );
+  }
+
+  private sendConversationUpdate(
+    event: GameEvent,
+    conversation: Conversation,
+  ): void {
+    this.sendToPlayers(resolveConversationParticipantIds(event, conversation), {
+      type: "convo_update",
+      data: conversation,
+    });
+  }
+
+  private broadcastConversationDebugUpdate(
+    event: GameEvent,
+    conversation: Conversation,
+  ): void {
+    this.broadcastToDebugSubscribers({
+      type: "debug_conversation_upsert",
+      data: conversation,
+    });
+    this.publishDebugEventIfPresent(
+      this.buildDebugEventFromGameEvent(event, conversation),
+    );
+  }
+
+  private sendInventoryUpdateIfPossible(
+    playerId: string | null | undefined,
+  ): void {
+    if (!playerId || !this.bearManager) {
+      return;
+    }
+    this.sendInventoryUpdate(playerId);
+  }
+
+  private handleConnectionClose(info: ClientInfo): void {
+    const { playerId } = info;
+    if (!playerId) {
+      return;
+    }
+    const convo = this.game.conversations.getPlayerConversation(playerId);
+    if (convo) {
+      this.game.enqueue({
+        type: "end_convo",
+        playerId,
+        data: { convoId: convo.id },
+      });
+    }
+    this.game.enqueue({
+      type: "remove",
+      playerId,
+    });
+  }
+
+  private handleDebugSubscription(ws: WebSocket, info: ClientInfo): void {
+    info.debugSubscribed = true;
+    this.sendDebugBootstrap(ws);
+  }
+
+  private handleJoinMessage(
+    ws: WebSocket,
+    info: ClientInfo,
+    name: string,
+    description: string,
+  ): void {
+    if (info.playerId && this.game.getPlayer(info.playerId)) {
+      this.sendError(ws, "Already joined");
+      return;
+    }
+    info.playerId = null;
+    humanCounter++;
+    const playerId = `human_${humanCounter}`;
+    const spawn = this.pickHumanSpawnPoint();
+    info.playerId = playerId;
+
+    this.game.enqueue({
+      type: "spawn",
+      playerId,
+      data: {
+        name,
+        x: spawn.x,
+        y: spawn.y,
+        isNpc: false,
+        description,
+      },
+    });
+
+    this.send(ws, {
+      type: "player_joined",
+      data: createJoinPreviewPlayer({
+        id: playerId,
+        name,
+        description,
+        x: spawn.x,
+        y: spawn.y,
+      }),
+    });
+    this.sendInitialInventory(ws, playerId);
+  }
+
+  private pickHumanSpawnPoint(): { x: number; y: number } {
+    const spawns = this.game.world.getSpawnPoints();
+    return spawns[humanCounter % spawns.length] ?? { x: 1, y: 1 };
+  }
+
+  private sendInitialInventory(ws: WebSocket, playerId: string): void {
+    const message = this.buildInventoryUpdateMessage(playerId);
+    if (message) {
+      this.send(ws, message);
+    }
+  }
+
+  private handleMoveMessage(
+    playerId: string | null,
+    x: number,
+    y: number,
+  ): void {
+    this.enqueueIfPlayerJoined(playerId, (joinedPlayerId) => ({
+      type: "move_to",
+      playerId: joinedPlayerId,
+      data: { x, y },
+    }));
+  }
+
+  private handleMoveDirectionMessage(
+    playerId: string | null,
+    direction: MoveDirection,
+  ): void {
+    this.enqueueIfPlayerJoined(playerId, (joinedPlayerId) => ({
+      type: "move_direction",
+      playerId: joinedPlayerId,
+      data: { direction },
+    }));
+  }
+
+  private handleInputMessage(
+    playerId: string | null,
+    direction: MoveDirection,
+    active: boolean,
+  ): void {
+    this.withJoinedPlayerId(playerId, (joinedPlayerId) => {
+      this.game.setPlayerInput(joinedPlayerId, direction, active);
+    });
+  }
+
+  private handleSayMessage(
+    ws: WebSocket,
+    playerId: string | null,
+    content: string,
+  ): void {
+    const convo = this.getConversationForJoinedPlayer(playerId);
+    if (!convo || convo.state !== "active") {
+      this.sendError(ws, "Not in an active conversation");
+      return;
+    }
+    this.game.enqueue({
+      type: "say",
+      playerId: convo.playerId,
+      data: { convoId: convo.id, content },
+    });
+  }
+
+  private handleStartConversationMessage(
+    ws: WebSocket,
+    playerId: string | null,
+    targetId: string,
+  ): void {
+    const joinedPlayerId = this.getJoinedPlayerId(playerId);
+    if (!joinedPlayerId) {
+      return;
+    }
+    if (targetId === joinedPlayerId) {
+      this.sendError(ws, "Cannot start a conversation with yourself");
+      return;
+    }
+    const target = this.game.getPlayer(targetId);
+    if (!target) {
+      this.sendError(ws, "Conversation target not found");
+      return;
+    }
+    if (this.game.conversations.getPlayerConversation(joinedPlayerId)) {
+      this.sendError(ws, "You are already in a conversation");
+      return;
+    }
+    if (this.game.conversations.getPlayerConversation(targetId)) {
+      this.sendError(ws, "That player is already in a conversation");
+      return;
+    }
+    this.game.enqueue({
+      type: "start_convo",
+      playerId: joinedPlayerId,
+      data: { targetId },
+    });
+  }
+
+  private handleInviteResponseMessage(
+    ws: WebSocket,
+    playerId: string | null,
+    convoId: number,
+    type: "accept_convo" | "decline_convo",
+    unauthorizedMessage: string,
+  ): void {
+    const invite = this.getPendingInviteForJoinedPlayer(
+      ws,
+      playerId,
+      convoId,
+      unauthorizedMessage,
+    );
+    if (!invite) {
+      return;
+    }
+    this.game.enqueue({
+      type,
+      playerId: invite.playerId,
+      data: { convoId },
+    });
+  }
+
+  private handleEndConversationMessage(
+    ws: WebSocket,
+    playerId: string | null,
+  ): void {
+    const convo = this.getConversationForJoinedPlayer(playerId);
+    if (!convo) {
+      this.sendError(ws, "Not currently in a conversation");
+      return;
+    }
+    this.game.enqueue({
+      type: "end_convo",
+      playerId: convo.playerId,
+      data: { convoId: convo.id },
+    });
+  }
+
+  private handleAttackMessage(playerId: string | null, targetId: string): void {
+    this.enqueueIfPlayerJoined(playerId, (joinedPlayerId) => ({
+      type: "attack",
+      playerId: joinedPlayerId,
+      data: { targetId },
+    }));
+  }
+
+  private handlePickupMessage(playerId: string | null, entityId: string): void {
+    this.enqueueIfPlayerJoined(playerId, (joinedPlayerId) => ({
+      type: "pickup",
+      playerId: joinedPlayerId,
+      data: { entityId },
+    }));
+  }
+
+  private handlePickupNearbyMessage(playerId: string | null): void {
+    this.withJoinedPlayerId(playerId, (joinedPlayerId) => {
+      if (!this.bearManager) {
+        return;
+      }
+      const nearestId = this.bearManager.findNearestPickupable(joinedPlayerId);
+      if (!nearestId) {
+        return;
+      }
+      this.game.enqueue({
+        type: "pickup",
+        playerId: joinedPlayerId,
+        data: { entityId: nearestId },
+      });
+    });
+  }
+
+  private handleEatMessage(playerId: string | null, item: string): void {
+    this.enqueueIfPlayerJoined(playerId, (joinedPlayerId) => ({
+      type: "eat",
+      playerId: joinedPlayerId,
+      data: { item },
+    }));
+  }
+
   private buildFullState(playerId: string | null): FullGameState {
     const conversations = playerId
       ? this.game.conversations
@@ -611,14 +746,9 @@ export class GameWebSocketServer {
       : [];
 
     const entities = this.entityManager
-      ? this.entityManager.getAll().map((e) => ({
-          id: e.id,
-          type: e.type,
-          x: e.position.x,
-          y: e.position.y,
-          properties: e.properties,
-          destroyed: e.destroyed,
-        }))
+      ? this.entityManager
+          .getAll()
+          .map((entity) => serializeWorldEntity(entity))
       : undefined;
 
     return {
@@ -679,7 +809,10 @@ export class GameWebSocketServer {
     };
     this.debugEvents.push(item);
     if (this.debugEvents.length > DEBUG_EVENT_BUFFER_MAX) {
-      this.debugEvents.splice(0, this.debugEvents.length - DEBUG_EVENT_BUFFER_MAX);
+      this.debugEvents.splice(
+        0,
+        this.debugEvents.length - DEBUG_EVENT_BUFFER_MAX,
+      );
     }
     this.broadcastToDebugSubscribers({
       type: "debug_event",
@@ -696,37 +829,12 @@ export class GameWebSocketServer {
     this.publishDebugEvent(event);
   }
 
-  private resolveConversation(event: GameEvent): Conversation | undefined {
-    const fromEvent = event.data?.conversation as Conversation | undefined;
-    if (fromEvent) return fromEvent;
-
-    const convoId = event.data?.convoId;
-    return typeof convoId === "number"
-      ? this.game.conversations.getConversation(convoId)
-      : undefined;
-  }
-
-  private resolveParticipantIds(
-    event: GameEvent,
-    conversation: Conversation,
-  ): string[] {
-    const fromEvent = event.data?.participantIds;
-    if (
-      Array.isArray(fromEvent) &&
-      fromEvent.length === 2 &&
-      fromEvent.every((value) => typeof value === "string")
-    ) {
-      return fromEvent;
-    }
-
-    return [conversation.player1Id, conversation.player2Id];
-  }
-
   private buildDebugEventFromGameEvent(
     event: GameEvent,
     conversation: Conversation,
   ): DebugFeedEventPayload | null {
-    const participantLabel = this.describeConversationParticipants(conversation);
+    const participantLabel =
+      this.describeConversationParticipants(conversation);
 
     switch (event.type) {
       case "convo_started":
@@ -800,13 +908,83 @@ export class GameWebSocketServer {
 
   /** Send the current inventory state to a specific player. */
   private sendInventoryUpdate(playerId: string): void {
-    if (!this.bearManager) return;
+    const message = this.buildInventoryUpdateMessage(playerId);
+    if (message) {
+      this.sendToPlayer(playerId, message);
+    }
+  }
+
+  private getJoinedPlayerId(playerId: string | null): string | null {
+    return playerId;
+  }
+
+  private withJoinedPlayerId(
+    playerId: string | null,
+    callback: (playerId: string) => void,
+  ): void {
+    const joinedPlayerId = this.getJoinedPlayerId(playerId);
+    if (!joinedPlayerId) {
+      return;
+    }
+    callback(joinedPlayerId);
+  }
+
+  private enqueueIfPlayerJoined(
+    playerId: string | null,
+    buildCommand: (playerId: string) => Command,
+  ): void {
+    this.withJoinedPlayerId(playerId, (joinedPlayerId) => {
+      this.game.enqueue(buildCommand(joinedPlayerId));
+    });
+  }
+
+  private getConversationForJoinedPlayer(
+    playerId: string | null,
+  ): (Conversation & { playerId: string }) | null {
+    const joinedPlayerId = this.getJoinedPlayerId(playerId);
+    if (!joinedPlayerId) {
+      return null;
+    }
+    const conversation =
+      this.game.conversations.getPlayerConversation(joinedPlayerId);
+    if (!conversation) {
+      return null;
+    }
+    return { ...conversation, playerId: joinedPlayerId };
+  }
+
+  private getPendingInviteForJoinedPlayer(
+    ws: WebSocket,
+    playerId: string | null,
+    convoId: number,
+    unauthorizedMessage: string,
+  ): { playerId: string; convo: Conversation } | null {
+    const joinedPlayerId = this.getJoinedPlayerId(playerId);
+    if (!joinedPlayerId) {
+      return null;
+    }
+    const convo = this.game.conversations.getConversation(convoId);
+    if (!convo || convo.state !== "invited") {
+      this.sendError(ws, "Conversation invite is no longer available");
+      return null;
+    }
+    if (convo.player2Id !== joinedPlayerId) {
+      this.sendError(ws, unauthorizedMessage);
+      return null;
+    }
+    return { playerId: joinedPlayerId, convo };
+  }
+
+  private buildInventoryUpdateMessage(playerId: string): ServerMessage | null {
+    if (!this.bearManager) {
+      return null;
+    }
     const items = this.bearManager.getInventoryItems(playerId);
     const capacity = this.bearManager.getInventoryCapacity();
-    this.sendToPlayer(playerId, {
+    return {
       type: "inventory_update",
       data: { playerId, items, capacity },
-    });
+    };
   }
 
   private send(ws: WebSocket, message: ServerMessage): void {
@@ -853,7 +1031,9 @@ export class GameWebSocketServer {
 
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
-        const idx = this.screenshotWaiters.indexOf(resolve as (png: string) => void);
+        const idx = this.screenshotWaiters.indexOf(
+          resolve as (png: string) => void,
+        );
         if (idx >= 0) this.screenshotWaiters.splice(idx, 1);
         resolve(null);
       }, timeoutMs);

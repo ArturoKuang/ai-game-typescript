@@ -1,3 +1,4 @@
+import { manhattanDistance } from "../engine/spatial.js";
 /**
  * GOAP backward A* planner.
  *
@@ -63,7 +64,10 @@ export function plan(
     open.sort(
       (a, b) => a.cost + a.unsatisfied.size - (b.cost + b.unsatisfied.size),
     );
-    const node = open.shift()!;
+    const node = open.shift();
+    if (!node) {
+      break;
+    }
 
     // Check if all unsatisfied predicates are now met by currentState
     if (allSatisfied(node.unsatisfied, currentState)) {
@@ -113,9 +117,7 @@ export function plan(
         if (currentState.get(proximityKey) !== true) {
           const targetPos = resolveProximityTarget(action, ctx);
           if (targetPos) {
-            const dist =
-              Math.abs(targetPos.x - ctx.npcPosition.x) +
-              Math.abs(targetPos.y - ctx.npcPosition.y);
+            const dist = manhattanDistance(targetPos, ctx.npcPosition);
             gotoCost = dist * 0.5;
             gotoStep = { actionId: GOTO_ACTION_ID, targetPosition: targetPos };
             // Remove the proximity predicate from unsatisfied since goto handles it
@@ -165,9 +167,7 @@ function resolveProximityTarget(
       let minDist = Number.POSITIVE_INFINITY;
       for (const player of ctx.otherPlayers) {
         if (player.state === "conversing") continue;
-        const dist =
-          Math.abs(player.x - ctx.npcPosition.x) +
-          Math.abs(player.y - ctx.npcPosition.y);
+        const dist = manhattanDistance(player, ctx.npcPosition);
         if (dist < minDist) {
           minDist = dist;
           closestPlayer = { x: Math.round(player.x), y: Math.round(player.y) };
@@ -186,14 +186,19 @@ function resolveProximityTarget(
       );
     }
 
-    return findClosestEntityPosition(ctx.entityManager.getByType(req.target), ctx);
+    return findClosestEntityPosition(
+      ctx.entityManager.getByType(req.target),
+      ctx,
+    );
   }
 
   return null;
 }
 
 function findClosestEntityPosition(
-  entities: EntityManagerInterface["getByType"] extends (...args: never[]) => infer T
+  entities: EntityManagerInterface["getByType"] extends (
+    ...args: never[]
+  ) => infer T
     ? T
     : never,
   ctx: PlanningContext,
@@ -206,9 +211,7 @@ function findClosestEntityPosition(
     if (entity.destroyed) continue;
     const target = toApproachPosition(entity.position, ctx);
     if (!target) continue;
-    const dist =
-      Math.abs(target.x - ctx.npcPosition.x) +
-      Math.abs(target.y - ctx.npcPosition.y);
+    const dist = manhattanDistance(target, ctx.npcPosition);
     if (dist < minDist) {
       minDist = dist;
       closest = target;
@@ -237,10 +240,8 @@ function toApproachPosition(
   }
 
   candidates.sort((a, b) => {
-    const da =
-      Math.abs(a.x - ctx.npcPosition.x) + Math.abs(a.y - ctx.npcPosition.y);
-    const db =
-      Math.abs(b.x - ctx.npcPosition.x) + Math.abs(b.y - ctx.npcPosition.y);
+    const da = manhattanDistance(a, ctx.npcPosition);
+    const db = manhattanDistance(b, ctx.npcPosition);
     return da - db;
   });
 

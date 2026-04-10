@@ -37,6 +37,10 @@ import {
   snapshotConversation,
 } from "./conversation.js";
 import { GameLogger } from "./logger.js";
+import {
+  HUMAN_DEFAULT_PATH_SPEED,
+  computeNpcPathSpeed,
+} from "./movementConfig.js";
 import { findPath } from "./pathfinding.js";
 import { SeededRNG } from "./rng.js";
 import type {
@@ -159,17 +163,21 @@ export class GameLoop {
       throw new Error(`Player ${params.id} already exists`);
     }
 
+    const isNpc = params.isNpc ?? false;
+    const defaultPathSpeed = isNpc
+      ? computeNpcPathSpeed(params.id)
+      : HUMAN_DEFAULT_PATH_SPEED;
     const player: Player = {
       id: params.id,
       name: params.name,
       description: params.description ?? "",
       personality: params.personality,
-      isNpc: params.isNpc ?? false,
+      isNpc,
       isWaitingForResponse: false,
       x: params.x,
       y: params.y,
       orientation: "down",
-      pathSpeed: params.speed ?? 1.0,
+      pathSpeed: params.speed ?? defaultPathSpeed,
       state: "idle",
       vx: 0,
       vy: 0,
@@ -236,12 +244,7 @@ export class GameLoop {
     }
 
     player.isWaitingForResponse = waiting;
-    this.emit({
-      tick: this.tick_,
-      type: "player_update",
-      playerId,
-      data: { player: { ...player } },
-    });
+    this.emit(this.buildPlayerUpdateEvent(player));
     return true;
   }
 
@@ -425,7 +428,7 @@ export class GameLoop {
     for (const cmd of commands) {
       switch (cmd.type) {
         case "spawn": {
-          try {
+          if (!this.players_.has(cmd.playerId)) {
             this.spawnPlayer({
               id: cmd.playerId,
               name: cmd.data.name,
@@ -437,8 +440,6 @@ export class GameLoop {
               speed: cmd.data.speed,
               traits: cmd.data.traits,
             });
-          } catch {
-            // Player already exists — skip
           }
           break;
         }
@@ -459,12 +460,12 @@ export class GameLoop {
           if (!target || cmd.playerId === cmd.data.targetId) {
             break;
           }
-          try {
-            const convo = this.convoManager_.startConversation(
-              cmd.playerId,
-              cmd.data.targetId,
-              this.tick_,
-            );
+          const convo = this.convoManager_.tryStartConversation(
+            cmd.playerId,
+            cmd.data.targetId,
+            this.tick_,
+          );
+          if (convo) {
             this.emit({
               tick: this.tick_,
               type: "convo_started",
@@ -473,35 +474,31 @@ export class GameLoop {
                 targetId: cmd.data.targetId,
               }),
             });
-          } catch {
-            // Already in conversation — skip
           }
           break;
         }
         case "accept_convo": {
-          try {
-            const convo = this.convoManager_.acceptInvite(
-              cmd.data.convoId,
-              cmd.playerId,
-            );
+          const convo = this.convoManager_.tryAcceptInvite(
+            cmd.data.convoId,
+            cmd.playerId,
+          );
+          if (convo) {
             this.emit({
               tick: this.tick_,
               type: "convo_accepted",
               playerId: cmd.playerId,
               data: this.buildConversationEventData(convo),
             });
-          } catch {
-            // Invalid invite action — skip
           }
           break;
         }
         case "decline_convo": {
-          try {
-            const convo = this.convoManager_.declineInvite(
-              cmd.data.convoId,
-              cmd.playerId,
-              this.tick_,
-            );
+          const convo = this.convoManager_.tryDeclineInvite(
+            cmd.data.convoId,
+            cmd.playerId,
+            this.tick_,
+          );
+          if (convo) {
             this.emit({
               tick: this.tick_,
               type: "convo_declined",
@@ -516,8 +513,6 @@ export class GameLoop {
                 reason: convo.endedReason,
               }),
             });
-          } catch {
-            // Invalid invite action — skip
           }
           break;
         }
@@ -529,11 +524,11 @@ export class GameLoop {
           ) {
             break;
           }
-          try {
-            const ended = this.convoManager_.endConversation(
-              cmd.data.convoId,
-              this.tick_,
-            );
+          const ended = this.convoManager_.tryEndConversation(
+            cmd.data.convoId,
+            this.tick_,
+          );
+          if (ended) {
             this.emit({
               tick: this.tick_,
               type: "convo_ended",
@@ -542,33 +537,29 @@ export class GameLoop {
                 reason: ended.endedReason,
               }),
             });
-          } catch {
-            // Conversation not found or already ended
           }
           break;
         }
         case "say": {
-          try {
-            const msg = this.convoManager_.addMessage(
-              cmd.data.convoId,
-              cmd.playerId,
-              cmd.data.content,
-              this.tick_,
-            );
+          const result = this.convoManager_.tryAddMessage(
+            cmd.data.convoId,
+            cmd.playerId,
+            cmd.data.content,
+            this.tick_,
+          );
+          if (result) {
             this.emit({
               tick: this.tick_,
               type: "convo_message",
               playerId: cmd.playerId,
               data: {
-                message: { ...msg },
-                convoId: cmd.data.convoId,
+                message: { ...result.message },
+                convoId: result.conversation.id,
                 participantIds: this.convoManager_.getParticipantIds(
-                  this.convoManager_.getConversation(cmd.data.convoId)!,
+                  result.conversation,
                 ),
               },
             });
-          } catch {
-            // Not in active conversation — skip
           }
           break;
         }
@@ -637,12 +628,7 @@ export class GameLoop {
     // 4. Emit player_update for moving players (for broadcasting)
     for (const player of this.players_.values()) {
       if (player.state === "walking" || player.vx !== 0 || player.vy !== 0) {
-        const evt: GameEvent = {
-          tick: this.tick_,
-          type: "player_update",
-          playerId: player.id,
-          data: { player: { ...player } },
-        };
+        const evt = this.buildPlayerUpdateEvent(player);
         this.emit(evt);
         events.push(evt);
       }
@@ -1152,12 +1138,7 @@ export class GameLoop {
       }
 
       if (player.state !== prevState || player.currentConvoId !== prevConvoId) {
-        events.push({
-          tick: this.tick_,
-          type: "player_update",
-          playerId: player.id,
-          data: { player: { ...player } },
-        });
+        events.push(this.buildPlayerUpdateEvent(player));
       }
     }
 
@@ -1183,6 +1164,15 @@ export class GameLoop {
           : { ...conversation },
       participantIds: this.convoManager_.getParticipantIds(conversation),
       ...extra,
+    };
+  }
+
+  private buildPlayerUpdateEvent(player: Player): GameEvent {
+    return {
+      tick: this.tick_,
+      type: "player_update",
+      playerId: player.id,
+      data: { player: { ...player } },
     };
   }
 

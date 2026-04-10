@@ -14,6 +14,7 @@ export class World {
   private tiles: Tile[][];
   /** Points of interest on the map (e.g. bench, fountain) that players can interact with. */
   private activities: Activity[];
+  private activityById: Map<number, Activity>;
   /** Predefined positions where new players can be placed on the map. */
   private spawns: Position[];
 
@@ -21,7 +22,16 @@ export class World {
     this.width = mapData.width;
     this.height = mapData.height;
     this.activities = mapData.activities;
+    this.activityById = new Map(
+      this.activities.map((activity) => [activity.id, activity]),
+    );
     this.spawns = mapData.spawnPoints;
+    const activityByPosition = new Map(
+      this.activities.map((activity) => [
+        `${activity.x},${activity.y}`,
+        activity,
+      ]),
+    );
 
     // Build tile grid
     this.tiles = [];
@@ -29,7 +39,7 @@ export class World {
       const row: Tile[] = [];
       for (let x = 0; x < this.width; x++) {
         const tileType: TileType = mapData.tiles[y]?.[x] ?? "wall";
-        const activity = this.activities.find((a) => a.x === x && a.y === y);
+        const activity = activityByPosition.get(`${x},${y}`);
         row.push({ type: tileType, activityId: activity?.id });
       }
       this.tiles.push(row);
@@ -70,7 +80,7 @@ export class World {
   getActivity(x: number, y: number): Activity | undefined {
     const tile = this.getTile(x, y);
     if (!tile?.activityId) return undefined;
-    return this.activities.find((a) => a.id === tile.activityId);
+    return this.activityById.get(tile.activityId);
   }
 
   getActivities(): Activity[] {

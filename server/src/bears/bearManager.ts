@@ -1,3 +1,12 @@
+import type { EntityManager } from "../autonomy/entityManager.js";
+import {
+  addItem,
+  createInventory,
+  hasItem,
+  removeItem,
+} from "../autonomy/inventory.js";
+import type { NpcInventory, WorldEntity } from "../autonomy/types.js";
+import { snapshotConversation } from "../engine/conversation.js";
 /**
  * Bear and combat system — bear AI, player attacks, loot, and GoL spawning.
  *
@@ -6,50 +15,51 @@
  * and evaluate the GoL cellular automaton for population control.
  */
 import type { GameLoop } from "../engine/gameLoop.js";
-import type { GameEvent, Position } from "../engine/types.js";
-import { snapshotConversation } from "../engine/conversation.js";
-import type { NpcInventory } from "../autonomy/types.js";
-import { EntityManager } from "../autonomy/entityManager.js";
+import { manhattanDistance } from "../engine/spatial.js";
+import type { GameEvent, Player, Position } from "../engine/types.js";
 import {
-  addItem,
-  removeItem,
-  hasItem,
-  createInventory,
-} from "../autonomy/inventory.js";
-import {
-  BEAR_HP,
-  BEAR_DAMAGE,
-  BEAR_ATTACK_COOLDOWN,
   BEAR_AGGRO_RADIUS,
+  BEAR_ATTACK_COOLDOWN,
   BEAR_ATTACK_RANGE,
-  BEAR_WANDER_INTERVAL,
-  PLAYER_DEFAULT_HP,
-  PLAYER_ATTACK_DAMAGE,
-  PLAYER_ATTACK_RANGE,
-  PLAYER_ATTACK_COOLDOWN,
+  BEAR_DAMAGE,
+  BEAR_HP,
+  BEAR_INITIAL_COUNT,
   BEAR_MEAT_HEAL,
-  PLAYER_INVENTORY_CAPACITY,
-  GOL_EVAL_INTERVAL,
-  GOL_NEIGHBORHOOD_RADIUS,
-  GOL_BIRTH_MIN,
-  GOL_BIRTH_MAX,
-  GOL_SURVIVAL_MIN,
-  GOL_SURVIVAL_MAX,
-  GOL_LONELINESS_TICKS,
   BEAR_POPULATION_CAP,
   BEAR_POPULATION_MIN,
-  BEAR_INITIAL_COUNT,
   BEAR_SPAWN_PLAYER_BUFFER,
+  BEAR_WANDER_INTERVAL,
+  GOL_BIRTH_MAX,
+  GOL_BIRTH_MIN,
+  GOL_EVAL_INTERVAL,
+  GOL_LONELINESS_TICKS,
+  GOL_NEIGHBORHOOD_RADIUS,
+  GOL_SURVIVAL_MAX,
+  GOL_SURVIVAL_MIN,
+  PLAYER_ATTACK_COOLDOWN,
+  PLAYER_ATTACK_DAMAGE,
+  PLAYER_ATTACK_RANGE,
+  PLAYER_DEFAULT_HP,
+  PLAYER_INVENTORY_CAPACITY,
   WILDERNESS_ACTIVITY_BUFFER,
 } from "./bearConfig.js";
 
 export type BearState = "idle" | "aggro" | "attacking" | "dead";
 
-export interface BearCommand {
-  type: "attack" | "pickup" | "eat";
-  playerId: string;
-  data: { targetId?: string; entityId?: string; item?: string };
+export type BearCommand =
+  | { type: "attack"; playerId: string; data: { targetId: string } }
+  | { type: "pickup"; playerId: string; data: { entityId: string } }
+  | { type: "eat"; playerId: string; data: { item: string } };
+
+type CombatPlayer = Pick<Player, "id" | "x" | "y" | "hp" | "maxHp">;
+
+interface PickupResolution {
+  itemId: string;
+  quantity: number;
 }
+
+const CONSUMABLE_ITEMS = ["bear_meat", "raw_food", "cooked_food"] as const;
+type ConsumableItem = (typeof CONSUMABLE_ITEMS)[number];
 
 export class BearManager {
   private wildernessZones: Position[] = [];
@@ -66,33 +76,17 @@ export class BearManager {
     private entities: EntityManager,
   ) {
     this.wildernessZones = this.computeWildernessZones();
-    this.game.onCommand("attack", (cmd) => {
-      this.enqueue({
-        type: "attack",
-        playerId: cmd.playerId,
-        data: { targetId: cmd.data.targetId },
-      });
-    });
-    this.game.onCommand("pickup", (cmd) => {
-      this.enqueue({
-        type: "pickup",
-        playerId: cmd.playerId,
-        data: { entityId: cmd.data.entityId },
-      });
-    });
-    this.game.onCommand("eat", (cmd) => {
-      this.enqueue({
-        type: "eat",
-        playerId: cmd.playerId,
-        data: { item: cmd.data.item },
-      });
-    });
+    this.registerCommandForwarders();
     this.game.onAfterTick((result) => this.update(result.tick));
   }
 
   /** Seed initial bear population at boot. */
   seedInitialBears(): void {
-    for (let i = 0; i < BEAR_INITIAL_COUNT && i < this.wildernessZones.length; i++) {
+    for (
+      let i = 0;
+      i < BEAR_INITIAL_COUNT && i < this.wildernessZones.length;
+      i++
+    ) {
       this.seedBear(0);
     }
   }
@@ -146,8 +140,7 @@ export class BearManager {
     this.processCommands(tick);
 
     // 2. Run AI for each live bear
-    for (const bear of this.entities.getByType("bear")) {
-      if (bear.properties.state === "dead") continue;
+    for (const bear of this.getLiveBears()) {
       this.updateBearAI(bear.id, tick);
     }
 
@@ -177,23 +170,17 @@ export class BearManager {
   private processCommands(tick: number): void {
     const cmds = this.commandQueue.splice(0);
     for (const cmd of cmds) {
-      switch (cmd.type) {
-        case "attack":
-          this.handlePlayerAttack(cmd.playerId, cmd.data.targetId!, tick);
-          break;
-        case "pickup":
-          this.handlePickup(cmd.playerId, cmd.data.entityId!, tick);
-          break;
-        case "eat":
-          this.handleEat(cmd.playerId, cmd.data.item!, tick);
-          break;
-      }
+      this.processCommand(cmd, tick);
     }
   }
 
-  private handlePlayerAttack(playerId: string, targetId: string, tick: number): void {
-    const attacker = this.game.getPlayer(playerId);
-    if (!attacker || !this.isAlive(attacker) || targetId === playerId) {
+  private handlePlayerAttack(
+    playerId: string,
+    targetId: string,
+    tick: number,
+  ): void {
+    const attacker = this.getLivingPlayer(playerId);
+    if (!attacker || targetId === playerId) {
       return;
     }
 
@@ -204,12 +191,7 @@ export class BearManager {
     }
 
     const bear = this.entities.get(targetId);
-    if (
-      !bear ||
-      bear.destroyed ||
-      bear.type !== "bear" ||
-      bear.properties.state === "dead"
-    ) {
+    if (!this.isActiveBear(bear)) {
       return;
     }
 
@@ -217,20 +199,8 @@ export class BearManager {
   }
 
   private handlePlayerVsPlayerAttack(
-    attacker: {
-      id: string;
-      x: number;
-      y: number;
-      hp?: number;
-      maxHp?: number;
-    },
-    target: {
-      id: string;
-      x: number;
-      y: number;
-      hp?: number;
-      maxHp?: number;
-    },
+    attacker: CombatPlayer,
+    target: CombatPlayer,
     tick: number,
   ): void {
     if (!this.isAlive(target)) {
@@ -241,10 +211,10 @@ export class BearManager {
       return;
     }
 
-    const maxHp = target.maxHp ?? PLAYER_DEFAULT_HP;
-    const currentHp = target.hp ?? maxHp;
-    const newHp = Math.max(0, currentHp - PLAYER_ATTACK_DAMAGE);
-    target.hp = newHp;
+    const { hp: newHp } = this.applyDamageToPlayer(
+      target,
+      PLAYER_ATTACK_DAMAGE,
+    );
 
     this.emitEvent(tick, "player_attack", attacker.id, {
       targetId: target.id,
@@ -271,31 +241,25 @@ export class BearManager {
   }
 
   private handlePlayerVsBearAttack(
-    attacker: {
-      id: string;
-      x: number;
-      y: number;
-      hp?: number;
-      maxHp?: number;
-    },
+    attacker: CombatPlayer,
     bearId: string,
     tick: number,
   ): void {
     const bear = this.entities.get(bearId);
+    if (!this.isActiveBear(bear)) {
+      return;
+    }
+
     if (
-      !bear ||
-      bear.destroyed ||
-      bear.type !== "bear" ||
-      bear.properties.state === "dead"
+      !this.tryBeginPlayerAttack(attacker.id, attacker, bear.position, tick)
     ) {
       return;
     }
 
-    if (!this.tryBeginPlayerAttack(attacker.id, attacker, bear.position, tick)) {
-      return;
-    }
-
-    const newHp = Math.max(0, (bear.properties.hp as number) - PLAYER_ATTACK_DAMAGE);
+    const newHp = Math.max(
+      0,
+      (bear.properties.hp as number) - PLAYER_ATTACK_DAMAGE,
+    );
     this.entities.updateProperty(bearId, "hp", newHp);
 
     this.emitEvent(tick, "player_attack", attacker.id, {
@@ -319,37 +283,24 @@ export class BearManager {
     const entity = this.entities.get(entityId);
     if (!entity || entity.destroyed) return;
 
-    // Determine item from entity type
-    let itemId: string;
-    let quantity: number;
-    if (entity.type === "bear_meat") {
-      itemId = "bear_meat";
-      quantity = 1;
-    } else if (entity.type === "ground_item") {
-      itemId = entity.properties.itemId as string;
-      quantity = (entity.properties.quantity as number) ?? 1;
-      if (!itemId) return;
-    } else {
-      return; // Not a pickupable entity
-    }
-
-    // Range check
-    const dist = Math.abs(player.x - entity.position.x) + Math.abs(player.y - entity.position.y);
-    if (dist > 1.5) return;
-
-    // Capacity check: count distinct item types in inventory
-    const inv = this.getInventory(playerId);
-    if (inv.size >= PLAYER_INVENTORY_CAPACITY && !inv.has(itemId)) return;
+    const pickup = this.resolvePickupEntity(entity);
+    if (!pickup) return;
+    if (!this.isWithinRange(player, entity.position, 1.5)) return;
+    if (!this.canAddInventoryItem(playerId, pickup.itemId)) return;
 
     // Add to inventory and destroy ground entity
-    addItem(inv, itemId, quantity);
+    addItem(this.getInventory(playerId), pickup.itemId, pickup.quantity);
     this.entities.destroy(entityId);
 
-    this.emitEvent(tick, "item_pickup", playerId, { item: itemId, quantity, entityId });
+    this.emitEvent(tick, "item_pickup", playerId, {
+      item: pickup.itemId,
+      quantity: pickup.quantity,
+      entityId,
+    });
   }
 
   private handleEat(playerId: string, item: string, tick: number): void {
-    if (!["bear_meat", "raw_food", "cooked_food"].includes(item)) return;
+    if (!this.isConsumableItem(item)) return;
 
     const player = this.game.getPlayer(playerId);
     if (!player) return;
@@ -360,14 +311,15 @@ export class BearManager {
     removeItem(inv, item);
 
     if (item === "bear_meat") {
-      const maxHp = player.maxHp ?? PLAYER_DEFAULT_HP;
-      const currentHp = player.hp ?? maxHp;
-      const newHp = Math.min(maxHp, currentHp + BEAR_MEAT_HEAL);
-      player.hp = newHp;
+      const {
+        hp: newHp,
+        maxHp,
+        change,
+      } = this.healPlayer(player, BEAR_MEAT_HEAL);
 
       this.emitEvent(tick, "player_heal", playerId, {
         item: "bear_meat",
-        healAmount: newHp - currentHp,
+        healAmount: change,
         hp: newHp,
         maxHp,
       });
@@ -413,14 +365,17 @@ export class BearManager {
     }
   }
 
-  private bearIdle(bearId: string, tick: number, players: { x: number; y: number; id: string }[]): void {
+  private bearIdle(
+    bearId: string,
+    tick: number,
+    players: { x: number; y: number; id: string }[],
+  ): void {
     const bear = this.entities.get(bearId);
     if (!bear) return;
 
     // Check for aggro
     for (const p of players) {
-      const dist = Math.abs(p.x - bear.position.x) + Math.abs(p.y - bear.position.y);
-      if (dist <= BEAR_AGGRO_RADIUS) {
+      if (this.isWithinRange(p, bear.position, BEAR_AGGRO_RADIUS)) {
         this.entities.updateProperty(bearId, "state", "aggro");
         this.entities.updateProperty(bearId, "targetPlayerId", p.id);
         return;
@@ -438,22 +393,19 @@ export class BearManager {
     const bear = this.entities.get(bearId);
     if (!bear) return;
 
-    const targetId = bear.properties.targetPlayerId as string;
-    const target = this.game.getPlayer(targetId);
+    const target = this.getBearTarget(bear);
 
     // Lost target — go idle
     if (!target) {
-      this.entities.updateProperty(bearId, "state", "idle");
-      this.entities.updateProperty(bearId, "targetPlayerId", "");
+      this.clearBearTarget(bearId);
       return;
     }
 
-    const dist = Math.abs(target.x - bear.position.x) + Math.abs(target.y - bear.position.y);
+    const dist = manhattanDistance(target.player, bear.position);
 
     // Target escaped — deaggro
     if (dist > BEAR_AGGRO_RADIUS * 2) {
-      this.entities.updateProperty(bearId, "state", "idle");
-      this.entities.updateProperty(bearId, "targetPlayerId", "");
+      this.clearBearTarget(bearId);
       return;
     }
 
@@ -466,7 +418,7 @@ export class BearManager {
     // Chase: greedy move toward target (one tile per wander interval)
     const lastMove = (bear.properties.lastMoveTick as number) ?? 0;
     if (tick - lastMove >= BEAR_WANDER_INTERVAL) {
-      this.bearChase(bearId, target, tick);
+      this.bearChase(bearId, target.player, tick);
     }
   }
 
@@ -474,17 +426,15 @@ export class BearManager {
     const bear = this.entities.get(bearId);
     if (!bear) return;
 
-    const targetId = bear.properties.targetPlayerId as string;
-    const target = this.game.getPlayer(targetId);
+    const target = this.getBearTarget(bear);
 
     // Lost target
     if (!target) {
-      this.entities.updateProperty(bearId, "state", "idle");
-      this.entities.updateProperty(bearId, "targetPlayerId", "");
+      this.clearBearTarget(bearId);
       return;
     }
 
-    const dist = Math.abs(target.x - bear.position.x) + Math.abs(target.y - bear.position.y);
+    const dist = manhattanDistance(target.player, bear.position);
 
     // Target moved out of range
     if (dist > BEAR_ATTACK_RANGE + 1) {
@@ -493,25 +443,23 @@ export class BearManager {
     }
 
     // Attack on cooldown
-    const lastAttack = (bear.properties.lastAttackTick as number) ?? -Infinity;
+    const lastAttack =
+      (bear.properties.lastAttackTick as number) ?? Number.NEGATIVE_INFINITY;
     if (tick - lastAttack < BEAR_ATTACK_COOLDOWN) return;
 
     this.entities.updateProperty(bearId, "lastAttackTick", tick);
 
     // Deal damage to player
-    const maxHp = target.maxHp ?? PLAYER_DEFAULT_HP;
-    const currentHp = target.hp ?? maxHp;
-    const newHp = Math.max(0, currentHp - BEAR_DAMAGE);
-    target.hp = newHp;
+    const { hp: newHp } = this.applyDamageToPlayer(target.player, BEAR_DAMAGE);
 
     this.emitEvent(tick, "bear_attack", undefined, {
       bearId,
-      playerId: targetId,
+      playerId: target.playerId,
       damage: BEAR_DAMAGE,
       playerHp: newHp,
     });
 
-    this.emitEvent(tick, "player_damage", targetId, {
+    this.emitEvent(tick, "player_damage", target.playerId, {
       source: bearId,
       damage: BEAR_DAMAGE,
       hp: newHp,
@@ -519,9 +467,8 @@ export class BearManager {
 
     // Player death
     if (newHp <= 0) {
-      this.handlePlayerDeath(targetId, tick);
-      this.entities.updateProperty(bearId, "state", "idle");
-      this.entities.updateProperty(bearId, "targetPlayerId", "");
+      this.handlePlayerDeath(target.playerId, tick);
+      this.clearBearTarget(bearId);
     }
   }
 
@@ -542,7 +489,11 @@ export class BearManager {
     this.entities.updateProperty(bearId, "lastMoveTick", tick);
   }
 
-  private bearChase(bearId: string, target: { x: number; y: number }, tick: number): void {
+  private bearChase(
+    bearId: string,
+    target: { x: number; y: number },
+    tick: number,
+  ): void {
     const bear = this.entities.get(bearId);
     if (!bear) return;
 
@@ -551,9 +502,9 @@ export class BearManager {
     if (neighbors.length === 0) return;
 
     let best = neighbors[0];
-    let bestDist = Math.abs(best.x - target.x) + Math.abs(best.y - target.y);
+    let bestDist = manhattanDistance(best, target);
     for (let i = 1; i < neighbors.length; i++) {
-      const d = Math.abs(neighbors[i].x - target.x) + Math.abs(neighbors[i].y - target.y);
+      const d = manhattanDistance(neighbors[i], target);
       if (d < bestDist) {
         best = neighbors[i];
         bestDist = d;
@@ -577,7 +528,8 @@ export class BearManager {
     const player = this.game.getPlayer(playerId);
     if (!player) return;
 
-    const conversation = this.game.conversations.getPlayerConversation(playerId);
+    const conversation =
+      this.game.conversations.getPlayerConversation(playerId);
     if (conversation && conversation.state !== "ended") {
       const ended = this.game.conversations.endConversation(
         conversation.id,
@@ -593,23 +545,7 @@ export class BearManager {
     }
 
     this.emitEvent(tick, "player_death", playerId, data);
-
-    // Respawn at a random spawn point with full HP
-    const spawns = this.game.world.getSpawnPoints();
-    const spawn = spawns[this.game.rng.nextInt(spawns.length)];
-    player.x = spawn.x;
-    player.y = spawn.y;
-    player.hp = player.maxHp ?? PLAYER_DEFAULT_HP;
-    player.state = "idle";
-    player.currentConvoId = undefined;
-    player.isWaitingForResponse = false;
-    player.path = undefined;
-    player.targetX = undefined;
-    player.targetY = undefined;
-    player.vx = 0;
-    player.vy = 0;
-    player.inputX = 0;
-    player.inputY = 0;
+    this.respawnPlayer(player);
   }
 
   // ---------------------------------------------------------------------------
@@ -627,11 +563,7 @@ export class BearManager {
       lonelinessTimer: 0,
       damage: BEAR_DAMAGE,
     });
-    this.emitEvent(tick, "bear_spawn", undefined, {
-      bearId: bear.id,
-      x: position.x,
-      y: position.y,
-    });
+    this.emitBearSpawn(tick, bear.id, position);
     return bear.id;
   }
 
@@ -639,24 +571,8 @@ export class BearManager {
     const bear = this.entities.get(bearId);
     if (!bear) return;
 
-    // Drop bear meat at bear's position
-    this.entities.spawn("bear_meat", { ...bear.position }, {
-      droppedAtTick: tick,
-    });
-    this.emitEvent(tick, "item_drop", undefined, {
-      item: "bear_meat",
-      x: bear.position.x,
-      y: bear.position.y,
-    });
-
-    this.emitEvent(tick, "bear_death", undefined, {
-      bearId,
-      reason,
-      x: bear.position.x,
-      y: bear.position.y,
-    });
-
-    this.entities.destroy(bearId);
+    this.dropBearMeat(tick, bear.position);
+    this.despawnBear(bearId, tick, reason, bear.position);
   }
 
   private seedBear(tick: number): void {
@@ -668,21 +584,19 @@ export class BearManager {
 
     // Try up to 10 times to find a spot away from players AND spawn points
     for (let attempt = 0; attempt < 10; attempt++) {
-      const pos = this.wildernessZones[this.game.rng.nextInt(this.wildernessZones.length)];
-      const nearPlayer = players.some(
-        (p) => Math.abs(p.x - pos.x) + Math.abs(p.y - pos.y) <= BEAR_SPAWN_PLAYER_BUFFER,
-      );
-      const nearSpawn = spawnPoints.some(
-        (s) => Math.abs(s.x - pos.x) + Math.abs(s.y - pos.y) <= BEAR_SPAWN_PLAYER_BUFFER,
-      );
-      if (!nearPlayer && !nearSpawn) {
+      const pos =
+        this.wildernessZones[
+          this.game.rng.nextInt(this.wildernessZones.length)
+        ];
+      if (!this.isBlockedBearSpawnPosition(pos, players, spawnPoints)) {
         this.spawnBear(pos, tick);
         return;
       }
     }
 
     // Fallback: spawn at any wilderness tile
-    const pos = this.wildernessZones[this.game.rng.nextInt(this.wildernessZones.length)];
+    const pos =
+      this.wildernessZones[this.game.rng.nextInt(this.wildernessZones.length)];
     this.spawnBear(pos, tick);
   }
 
@@ -691,84 +605,24 @@ export class BearManager {
   // ---------------------------------------------------------------------------
 
   evaluateGameOfLife(tick: number): void {
-    const liveBears = this.entities.getByType("bear").filter(
-      (b) => b.properties.state !== "dead",
+    const liveBears = this.getLiveBears();
+    const occupied = new Set(
+      liveBears.map((bear) => this.positionKey(bear.position)),
     );
 
-    const occupied = new Set(liveBears.map((b) => `${b.position.x},${b.position.y}`));
-
-    // Phase 1: Deaths (overcrowding / loneliness)
-    for (const bear of liveBears) {
-      const neighbors = this.countChebyshevNeighbors(bear.position, liveBears);
-
-      if (neighbors > GOL_SURVIVAL_MAX) {
-        // Overcrowding — despawn
-        this.emitEvent(tick, "bear_death", undefined, {
-          bearId: bear.id,
-          reason: "overcrowding",
-          x: bear.position.x,
-          y: bear.position.y,
-        });
-        this.entities.destroy(bear.id);
-      } else if (neighbors < GOL_SURVIVAL_MIN) {
-        // Isolation — increment loneliness timer
-        const timer = ((bear.properties.lonelinessTimer as number) ?? 0) + GOL_EVAL_INTERVAL;
-        if (timer >= GOL_LONELINESS_TICKS) {
-          this.emitEvent(tick, "bear_death", undefined, {
-            bearId: bear.id,
-            reason: "loneliness",
-            x: bear.position.x,
-            y: bear.position.y,
-          });
-          this.entities.destroy(bear.id);
-        } else {
-          this.entities.updateProperty(bear.id, "lonelinessTimer", timer);
-        }
-      } else {
-        // Has neighbors — reset loneliness
-        this.entities.updateProperty(bear.id, "lonelinessTimer", 0);
-      }
-    }
+    this.processGameOfLifeDeaths(tick, liveBears);
 
     // Phase 2: Births
     if (this.liveBearCount() >= BEAR_POPULATION_CAP) return;
 
     // Refresh live bears after deaths
-    const aliveBears = this.entities.getByType("bear").filter(
-      (b) => b.properties.state !== "dead",
-    );
-    const players = this.game.getPlayers();
-    const spawnPoints = this.game.world.getSpawnPoints();
-
-    // Shuffle wilderness zones for fairness (using seeded RNG)
-    const candidates = this.game.rng.shuffle([...this.wildernessZones]);
-
-    for (const pos of candidates) {
-      if (this.liveBearCount() >= BEAR_POPULATION_CAP) break;
-
-      const key = `${pos.x},${pos.y}`;
-      if (occupied.has(key)) continue;
-
-      // Don't spawn near players or spawn points
-      const nearPlayer = players.some(
-        (p) => Math.abs(p.x - pos.x) + Math.abs(p.y - pos.y) <= BEAR_SPAWN_PLAYER_BUFFER,
-      );
-      const nearSpawn = spawnPoints.some(
-        (s) => Math.abs(s.x - pos.x) + Math.abs(s.y - pos.y) <= BEAR_SPAWN_PLAYER_BUFFER,
-      );
-      if (nearPlayer || nearSpawn) continue;
-
-      const neighbors = this.countChebyshevNeighbors(pos, aliveBears);
-      if (neighbors >= GOL_BIRTH_MIN && neighbors <= GOL_BIRTH_MAX) {
-        this.spawnBear(pos, tick);
-      }
-    }
+    this.processGameOfLifeBirths(tick, occupied);
   }
 
   /** Count bears within Chebyshev distance (Moore neighborhood), excluding the tile itself. */
   private countChebyshevNeighbors(
     pos: Position,
-    bears: { position: Position }[],
+    bears: readonly { position: Position }[],
   ): number {
     let count = 0;
     for (const b of bears) {
@@ -799,8 +653,10 @@ export class BearManager {
         if (spawnSet.has(`${x},${y}`)) continue;
 
         // Exclude tiles near activities
-        const nearActivity = activities.some(
-          (a) => Math.abs(a.x - x) + Math.abs(a.y - y) <= WILDERNESS_ACTIVITY_BUFFER,
+        const nearActivity = this.isNearAnyPosition(
+          { x, y },
+          activities,
+          WILDERNESS_ACTIVITY_BUFFER,
         );
         if (nearActivity) continue;
 
@@ -815,7 +671,7 @@ export class BearManager {
   // ---------------------------------------------------------------------------
 
   private liveBearCount(): number {
-    return this.entities.getByType("bear").filter((b) => b.properties.state !== "dead").length;
+    return this.getLiveBears().length;
   }
 
   /** Find the nearest pickupable entity to a player (bear_meat or ground_item). */
@@ -833,9 +689,9 @@ export class BearManager {
 
     // Return the closest one
     let best = candidates[0];
-    let bestDist = Math.abs(best.position.x - player.x) + Math.abs(best.position.y - player.y);
+    let bestDist = manhattanDistance(best.position, player);
     for (let i = 1; i < candidates.length; i++) {
-      const d = Math.abs(candidates[i].position.x - player.x) + Math.abs(candidates[i].position.y - player.y);
+      const d = manhattanDistance(candidates[i].position, player);
       if (d < bestDist) {
         best = candidates[i];
         bestDist = d;
@@ -869,12 +725,12 @@ export class BearManager {
     target: Position,
     tick: number,
   ): boolean {
-    const dist = Math.abs(attacker.x - target.x) + Math.abs(attacker.y - target.y);
-    if (dist > PLAYER_ATTACK_RANGE + 1) {
+    if (!this.isWithinRange(attacker, target, PLAYER_ATTACK_RANGE + 1)) {
       return false;
     }
 
-    const lastAttack = this.playerAttackCooldowns.get(playerId) ?? -Infinity;
+    const lastAttack =
+      this.playerAttackCooldowns.get(playerId) ?? Number.NEGATIVE_INFINITY;
     if (tick - lastAttack < PLAYER_ATTACK_COOLDOWN) {
       return false;
     }
@@ -895,14 +751,12 @@ export class BearManager {
         if (other.id === playerId || !this.isAlive(other)) {
           return false;
         }
-        const dist = Math.abs(other.x - attacker.x) + Math.abs(other.y - attacker.y);
+        const dist = manhattanDistance(other, attacker);
         return dist <= PLAYER_ATTACK_RANGE + 1;
       })
       .sort((left, right) => {
-        const leftDist =
-          Math.abs(left.x - attacker.x) + Math.abs(left.y - attacker.y);
-        const rightDist =
-          Math.abs(right.x - attacker.x) + Math.abs(right.y - attacker.y);
+        const leftDist = manhattanDistance(left, attacker);
+        const rightDist = manhattanDistance(right, attacker);
         return leftDist - rightDist;
       });
 
@@ -927,5 +781,282 @@ export class BearManager {
     data: Record<string, unknown>,
   ): void {
     this.pendingEvents.push({ tick, type, playerId, data });
+  }
+
+  private registerCommandForwarders(): void {
+    this.game.onCommand("attack", (cmd) => {
+      this.enqueue({
+        type: "attack",
+        playerId: cmd.playerId,
+        data: { targetId: cmd.data.targetId },
+      });
+    });
+    this.game.onCommand("pickup", (cmd) => {
+      this.enqueue({
+        type: "pickup",
+        playerId: cmd.playerId,
+        data: { entityId: cmd.data.entityId },
+      });
+    });
+    this.game.onCommand("eat", (cmd) => {
+      this.enqueue({
+        type: "eat",
+        playerId: cmd.playerId,
+        data: { item: cmd.data.item },
+      });
+    });
+  }
+
+  private processCommand(cmd: BearCommand, tick: number): void {
+    switch (cmd.type) {
+      case "attack":
+        this.handlePlayerAttack(cmd.playerId, cmd.data.targetId, tick);
+        return;
+      case "pickup":
+        this.handlePickup(cmd.playerId, cmd.data.entityId, tick);
+        return;
+      case "eat":
+        this.handleEat(cmd.playerId, cmd.data.item, tick);
+        return;
+    }
+  }
+
+  private getLivingPlayer(playerId: string): Player | undefined {
+    const player = this.game.getPlayer(playerId);
+    return player && this.isAlive(player) ? player : undefined;
+  }
+
+  private getLiveBears(): WorldEntity[] {
+    return this.entities
+      .getByType("bear")
+      .filter((bear) => this.isActiveBear(bear));
+  }
+
+  private isActiveBear(bear: WorldEntity | undefined): bear is WorldEntity {
+    return (
+      !!bear &&
+      !bear.destroyed &&
+      bear.type === "bear" &&
+      bear.properties.state !== "dead"
+    );
+  }
+
+  private resolvePickupEntity(entity: WorldEntity): PickupResolution | null {
+    if (entity.type === "bear_meat") {
+      return { itemId: "bear_meat", quantity: 1 };
+    }
+    if (entity.type !== "ground_item") {
+      return null;
+    }
+    const itemId = entity.properties.itemId as string | undefined;
+    if (!itemId) {
+      return null;
+    }
+    return {
+      itemId,
+      quantity: (entity.properties.quantity as number) ?? 1,
+    };
+  }
+
+  private getBearTarget(
+    bear: WorldEntity,
+  ): { playerId: string; player: Player } | null {
+    const playerId = bear.properties.targetPlayerId as string | undefined;
+    if (!playerId) {
+      return null;
+    }
+    const player = this.game.getPlayer(playerId);
+    if (!player) {
+      return null;
+    }
+    return { playerId, player };
+  }
+
+  private clearBearTarget(bearId: string): void {
+    this.entities.updateProperty(bearId, "state", "idle");
+    this.entities.updateProperty(bearId, "targetPlayerId", "");
+  }
+
+  private canAddInventoryItem(playerId: string, itemId: string): boolean {
+    const inv = this.getInventory(playerId);
+    return inv.size < PLAYER_INVENTORY_CAPACITY || inv.has(itemId);
+  }
+
+  private isConsumableItem(item: string): item is ConsumableItem {
+    return (CONSUMABLE_ITEMS as readonly string[]).includes(item);
+  }
+
+  private applyDamageToPlayer(
+    player: CombatPlayer,
+    damage: number,
+  ): { hp: number; maxHp: number } {
+    const maxHp = player.maxHp ?? PLAYER_DEFAULT_HP;
+    const currentHp = player.hp ?? maxHp;
+    const hp = Math.max(0, currentHp - damage);
+    player.hp = hp;
+    return { hp, maxHp };
+  }
+
+  private healPlayer(
+    player: CombatPlayer,
+    amount: number,
+  ): { hp: number; maxHp: number; change: number } {
+    const maxHp = player.maxHp ?? PLAYER_DEFAULT_HP;
+    const currentHp = player.hp ?? maxHp;
+    const hp = Math.min(maxHp, currentHp + amount);
+    player.hp = hp;
+    return { hp, maxHp, change: hp - currentHp };
+  }
+
+  private isWithinRange(
+    left: Position,
+    right: Position,
+    range: number,
+  ): boolean {
+    return manhattanDistance(left, right) <= range;
+  }
+
+  private isNearAnyPosition(
+    position: Position,
+    candidates: readonly Position[],
+    range: number,
+  ): boolean {
+    return candidates.some((candidate) =>
+      this.isWithinRange(position, candidate, range),
+    );
+  }
+
+  private isBlockedBearSpawnPosition(
+    position: Position,
+    players: readonly Position[],
+    spawnPoints: readonly Position[],
+  ): boolean {
+    return (
+      this.isNearAnyPosition(position, players, BEAR_SPAWN_PLAYER_BUFFER) ||
+      this.isNearAnyPosition(position, spawnPoints, BEAR_SPAWN_PLAYER_BUFFER)
+    );
+  }
+
+  private respawnPlayer(player: Player): void {
+    const spawn = this.getRandomSpawnPoint();
+    player.x = spawn.x;
+    player.y = spawn.y;
+    player.hp = player.maxHp ?? PLAYER_DEFAULT_HP;
+    player.state = "idle";
+    player.currentConvoId = undefined;
+    player.isWaitingForResponse = false;
+    player.path = undefined;
+    player.targetX = undefined;
+    player.targetY = undefined;
+    player.vx = 0;
+    player.vy = 0;
+    player.inputX = 0;
+    player.inputY = 0;
+  }
+
+  private getRandomSpawnPoint(): Position {
+    const spawns = this.game.world.getSpawnPoints();
+    return spawns[this.game.rng.nextInt(spawns.length)];
+  }
+
+  private emitBearSpawn(
+    tick: number,
+    bearId: string,
+    position: Position,
+  ): void {
+    this.emitEvent(tick, "bear_spawn", undefined, {
+      bearId,
+      x: position.x,
+      y: position.y,
+    });
+  }
+
+  private dropBearMeat(tick: number, position: Position): void {
+    this.entities.spawn(
+      "bear_meat",
+      { ...position },
+      {
+        droppedAtTick: tick,
+      },
+    );
+    this.emitEvent(tick, "item_drop", undefined, {
+      item: "bear_meat",
+      x: position.x,
+      y: position.y,
+    });
+  }
+
+  private despawnBear(
+    bearId: string,
+    tick: number,
+    reason: string,
+    position: Position,
+  ): void {
+    this.emitEvent(tick, "bear_death", undefined, {
+      bearId,
+      reason,
+      x: position.x,
+      y: position.y,
+    });
+    this.entities.destroy(bearId);
+  }
+
+  private processGameOfLifeDeaths(
+    tick: number,
+    liveBears: readonly WorldEntity[],
+  ): void {
+    for (const bear of liveBears) {
+      const neighbors = this.countChebyshevNeighbors(bear.position, liveBears);
+
+      if (neighbors > GOL_SURVIVAL_MAX) {
+        this.despawnBear(bear.id, tick, "overcrowding", bear.position);
+        continue;
+      }
+
+      if (neighbors < GOL_SURVIVAL_MIN) {
+        const timer =
+          ((bear.properties.lonelinessTimer as number) ?? 0) +
+          GOL_EVAL_INTERVAL;
+        if (timer >= GOL_LONELINESS_TICKS) {
+          this.despawnBear(bear.id, tick, "loneliness", bear.position);
+        } else {
+          this.entities.updateProperty(bear.id, "lonelinessTimer", timer);
+        }
+        continue;
+      }
+
+      this.entities.updateProperty(bear.id, "lonelinessTimer", 0);
+    }
+  }
+
+  private processGameOfLifeBirths(
+    tick: number,
+    occupied: ReadonlySet<string>,
+  ): void {
+    const aliveBears = this.getLiveBears();
+    const players = this.game.getPlayers();
+    const spawnPoints = this.game.world.getSpawnPoints();
+    const candidates = this.game.rng.shuffle([...this.wildernessZones]);
+
+    for (const pos of candidates) {
+      if (this.liveBearCount() >= BEAR_POPULATION_CAP) {
+        return;
+      }
+      if (occupied.has(this.positionKey(pos))) {
+        continue;
+      }
+      if (this.isBlockedBearSpawnPosition(pos, players, spawnPoints)) {
+        continue;
+      }
+
+      const neighbors = this.countChebyshevNeighbors(pos, aliveBears);
+      if (neighbors >= GOL_BIRTH_MIN && neighbors <= GOL_BIRTH_MAX) {
+        this.spawnBear(pos, tick);
+      }
+    }
+  }
+
+  private positionKey(position: Position): string {
+    return `${position.x},${position.y}`;
   }
 }

@@ -3,6 +3,7 @@
  *
  * Called once per planning cycle, not per tick.
  */
+import { manhattanDistance } from "../engine/spatial.js";
 import type {
   EntityManagerInterface,
   GameLoopInterface,
@@ -20,11 +21,7 @@ const THREAT_RADIUS = 5;
 /** Entity types considered hostile. */
 const HOSTILE_TYPES = new Set(["bear"]);
 
-const NEED_KEYS: NeedType[] = [
-  "food",
-  "water",
-  "social",
-];
+const NEED_KEYS: NeedType[] = ["food", "water", "social"];
 
 export function snapshotWorldState(
   npcId: string,
@@ -67,7 +64,7 @@ export function snapshotWorldState(
   const players = game.getPlayers();
   for (const player of players) {
     if (player.id === npcId) continue;
-    const dist = Math.abs(player.x - pos.x) + Math.abs(player.y - pos.y);
+    const dist = manhattanDistance(player, pos);
     if (dist <= PROXIMITY_RADIUS) {
       state.set("near_player", true);
       break;
@@ -82,8 +79,7 @@ export function snapshotWorldState(
     if (entity.destroyed) continue;
     // Bears that are "dead" should not be threats
     if (entity.properties.state === "dead") continue;
-    const dist =
-      Math.abs(entity.position.x - pos.x) + Math.abs(entity.position.y - pos.y);
+    const dist = manhattanDistance(entity.position, pos);
     if (dist < nearestHostileDist) {
       nearestHostileDist = dist;
     }

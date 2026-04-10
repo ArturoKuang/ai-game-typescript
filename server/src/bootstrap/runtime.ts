@@ -34,11 +34,20 @@ import { MemoryManager } from "../npc/memory.js";
 import { NpcOrchestrator } from "../npc/orchestrator.js";
 import { ResilientNpcProvider } from "../npc/resilientProvider.js";
 import { ScriptedNpcProvider } from "../npc/scriptedProvider.js";
+import { serializeWorldEntity } from "../stateSnapshots.js";
 
 interface PersistenceServices {
   pool?: Pool;
   repo: MemoryStore;
   npcStore: NpcPersistenceStore;
+}
+
+interface BaseRuntimeServices {
+  app: Express;
+  server: Server;
+  port: number;
+  serverRoot: string;
+  game: GameLoop;
 }
 
 interface NpcServices {
@@ -47,6 +56,20 @@ interface NpcServices {
   claudeCommand: string;
   resolvedClaudeCommand: string | null;
 }
+
+interface GameplayServices {
+  entityManager: EntityManager;
+  autonomyManager: NpcAutonomyManager;
+  bearManager: BearManager;
+  wsServer: GameWebSocketServer;
+}
+
+interface PersistedDeadNpcServices {
+  persistedDeadNpcs: Awaited<ReturnType<NpcPersistenceStore["getDeadNpcs"]>>;
+  deadNpcIds: Set<string>;
+}
+
+const DEFAULT_BOOT_NPC_COUNT = 4;
 
 export interface GameServerRuntime {
   app: Express;
@@ -70,57 +93,32 @@ export async function createGameServerRuntime(options?: {
   moduleUrl?: string;
 }): Promise<GameServerRuntime> {
   const env = options?.env ?? process.env;
-  const serverRoot = resolveServerRoot(options?.moduleUrl ?? import.meta.url);
-  const app = express();
-  const server = createServer(app);
-  const port = Number.parseInt(env.PORT || "3001", 10);
-  app.use(express.json());
-
-  const game = new GameLoop({ mode: "realtime", tickRate: 20 });
+  const base = createBaseRuntime(env, options?.moduleUrl ?? import.meta.url);
   const { pool, repo, npcStore } = await createPersistence(env);
-  const persistedDeadNpcs = await npcStore.getDeadNpcs();
+  const { persistedDeadNpcs, deadNpcIds } =
+    await loadPersistedDeadNpcs(npcStore);
   const { memoryManager, provider, claudeCommand, resolvedClaudeCommand } =
-    createNpcServices(repo, env, serverRoot);
+    createNpcRuntime(base.game, repo, npcStore, env, base.serverRoot);
 
-  new NpcOrchestrator(game, memoryManager, provider, npcStore, {
-    enableInitiation: false,
-  });
+  const { mapPath, mapData } = loadMapData(base.serverRoot);
+  loadWorld(base.game, mapData);
 
-  const { mapPath, mapData } = loadMapData(serverRoot);
-  game.loadWorld(mapData);
-  console.log(`Loaded map: ${mapData.width}x${mapData.height}`);
+  const { entityManager, autonomyManager, bearManager, wsServer } =
+    createGameplayRuntime({
+      server: base.server,
+      game: base.game,
+      mapData,
+      provider,
+      memoryManager,
+      npcStore,
+      persistedDeadNpcs,
+    });
 
-  const entityManager = createEntityManager(mapData);
-  const autonomyManager = new NpcAutonomyManager(game, entityManager, {
-    provider,
-    memoryManager,
-    npcStore,
-    persistedDeadNpcs,
-  });
-
-  wirePersistence(game, npcStore);
-  spawnDefaultNpcs(
-    game,
-    CHARACTERS,
-    new Set(persistedDeadNpcs.map((state) => state.npcId)),
-  );
-
-  const bearManager = new BearManager(game, entityManager);
-  bearManager.seedInitialBears();
-  console.log("Bear manager initialized with GoL spawning");
-
-  const wsServer = createWebSocketRuntime(
-    server,
-    game,
-    entityManager,
-    autonomyManager,
-    bearManager,
-  );
-
-  wireRuntimeBroadcasts(game, entityManager, autonomyManager, wsServer);
-  registerHttpRoutes(app, {
+  initializeWorldActors(base.game, npcStore, deadNpcIds);
+  wireRuntimeBroadcasts(base.game, entityManager, autonomyManager, wsServer);
+  registerHttpRoutes(base.app, {
     pool,
-    game,
+    game: base.game,
     mapPath,
     memoryManager,
     autonomyManager,
@@ -131,14 +129,14 @@ export async function createGameServerRuntime(options?: {
     resolvedClaudeCommand,
   });
 
-  game.start();
+  base.game.start();
 
   return {
-    app,
-    server,
-    port,
+    app: base.app,
+    server: base.server,
+    port: base.port,
     pool,
-    game,
+    game: base.game,
     mapPath,
     mapData,
     memoryManager,
@@ -171,6 +169,19 @@ export async function startGameServer(
   });
 }
 
+function createBaseRuntime(
+  env: NodeJS.ProcessEnv,
+  moduleUrl: string,
+): BaseRuntimeServices {
+  const serverRoot = resolveServerRoot(moduleUrl);
+  const app = express();
+  const server = createServer(app);
+  const port = Number.parseInt(env.PORT || "3001", 10);
+  const game = new GameLoop({ mode: "realtime", tickRate: 20 });
+  app.use(express.json());
+  return { app, server, port, serverRoot, game };
+}
+
 function resolveServerRoot(moduleUrl: string): string {
   return join(dirname(fileURLToPath(moduleUrl)), "..", "..");
 }
@@ -182,6 +193,11 @@ function loadMapData(serverRoot: string): {
   const mapPath = resolveMapPath(serverRoot);
   const mapData = JSON.parse(readFileSync(mapPath, "utf-8")) as MapData;
   return { mapPath, mapData };
+}
+
+function loadWorld(game: GameLoop, mapData: MapData): void {
+  game.loadWorld(mapData);
+  console.log(`Loaded map: ${mapData.width}x${mapData.height}`);
 }
 
 function createEntityManager(mapData: MapData): EntityManager {
@@ -197,8 +213,13 @@ function spawnDefaultNpcs(
   game: GameLoop,
   characters: CharacterDef[],
   deadNpcIds: ReadonlySet<string> = new Set(),
+  maxCount = characters.length,
 ): void {
+  let spawned = 0;
   for (const char of characters) {
+    if (spawned >= maxCount) {
+      break;
+    }
     if (deadNpcIds.has(char.id)) {
       console.log(`Skipping dead NPC: ${char.name} (${char.id})`);
       continue;
@@ -217,10 +238,20 @@ function spawnDefaultNpcs(
       console.log(
         `Spawned NPC: ${char.name} at (${char.spawnPoint.x}, ${char.spawnPoint.y})`,
       );
+      spawned += 1;
     } catch (error) {
       console.error(`Failed to spawn ${char.name}:`, error);
     }
   }
+}
+
+function initializeWorldActors(
+  game: GameLoop,
+  npcStore: NpcPersistenceStore,
+  deadNpcIds: ReadonlySet<string>,
+): void {
+  wirePersistence(game, npcStore);
+  spawnDefaultNpcs(game, CHARACTERS, deadNpcIds, DEFAULT_BOOT_NPC_COUNT);
 }
 
 function wirePersistence(game: GameLoop, npcStore: NpcPersistenceStore): void {
@@ -255,6 +286,49 @@ function createWebSocketRuntime(
   return wsServer;
 }
 
+function createGameplayRuntime(options: {
+  server: Server;
+  game: GameLoop;
+  mapData: MapData;
+  provider: ResilientNpcProvider;
+  memoryManager: MemoryManager;
+  npcStore: NpcPersistenceStore;
+  persistedDeadNpcs: Awaited<ReturnType<NpcPersistenceStore["getDeadNpcs"]>>;
+}): GameplayServices {
+  const entityManager = createEntityManager(options.mapData);
+  const autonomyManager = new NpcAutonomyManager(options.game, entityManager, {
+    provider: options.provider,
+    memoryManager: options.memoryManager,
+    npcStore: options.npcStore,
+    persistedDeadNpcs: options.persistedDeadNpcs,
+  });
+  const bearManager = createBearRuntime(options.game, entityManager);
+  const wsServer = createWebSocketRuntime(
+    options.server,
+    options.game,
+    entityManager,
+    autonomyManager,
+    bearManager,
+  );
+
+  return {
+    entityManager,
+    autonomyManager,
+    bearManager,
+    wsServer,
+  };
+}
+
+function createBearRuntime(
+  game: GameLoop,
+  entityManager: EntityManager,
+): BearManager {
+  const bearManager = new BearManager(game, entityManager);
+  bearManager.seedInitialBears();
+  console.log("Bear manager initialized with GoL spawning");
+  return bearManager;
+}
+
 function wireRuntimeBroadcasts(
   game: GameLoop,
   entityManager: EntityManager,
@@ -267,14 +341,7 @@ function wireRuntimeBroadcasts(
     if (event === "update") {
       wsServer.broadcast({
         type: "entity_update",
-        data: {
-          id: entity.id,
-          type: entity.type,
-          x: entity.position.x,
-          y: entity.position.y,
-          properties: entity.properties,
-          destroyed: entity.destroyed,
-        },
+        data: serializeWorldEntity(entity),
       });
       return;
     }
@@ -375,13 +442,22 @@ async function createPersistence(
   };
 }
 
-function createNpcServices(
+async function loadPersistedDeadNpcs(
+  npcStore: NpcPersistenceStore,
+): Promise<PersistedDeadNpcServices> {
+  const persistedDeadNpcs = await npcStore.getDeadNpcs();
+  const deadNpcIds = new Set(persistedDeadNpcs.map((state) => state.npcId));
+  return { persistedDeadNpcs, deadNpcIds };
+}
+
+function createNpcRuntime(
+  game: GameLoop,
   repo: MemoryStore,
+  npcStore: NpcPersistenceStore,
   env: NodeJS.ProcessEnv,
   serverRoot: string,
 ): NpcServices {
-  const embedder = new PlaceholderEmbedder();
-  const memoryManager = new MemoryManager(repo, embedder);
+  const memoryManager = new MemoryManager(repo, new PlaceholderEmbedder());
   const claudeCommand = getConfiguredClaudeCommand(env);
   const resolvedClaudeCommand = resolveCommandPath(claudeCommand, env.PATH);
   logClaudeCommandAvailability(claudeCommand, resolvedClaudeCommand);
@@ -393,6 +469,9 @@ function createNpcServices(
     }),
     new ScriptedNpcProvider(),
   );
+  new NpcOrchestrator(game, memoryManager, provider, npcStore, {
+    enableInitiation: false,
+  });
 
   return {
     memoryManager,

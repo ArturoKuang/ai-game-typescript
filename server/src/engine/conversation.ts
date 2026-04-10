@@ -20,6 +20,7 @@
  * The manager tracks a `playerToConvo` index for O(1) lookups of a
  * player's current conversation.
  */
+import { manhattanDistance } from "./spatial.js";
 import type { GameEvent, Player, Position } from "./types.js";
 
 /**
@@ -101,13 +102,28 @@ export class ConversationManager {
     if (player1Id === player2Id) {
       throw new Error("Cannot start a conversation with yourself");
     }
+    const convo = this.tryStartConversation(player1Id, player2Id, tick);
+    if (!convo) {
+      throw new Error("One or both players are already in a conversation");
+    }
+    return convo;
+  }
+
+  tryStartConversation(
+    player1Id: string,
+    player2Id: string,
+    tick: number,
+  ): Conversation | null {
+    if (player1Id === player2Id) {
+      return null;
+    }
 
     // Check neither player is already in a conversation (O(1))
     if (
       this.playerToConvo.has(player1Id) ||
       this.playerToConvo.has(player2Id)
     ) {
-      throw new Error("One or both players are already in a conversation");
+      return null;
     }
 
     const convo: Conversation = {
@@ -125,25 +141,60 @@ export class ConversationManager {
   }
 
   acceptInvite(convoId: number, playerId?: string): Conversation {
-    const convo = this.getConversation(convoId);
-    if (!convo) throw new Error(`Conversation ${convoId} not found`);
-    if (convo.state !== "invited")
+    const existing = this.getConversation(convoId);
+    if (!existing) throw new Error(`Conversation ${convoId} not found`);
+    if (existing.state !== "invited") {
       throw new Error("Conversation is not in invited state");
-    if (playerId && playerId !== convo.player2Id) {
+    }
+    if (playerId && playerId !== existing.player2Id) {
       throw new Error("Only the invitee can accept this conversation");
+    }
+    const convo = this.tryAcceptInvite(convoId, playerId);
+    if (!convo) {
+      throw new Error("Conversation is not in invited state");
+    }
+    return convo;
+  }
+
+  tryAcceptInvite(convoId: number, playerId?: string): Conversation | null {
+    const convo = this.getConversation(convoId);
+    if (!convo || convo.state !== "invited") {
+      return null;
+    }
+    if (playerId && playerId !== convo.player2Id) {
+      return null;
     }
     convo.state = "walking";
     return convo;
   }
 
   declineInvite(convoId: number, playerId: string, tick: number): Conversation {
-    const convo = this.getConversation(convoId);
-    if (!convo) throw new Error(`Conversation ${convoId} not found`);
-    if (convo.state !== "invited") {
+    const existing = this.getConversation(convoId);
+    if (!existing) throw new Error(`Conversation ${convoId} not found`);
+    if (existing.state !== "invited") {
       throw new Error("Conversation is not in invited state");
     }
-    if (playerId !== convo.player2Id) {
+    if (playerId !== existing.player2Id) {
       throw new Error("Only the invitee can decline this conversation");
+    }
+    const convo = this.tryDeclineInvite(convoId, playerId, tick);
+    if (!convo) {
+      throw new Error("Conversation is not in invited state");
+    }
+    return convo;
+  }
+
+  tryDeclineInvite(
+    convoId: number,
+    playerId: string,
+    tick: number,
+  ): Conversation | null {
+    const convo = this.getConversation(convoId);
+    if (!convo || convo.state !== "invited") {
+      return null;
+    }
+    if (playerId !== convo.player2Id) {
+      return null;
     }
 
     return this.endConversation(convoId, tick, "declined");
@@ -157,9 +208,29 @@ export class ConversationManager {
   ): Message {
     const convo = this.getConversation(convoId);
     if (!convo) throw new Error(`Conversation ${convoId} not found`);
-    if (convo.state !== "active") throw new Error("Conversation is not active");
     if (playerId !== convo.player1Id && playerId !== convo.player2Id) {
       throw new Error("Player is not part of this conversation");
+    }
+    if (convo.state !== "active") throw new Error("Conversation is not active");
+    const result = this.tryAddMessage(convoId, playerId, content, tick);
+    if (!result) {
+      throw new Error("Conversation is not active");
+    }
+    return result.message;
+  }
+
+  tryAddMessage(
+    convoId: number,
+    playerId: string,
+    content: string,
+    tick: number,
+  ): { conversation: Conversation; message: Message } | null {
+    const convo = this.getConversation(convoId);
+    if (!convo || convo.state !== "active") {
+      return null;
+    }
+    if (playerId !== convo.player1Id && playerId !== convo.player2Id) {
+      return null;
     }
 
     const msg: Message = {
@@ -170,7 +241,7 @@ export class ConversationManager {
       tick,
     };
     convo.messages.push(msg);
-    return msg;
+    return { conversation: convo, message: msg };
   }
 
   endConversation(
@@ -178,8 +249,22 @@ export class ConversationManager {
     tick: number,
     reason: ConversationEndReason = "manual",
   ): Conversation {
+    const convo = this.tryEndConversation(convoId, tick, reason);
+    if (!convo) {
+      throw new Error(`Conversation ${convoId} not found`);
+    }
+    return convo;
+  }
+
+  tryEndConversation(
+    convoId: number,
+    tick: number,
+    reason: ConversationEndReason = "manual",
+  ): Conversation | null {
     const convo = this.getConversation(convoId);
-    if (!convo) throw new Error(`Conversation ${convoId} not found`);
+    if (!convo) {
+      return null;
+    }
     if (convo.state === "ended") return convo;
     convo.state = "ended";
     convo.endedTick = tick;
@@ -267,7 +352,7 @@ export class ConversationManager {
           continue;
         }
 
-        const dist = distance(p1, p2);
+        const dist = manhattanDistance(p1, p2);
         if (dist <= CONVERSATION_DISTANCE) {
           // Close enough — activate
           convo.state = "active";
@@ -387,13 +472,6 @@ export class ConversationManager {
   }
 }
 
-function distance(
-  a: { x: number; y: number },
-  b: { x: number; y: number },
-): number {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-}
-
 /**
  * Generate candidate meeting points for two players.
  *
@@ -451,6 +529,35 @@ function ensureConversationTarget(
       return;
     }
   }
+}
+
+export function resolveConversationFromEvent(
+  event: Pick<GameEvent, "data">,
+  getConversation: (id: number) => Conversation | undefined,
+): Conversation | undefined {
+  const fromEvent = event.data?.conversation as Conversation | undefined;
+  if (fromEvent) {
+    return fromEvent;
+  }
+
+  const convoId = event.data?.convoId;
+  return typeof convoId === "number" ? getConversation(convoId) : undefined;
+}
+
+export function resolveConversationParticipantIds(
+  event: Pick<GameEvent, "data">,
+  conversation: Pick<Conversation, "player1Id" | "player2Id">,
+): [string, string] {
+  const fromEvent = event.data?.participantIds;
+  if (
+    Array.isArray(fromEvent) &&
+    fromEvent.length === 2 &&
+    fromEvent.every((value) => typeof value === "string")
+  ) {
+    return [fromEvent[0], fromEvent[1]];
+  }
+
+  return [conversation.player1Id, conversation.player2Id];
 }
 
 /** Deep-clone a conversation (including its messages) for safe event payloads. */
