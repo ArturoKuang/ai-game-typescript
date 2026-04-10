@@ -30,19 +30,20 @@ const ITEM_DISPLAY: Record<string, { name: string; emoji: string }> = {
   bear_meat: { name: "Meat", emoji: "\uD83E\uDD69" },
 };
 
-const NEED_RING_COLORS = {
-  ok: "#d9b779",
-  warn: "#e07a2c",
-  crit: "#7a2a2a",
-} as const;
-
-const NEED_RING_RADII = [82, 64, 46, 28];
 const NEED_KEYS: Array<keyof Omit<PlayerSurvivalData, "playerId">> = [
   "health",
   "food",
   "water",
   "social",
 ];
+
+function severityClass(
+  value: number,
+): "severity-ok" | "severity-warn" | "severity-crit" {
+  if (value < 25) return "severity-crit";
+  if (value < 55) return "severity-warn";
+  return "severity-ok";
+}
 
 function requireElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -55,12 +56,6 @@ function requireElement<T extends HTMLElement>(id: string): T {
 function optionalElement<T extends HTMLElement>(id: string): T | null {
   const element = document.getElementById(id);
   return (element as T | null) ?? null;
-}
-
-function severityColor(value: number): string {
-  if (value < 25) return NEED_RING_COLORS.crit;
-  if (value < 55) return NEED_RING_COLORS.warn;
-  return NEED_RING_COLORS.ok;
 }
 
 export class UI {
@@ -77,8 +72,12 @@ export class UI {
   private inventoryHeaderEl: HTMLHeadingElement;
   private inventoryDrawerEl: HTMLDivElement;
   private inventoryListEl: HTMLUListElement;
-  private needsCanvas: HTMLCanvasElement;
-  private needsCtx: CanvasRenderingContext2D | null;
+  private needsPanelEl: HTMLDivElement;
+  private needBarFills: Record<string, HTMLDivElement> = {};
+  private needValueEls: Record<string, HTMLSpanElement> = {};
+  private infoButtonEl: HTMLButtonElement;
+  private infoModalEl: HTMLDivElement;
+  private infoModalVisible = false;
   private eventLogEl: HTMLDivElement;
   private actorBadgeNameEl: HTMLDivElement;
   private actorBadgeActivityEl: HTMLDivElement;
@@ -116,8 +115,22 @@ export class UI {
       requireElement<HTMLHeadingElement>("inventory-header");
     this.inventoryDrawerEl = requireElement<HTMLDivElement>("inventory-drawer");
     this.inventoryListEl = requireElement<HTMLUListElement>("inventory-list");
-    this.needsCanvas = requireElement<HTMLCanvasElement>("needs-ring-canvas");
-    this.needsCtx = this.needsCanvas.getContext("2d");
+    this.needsPanelEl = requireElement<HTMLDivElement>("needs-panel");
+    for (const key of NEED_KEYS) {
+      const fill = this.needsPanelEl.querySelector<HTMLDivElement>(
+        `[data-fill="${key}"]`,
+      );
+      const value = this.needsPanelEl.querySelector<HTMLSpanElement>(
+        `[data-value="${key}"]`,
+      );
+      if (!fill || !value) {
+        throw new Error(`Missing need bar elements for key: ${key}`);
+      }
+      this.needBarFills[key] = fill;
+      this.needValueEls[key] = value;
+    }
+    this.infoButtonEl = requireElement<HTMLButtonElement>("info-button");
+    this.infoModalEl = requireElement<HTMLDivElement>("info-modal");
     this.eventLogEl = requireElement<HTMLDivElement>("event-log");
     this.actorBadgeNameEl = requireElement<HTMLDivElement>("actor-badge-name");
     this.actorBadgeActivityEl = requireElement<HTMLDivElement>(
@@ -145,7 +158,8 @@ export class UI {
     this.chatInputEl.addEventListener("blur", () => {
       this.chatBarEl.classList.remove("focus-expanded");
     });
-    this.drawNeedsRing(null);
+    this.infoButtonEl.addEventListener("click", () => this.toggleInfoModal());
+    this.updateNeedsBars(null);
   }
 
   setSelfId(id: string | null): void {
@@ -229,7 +243,27 @@ export class UI {
   }
 
   updatePlayerSurvival(survival: PlayerSurvivalData | null): void {
-    this.drawNeedsRing(survival);
+    this.updateNeedsBars(survival);
+  }
+
+  toggleInfoModal(): void {
+    this.infoModalVisible = !this.infoModalVisible;
+    this.infoModalEl.classList.toggle("hidden", !this.infoModalVisible);
+  }
+
+  closeAllModals(): void {
+    if (this.infoModalVisible) {
+      this.infoModalVisible = false;
+      this.infoModalEl.classList.add("hidden");
+    }
+    if (this.tabModalVisible) {
+      this.tabModalVisible = false;
+      this.tabModalEl.classList.add("hidden");
+    }
+    if (this.inventoryVisible) {
+      this.inventoryVisible = false;
+      this.inventoryDrawerEl.classList.add("hidden");
+    }
   }
 
   addChatMessage(
@@ -473,49 +507,25 @@ export class UI {
     }, 6000);
   }
 
-  private drawNeedsRing(survival: PlayerSurvivalData | null): void {
-    const ctx = this.needsCtx;
-    if (!ctx) return;
-    const size = this.needsCanvas.width;
-    const cx = size / 2;
-    const cy = size / 2;
-    ctx.clearRect(0, 0, size, size);
-
-    ctx.fillStyle = "rgba(27, 20, 16, 0.72)";
-    ctx.beginPath();
-    ctx.arc(cx, cy, size / 2 - 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#4a3424";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.arc(cx, cy, size / 2 - 4, 0, Math.PI * 2);
-    ctx.stroke();
-
-    for (let i = 0; i < NEED_KEYS.length; i++) {
-      const key = NEED_KEYS[i];
-      const radius = NEED_RING_RADII[i];
-      const value = survival?.[key] ?? 0;
-      const clamped = Math.max(0, Math.min(100, value));
-      const startAngle = -Math.PI / 2;
-      const endAngle = startAngle + (Math.PI * 2 * clamped) / 100;
-
-      ctx.strokeStyle = "rgba(74, 52, 36, 0.6)";
-      ctx.lineWidth = 12;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.stroke();
-
-      if (clamped > 0) {
-        ctx.strokeStyle = severityColor(clamped);
-        ctx.lineWidth = 12;
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, startAngle, endAngle);
-        ctx.stroke();
+  private updateNeedsBars(survival: PlayerSurvivalData | null): void {
+    for (const key of NEED_KEYS) {
+      const fill = this.needBarFills[key];
+      const valueEl = this.needValueEls[key];
+      if (!fill || !valueEl) continue;
+      const raw = survival?.[key];
+      if (raw === undefined) {
+        fill.style.width = "0%";
+        fill.classList.remove("severity-warn", "severity-crit");
+        valueEl.textContent = "—";
+        continue;
       }
+      const clamped = Math.max(0, Math.min(100, raw));
+      fill.style.width = `${clamped}%`;
+      fill.classList.remove("severity-warn", "severity-crit");
+      const severity = severityClass(clamped);
+      if (severity !== "severity-ok") fill.classList.add(severity);
+      valueEl.textContent = Math.round(clamped).toString();
     }
-
-    ctx.lineCap = "butt";
   }
 
   private stateIcon(player: Player): string {

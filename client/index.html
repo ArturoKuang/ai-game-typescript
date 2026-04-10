@@ -68,17 +68,146 @@
       transform: translateX(-50%);
       width: min(600px, calc(100vw - 48px));
     }
-    #needs-ring {
-      width: 96px;
-      height: 96px;
+    #needs-panel {
+      width: 240px;
+      background: rgba(44, 33, 24, 0.92);
+      border: 2px solid var(--umber);
+      border-radius: 4px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
     }
-    #needs-ring-canvas {
-      width: 96px;
-      height: 96px;
-      image-rendering: pixelated;
-      filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+    .need-row {
+      display: grid;
+      grid-template-columns: 52px 1fr 36px;
+      align-items: center;
+      gap: 8px;
+    }
+    .need-label {
+      color: var(--bone);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .need-bar-bg {
+      height: 12px;
+      background: var(--bone-black);
+      border: 1px solid var(--clay);
+      border-radius: 2px;
+      overflow: hidden;
+      position: relative;
+    }
+    .need-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--bone);
+      transition:
+        width 220ms ease-out,
+        background-color 220ms ease-out;
+      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+    }
+    .need-bar-fill.severity-warn { background: var(--flame); }
+    .need-bar-fill.severity-crit { background: var(--blood); }
+    .need-value {
+      color: var(--parchment);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+    #info-button {
+      top: 18px;
+      right: 18px;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--soot);
+      border: 2px solid var(--clay);
+      color: var(--bone);
+      font-family: inherit;
+      font-size: 22px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.5);
+      transition:
+        background 120ms ease-out,
+        border-color 120ms ease-out,
+        transform 120ms ease-out;
+      z-index: 12;
+    }
+    #info-button:hover {
+      background: var(--flame);
+      border-color: var(--ember);
+      color: var(--soot);
+      transform: translateY(-1px);
+    }
+    #info-modal {
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--soot);
+      border: 2px solid var(--clay);
+      border-radius: 4px;
+      padding: 26px 30px;
+      min-width: 420px;
+      max-width: 540px;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.7);
+      z-index: 25;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    #info-modal.hidden { display: none; }
+    #info-modal h2 {
+      color: var(--bone);
+      font-size: 18px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--umber);
+    }
+    #info-modal h3 {
+      color: var(--flame);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+    #info-modal p {
+      color: var(--parchment);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    #info-modal section {
+      display: flex;
+      flex-direction: column;
+    }
+    #info-modal .control-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      color: var(--parchment);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    #info-modal kbd {
+      display: inline-block;
+      padding: 1px 8px;
+      background: var(--bone-black);
+      border: 1px solid var(--clay);
+      border-radius: 3px;
+      color: var(--bone);
+      font-family: inherit;
+      font-size: 11px;
+      margin-right: 2px;
     }
     #event-log {
+      top: 72px;
+      right: 18px;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -86,10 +215,10 @@
       max-height: 150px;
     }
     #convo-sidebar {
-      top: 180px;
+      top: 240px;
       right: 18px;
       width: 280px;
-      max-height: calc(100vh - 260px);
+      max-height: calc(100vh - 320px);
       background: rgba(44, 33, 24, 0.88);
       border: 2px solid var(--umber);
       border-radius: 4px;
@@ -1447,9 +1576,30 @@
   <div id="game-container">
     <canvas id="game-canvas"></canvas>
 
-    <div id="needs-ring" class="hud-zone hud-top-left" aria-label="Survival needs">
-      <canvas id="needs-ring-canvas" width="192" height="192"></canvas>
+    <div id="needs-panel" class="hud-zone hud-top-left" aria-label="Survival needs">
+      <div class="need-row" data-need="health">
+        <span class="need-label">Health</span>
+        <div class="need-bar-bg"><div class="need-bar-fill" data-fill="health"></div></div>
+        <span class="need-value" data-value="health">—</span>
+      </div>
+      <div class="need-row" data-need="food">
+        <span class="need-label">Food</span>
+        <div class="need-bar-bg"><div class="need-bar-fill" data-fill="food"></div></div>
+        <span class="need-value" data-value="food">—</span>
+      </div>
+      <div class="need-row" data-need="water">
+        <span class="need-label">Water</span>
+        <div class="need-bar-bg"><div class="need-bar-fill" data-fill="water"></div></div>
+        <span class="need-value" data-value="water">—</span>
+      </div>
+      <div class="need-row" data-need="social">
+        <span class="need-label">Social</span>
+        <div class="need-bar-bg"><div class="need-bar-fill" data-fill="social"></div></div>
+        <span class="need-value" data-value="social">—</span>
+      </div>
     </div>
+
+    <button id="info-button" class="hud-zone" aria-label="How to play" title="How to play">?</button>
 
     <div id="event-log" class="hud-zone hud-top-right" aria-label="Event log"></div>
 
@@ -1457,6 +1607,35 @@
       <h3>Conversations</h3>
       <ul id="convo-list"></ul>
     </aside>
+
+    <div id="info-modal" class="hud-zone modal hidden" aria-label="How to play">
+      <h2>How to Play</h2>
+      <section>
+        <h3>Setting</h3>
+        <p>You are a newcomer to a primal band of eight founders — hunters, healers, elders, wanderers. There is no language yet for "future," no walls, no tamed fire. Just hunger, thirst, cold, and each other. Survive and watch a civilization emerge from scratch.</p>
+      </section>
+      <section>
+        <h3>Controls</h3>
+        <ul class="control-list">
+          <li><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> / arrows — Walk</li>
+          <li><kbd>E</kbd> — Pick up items nearby</li>
+          <li><kbd>F</kbd> — Attack nearest target</li>
+          <li><kbd>I</kbd> — Open/close inventory</li>
+          <li><kbd>Tab</kbd> — Show the band roster</li>
+          <li><kbd>Esc</kbd> — Close any modal</li>
+          <li>Click <strong>Talk</strong> in the roster to start a conversation</li>
+        </ul>
+      </section>
+      <section>
+        <h3>Survival</h3>
+        <p>Your four needs decay over time. Food drops unless you forage berries or eat from your inventory. Water drops unless you drink from the river. Social drops unless you talk to other founders. Health drops when any other need bottoms out — and when bears attack.</p>
+      </section>
+      <section>
+        <h3>Conversations</h3>
+        <p>The right sidebar lists every active and recent conversation. The bar at the bottom shows the messages of your current one. NPCs think between turns; give them a moment to reply.</p>
+      </section>
+      <div class="modal-hint">Press <kbd>Esc</kbd> or click <kbd>?</kbd> to close</div>
+    </div>
 
     <div id="actor-badge" class="hud-zone hud-bottom-left">
       <div id="actor-badge-portrait" aria-hidden="true"></div>

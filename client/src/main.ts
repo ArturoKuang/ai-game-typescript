@@ -737,7 +737,20 @@ async function start() {
       return;
     }
 
+    // Escape: close any open modal/drawer (allowed during text input)
+    if (e.key === "Escape") {
+      ui.closeAllModals();
+      return;
+    }
+
     if (isInputFocused()) return;
+
+    // ? key: open the info modal
+    if (e.key === "?") {
+      e.preventDefault();
+      ui.toggleInfoModal();
+      return;
+    }
 
     // I key: toggle inventory panel
     if (e.key === "i" || e.key === "I") {
