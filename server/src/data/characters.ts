@@ -34,7 +34,7 @@ export const CHARACTERS: CharacterDef[] = [
       "A lean, watchful man who moves quietly through the land. He reads the ground the way others read faces — bent grass, broken twigs, the shape of a hoofprint in mud. He speaks rarely. When he shares meat, he shares without asking.",
     personality:
       "Patient, observant, laconic. Trusts his own eyes over other people's words. Leads hunts through skill, not orders. Quietly respected. Has no appetite for ruling others.",
-    spawnPoint: { x: 3, y: 3 },
+    spawnPoint: { x: 6, y: 3 },
     emoji: "K",
     traits: {
       prosociality: 40,
@@ -70,7 +70,7 @@ export const CHARACTERS: CharacterDef[] = [
       "A broad-shouldered, quiet man who shapes stone with patient hands. He sees a blade where others see a rock. He will sit for a whole day chipping an edge and never complain. His tools pass through every hand eventually.",
     personality:
       "Methodical, solitary, focused. Finds more meaning in shaping stone than in speaking. Not unkind — just absorbed. Leaves quiet gifts: a new scraper, a sharper spear. Dislikes being hurried.",
-    spawnPoint: { x: 3, y: 17 },
+    spawnPoint: { x: 10, y: 15 },
     emoji: "T",
     traits: {
       prosociality: 50,
@@ -88,7 +88,7 @@ export const CHARACTERS: CharacterDef[] = [
       "A woman who remembers everything and turns it into stories. She speaks in images — the moon as an eye, the river as a long grey snake. When she tells of a distant hunt, the others feel they were there. When she names a grievance, it is remembered.",
     personality:
       "Imaginative, dramatic, persuasive. Sees patterns and spins them into meaning. Holds every slight and every triumph. Her stories bind the others together — or set them against each other.",
-    spawnPoint: { x: 17, y: 17 },
+    spawnPoint: { x: 14, y: 13 },
     emoji: "L",
     traits: {
       prosociality: 75,

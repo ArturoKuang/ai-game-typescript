@@ -85,6 +85,99 @@
       font-size: 11px;
       max-height: 150px;
     }
+    #convo-sidebar {
+      top: 180px;
+      right: 18px;
+      width: 280px;
+      max-height: calc(100vh - 260px);
+      background: rgba(44, 33, 24, 0.88);
+      border: 2px solid var(--umber);
+      border-radius: 4px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow: hidden;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+    }
+    #convo-sidebar h3 {
+      color: var(--bone);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--umber);
+    }
+    #convo-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      flex: 1;
+      padding-right: 4px;
+    }
+    #convo-list li {
+      padding: 8px 10px;
+      border: 1px solid var(--umber);
+      border-radius: 3px;
+      background: var(--bone-black);
+      cursor: pointer;
+      transition:
+        border-color 120ms ease-out,
+        background 120ms ease-out;
+    }
+    #convo-list li:hover {
+      border-color: var(--flame);
+    }
+    #convo-list li.is-active {
+      border-color: var(--flame);
+      background: var(--umber);
+    }
+    #convo-list li.is-ended {
+      opacity: 0.6;
+    }
+    .convo-row-title {
+      color: var(--parchment);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .convo-row-meta {
+      color: var(--straw);
+      font-size: 10px;
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .convo-row-state {
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .convo-row-state.state-active { color: var(--flame); }
+    .convo-row-state.state-walking { color: var(--bone); }
+    .convo-row-state.state-invited { color: var(--sage); }
+    .convo-row-state.state-ended { color: var(--clay); }
+    .convo-row-preview {
+      color: var(--parchment);
+      font-size: 11px;
+      line-height: 1.35;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.82;
+    }
+    .convo-empty {
+      color: var(--clay);
+      font-size: 11px;
+      font-style: italic;
+      text-align: center;
+      padding: 20px 8px;
+    }
     .event-log-entry {
       background: rgba(44, 33, 24, 0.82);
       border: 1px solid var(--umber);
@@ -1359,6 +1452,11 @@
     </div>
 
     <div id="event-log" class="hud-zone hud-top-right" aria-label="Event log"></div>
+
+    <aside id="convo-sidebar" class="hud-zone" aria-label="Conversations">
+      <h3>Conversations</h3>
+      <ul id="convo-list"></ul>
+    </aside>
 
     <div id="actor-badge" class="hud-zone hud-bottom-left">
       <div id="actor-badge-portrait" aria-hidden="true"></div>

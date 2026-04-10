@@ -295,6 +295,12 @@ async function start() {
       attackablePlayerIds,
     );
 
+    ui.updateConversationList(
+      gameState.conversations,
+      currentConversation?.id ?? null,
+    );
+    ui.setActiveConversation(currentConversation ?? null);
+
     if (selfPlayer) {
       const activity = currentConversation
         ? currentConversation.state === "active"
@@ -566,7 +572,12 @@ async function start() {
           (p) => p.id === msg.data.playerId,
         );
         const senderName = sender?.name ?? msg.data.playerId;
-        ui.addChatMessage(senderName, msg.data.content);
+        ui.addChatMessage(
+          senderName,
+          msg.data.content,
+          false,
+          msg.data.convoId,
+        );
         renderer.showChatBubble(msg.data.playerId, msg.data.content);
         refreshConversationUi();
         break;

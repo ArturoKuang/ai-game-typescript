@@ -11,7 +11,7 @@
  *
  * Debug controls intentionally live in the separate dashboard.
  */
-import type { Player, PlayerSurvivalData } from "./types.js";
+import type { Conversation, Player, PlayerSurvivalData } from "./types.js";
 
 /** Describes what the chat bar should display for the current conversation. */
 export interface ConversationPanelView {
@@ -86,9 +86,12 @@ export class UI {
   private chatBarPartnerEl: HTMLDivElement;
   private tabModalEl: HTMLDivElement;
   private joinOverlayEl: HTMLElement | null;
+  private convoListEl: HTMLUListElement;
   private inventoryVisible = false;
   private tabModalVisible = false;
   private selfId: string | null = null;
+  private activeConversationId: number | null = null;
+  private playerNameLookup: Map<string, string> = new Map();
   private talkHandler: ((playerId: string) => void) | null = null;
   private attackHandler: ((playerId: string) => void) | null = null;
   private acceptHandler: (() => void) | null = null;
@@ -124,6 +127,7 @@ export class UI {
     this.chatBarPartnerEl = requireElement<HTMLDivElement>("chat-bar-partner");
     this.tabModalEl = requireElement<HTMLDivElement>("tab-modal");
     this.joinOverlayEl = optionalElement<HTMLDivElement>("join-overlay");
+    this.convoListEl = requireElement<HTMLUListElement>("convo-list");
 
     this.acceptConvoBtnEl.addEventListener("click", () =>
       this.acceptHandler?.(),
@@ -163,6 +167,10 @@ export class UI {
     attackablePlayerIds: ReadonlySet<string>,
   ): void {
     this.playerListEl.innerHTML = "";
+    this.playerNameLookup.clear();
+    for (const p of players) {
+      this.playerNameLookup.set(p.id, p.name);
+    }
 
     for (const player of players) {
       const li = document.createElement("li");
@@ -224,19 +232,109 @@ export class UI {
     this.drawNeedsRing(survival);
   }
 
-  addChatMessage(senderName: string, content: string, isSystem = false): void {
-    const div = document.createElement("div");
-    div.className = "chat-msg";
-
+  addChatMessage(
+    senderName: string,
+    content: string,
+    isSystem = false,
+    conversationId?: number,
+  ): void {
     if (isSystem) {
-      div.innerHTML = `<span class="system">${this.escapeHtml(content)}</span>`;
       this.appendEventLogEntry(content);
-    } else {
-      div.innerHTML = `<span class="sender">${this.escapeHtml(senderName)}:</span> ${this.escapeHtml(content)}`;
+      return;
     }
 
-    this.chatHistoryEl.appendChild(div);
-    this.chatHistoryEl.scrollTop = this.chatHistoryEl.scrollHeight;
+    // Scope bottom chat history to the currently active conversation only.
+    // Out-of-scope messages still flow through the conversation sidebar via
+    // updateConversationList; they just don't clutter the bottom bar.
+    if (
+      conversationId !== undefined &&
+      this.activeConversationId !== null &&
+      conversationId !== this.activeConversationId
+    ) {
+      return;
+    }
+
+    this.appendChatHistoryMessage(senderName, content);
+  }
+
+  setActiveConversation(conversation: Conversation | null): void {
+    const nextId = conversation?.id ?? null;
+    if (nextId === this.activeConversationId) {
+      if (conversation) this.rehydrateChatHistory(conversation);
+      return;
+    }
+    this.activeConversationId = nextId;
+    if (conversation) {
+      this.rehydrateChatHistory(conversation);
+    } else {
+      this.chatHistoryEl.innerHTML = "";
+    }
+  }
+
+  updateConversationList(
+    conversations: readonly Conversation[],
+    selectedId: number | null,
+  ): void {
+    this.convoListEl.innerHTML = "";
+    if (conversations.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "convo-empty";
+      empty.textContent = "No conversations yet";
+      empty.style.cursor = "default";
+      empty.style.borderColor = "transparent";
+      empty.style.background = "transparent";
+      this.convoListEl.appendChild(empty);
+      return;
+    }
+
+    const stateRank: Record<string, number> = {
+      active: 0,
+      walking: 1,
+      invited: 2,
+      ended: 3,
+    };
+    const sorted = [...conversations].sort((a, b) => {
+      const rankDiff = stateRank[a.state] - stateRank[b.state];
+      if (rankDiff !== 0) return rankDiff;
+      return b.startedTick - a.startedTick;
+    });
+
+    for (const convo of sorted) {
+      const li = document.createElement("li");
+      const isActive = convo.id === selectedId;
+      const isEnded = convo.state === "ended";
+      if (isActive) li.classList.add("is-active");
+      if (isEnded) li.classList.add("is-ended");
+
+      const title = document.createElement("div");
+      title.className = "convo-row-title";
+      title.textContent = `${this.nameFor(convo.player1Id)} × ${this.nameFor(convo.player2Id)}`;
+
+      const meta = document.createElement("div");
+      meta.className = "convo-row-meta";
+      const state = document.createElement("span");
+      state.className = `convo-row-state state-${convo.state}`;
+      state.textContent = convo.state;
+      const count = document.createElement("span");
+      count.textContent = `${convo.messages.length} msg`;
+      meta.appendChild(state);
+      meta.appendChild(count);
+
+      const last = convo.messages.at(-1);
+      if (last) {
+        const preview = document.createElement("div");
+        preview.className = "convo-row-preview";
+        preview.textContent = `${this.nameFor(last.playerId)}: ${last.content}`;
+        li.appendChild(title);
+        li.appendChild(meta);
+        li.appendChild(preview);
+      } else {
+        li.appendChild(title);
+        li.appendChild(meta);
+      }
+
+      this.convoListEl.appendChild(li);
+    }
   }
 
   onChatSubmit(callback: (text: string) => void): void {
@@ -335,6 +433,25 @@ export class UI {
       }
 
       this.inventoryListEl.appendChild(li);
+    }
+  }
+
+  private nameFor(playerId: string): string {
+    return this.playerNameLookup.get(playerId) ?? playerId;
+  }
+
+  private appendChatHistoryMessage(senderName: string, content: string): void {
+    const div = document.createElement("div");
+    div.className = "chat-msg";
+    div.innerHTML = `<span class="sender">${this.escapeHtml(senderName)}:</span> ${this.escapeHtml(content)}`;
+    this.chatHistoryEl.appendChild(div);
+    this.chatHistoryEl.scrollTop = this.chatHistoryEl.scrollHeight;
+  }
+
+  private rehydrateChatHistory(conversation: Conversation): void {
+    this.chatHistoryEl.innerHTML = "";
+    for (const msg of conversation.messages) {
+      this.appendChatHistoryMessage(this.nameFor(msg.playerId), msg.content);
     }
   }
 
