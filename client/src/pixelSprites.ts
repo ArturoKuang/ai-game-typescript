@@ -17,9 +17,6 @@ export interface EntityTextureSet {
 export interface TerrainTextureSet {
   grass: Texture[];
   dirt: Texture[];
-  cobble: Texture[];
-  track: Texture[];
-  tilled: Texture[];
   water: Texture[];
 }
 
@@ -649,62 +646,6 @@ function createWaterTileTexture(variant: number): Texture {
   ]);
 }
 
-function createCobbleTileTexture(variant: number): Texture {
-  const base = ["#b3a58f", "#b9ac98", "#a99c88"][variant % 3];
-  const shade = ["#8a7e6c", "#928674", "#817565"][variant % 3];
-  const light = ["#d6cab8", "#ded2bf", "#cfc2af"][variant % 3];
-
-  return makeTexture(16, 16, [
-    { x: 0, y: 0, w: 16, h: 16, color: base },
-    { x: 1, y: 2, w: 5, h: 4, color: shade },
-    { x: 6, y: 1, w: 4, h: 5, color: light },
-    { x: 10, y: 3, w: 5, h: 4, color: shade },
-    { x: 2, y: 8, w: 4, h: 4, color: light },
-    { x: 7, y: 7, w: 4, h: 5, color: shade },
-    { x: 11, y: 9, w: 3, h: 4, color: light },
-    { x: 0, y: 12, w: 16, h: 4, color: "#8a7d6b" },
-    { x: 5, y: 6, w: 1, h: 6, color: "#6f6457" },
-    { x: 10, y: 7, w: 1, h: 5, color: "#6f6457" },
-  ]);
-}
-
-function createTrackTileTexture(variant: number): Texture {
-  const base = ["#a87a4b", "#b18352", "#a37447"][variant % 3];
-  const shade = ["#84582f", "#8c5f34", "#7e532d"][variant % 3];
-  const grass = ["#84b64d", "#91c35a", "#79aa44"][variant % 3];
-
-  return makeTexture(16, 16, [
-    { x: 0, y: 0, w: 16, h: 16, color: "#78a53d" },
-    { x: 1, y: 4, w: 14, h: 7, color: base },
-    { x: 0, y: 11, w: 16, h: 5, color: "#6c9634" },
-    { x: 2, y: 5, w: 12, h: 2, color: "#c89b68" },
-    { x: 3, y: 8, w: 10, h: 2, color: shade },
-    { x: 0, y: 2, w: 2, h: 4, color: grass },
-    { x: 14, y: 3, w: 2, h: 4, color: grass },
-    { x: 1, y: 12, w: 2, h: 3, color: grass },
-    { x: 13, y: 12, w: 2, h: 3, color: grass },
-    { x: 7, y: 2, w: 1, h: 1, color: "#f0d38f" },
-  ]);
-}
-
-function createTilledTileTexture(variant: number): Texture {
-  const base = ["#93592f", "#9a6034", "#8a522b"][variant % 3];
-  const furrow = ["#6f3f21", "#764526", "#64371d"][variant % 3];
-  const straw = ["#d4b36d", "#c8a45f", "#debc79"][variant % 3];
-
-  return makeTexture(16, 16, [
-    { x: 0, y: 0, w: 16, h: 16, color: base },
-    { x: 0, y: 11, w: 16, h: 5, color: furrow },
-    { x: 2, y: 0, w: 2, h: 16, color: furrow },
-    { x: 7, y: 0, w: 2, h: 16, color: furrow },
-    { x: 12, y: 0, w: 2, h: 16, color: furrow },
-    { x: 4, y: 3, w: 2, h: 1, color: straw },
-    { x: 9, y: 5, w: 2, h: 1, color: straw },
-    { x: 13, y: 8, w: 1, h: 2, color: straw },
-    { x: 5, y: 10, w: 2, h: 1, color: "#b97c47" },
-  ]);
-}
-
 function createBearMeatTexture(): Texture {
   return makeTexture(16, 16, [
     { x: 4, y: 11, w: 8, h: 2, color: "#00000025" },
@@ -1124,21 +1065,6 @@ export function createTerrainTextureSet(): TerrainTextureSet {
       createDirtTileTexture(0),
       createDirtTileTexture(1),
       createDirtTileTexture(2),
-    ],
-    cobble: [
-      createCobbleTileTexture(0),
-      createCobbleTileTexture(1),
-      createCobbleTileTexture(2),
-    ],
-    track: [
-      createTrackTileTexture(0),
-      createTrackTileTexture(1),
-      createTrackTileTexture(2),
-    ],
-    tilled: [
-      createTilledTileTexture(0),
-      createTilledTileTexture(1),
-      createTilledTileTexture(2),
     ],
     water: [createWaterTileTexture(0), createWaterTileTexture(1)],
   };

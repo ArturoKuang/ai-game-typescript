@@ -46,15 +46,15 @@ const NAME_STYLE = new TextStyle({
   fontFamily: "monospace",
   fontSize: 12,
   fontWeight: "700",
-  fill: 0xfbf3de,
-  stroke: { color: 0x4d3826, width: 2 },
+  fill: 0xf0dcae,
+  stroke: { color: 0x1b1410, width: 2 },
   letterSpacing: 0.4,
 });
 const BUBBLE_TEXT_STYLE = new TextStyle({
   fontFamily: "monospace",
   fontSize: 13,
   fontWeight: "700",
-  fill: 0x3b2b20,
+  fill: 0xf0dcae,
   wordWrap: true,
   wordWrapWidth: 180,
 });
@@ -329,13 +329,10 @@ export class GameRenderer {
       sprite.sprite.texture = frames[frameIndex];
       sprite.shadow.clear();
       sprite.shadow.ellipse(0, 5, TILE_SIZE * 0.22, TILE_SIZE * 0.12);
-      sprite.shadow.fill({
-        color: 0x000000,
-        alpha: player.id === this.selfId ? 0.24 : 0.18,
-      });
+      sprite.shadow.fill({ color: 0x000000, alpha: 0.35 });
       if (player.id === this.selfId) {
         sprite.shadow.ellipse(0, 4, TILE_SIZE * 0.27, TILE_SIZE * 0.15);
-        sprite.shadow.stroke({ color: 0xf5d58f, width: 2, alpha: 0.55 });
+        sprite.shadow.stroke({ color: 0xe07a2c, width: 2, alpha: 0.55 });
       }
 
       this.updateWaitingIndicator(sprite, player.isWaitingForResponse === true);
@@ -378,8 +375,8 @@ export class GameRenderer {
       text.height + paddingY * 2,
       6,
     );
-    background.fill(0xf7ebc6);
-    background.stroke({ color: 0x8d6a47, width: 2 });
+    background.fill({ color: 0x2c2118, alpha: 0.94 });
+    background.stroke({ color: 0x4a3424, width: 2 });
 
     const tail = new Graphics();
     tail.poly([
@@ -387,8 +384,8 @@ export class GameRenderer {
       { x: 5, y: 0 },
       { x: 0, y: 8 },
     ]);
-    tail.fill(0xf7ebc6);
-    tail.stroke({ color: 0x8d6a47, width: 2 });
+    tail.fill({ color: 0x2c2118, alpha: 0.94 });
+    tail.stroke({ color: 0x4a3424, width: 2 });
 
     bubble.addChild(background);
     bubble.addChild(tail);
@@ -1132,8 +1129,8 @@ export class GameRenderer {
     const indicator = new Container();
     const background = new Graphics();
     background.roundRect(-16, -12, 32, 20, 8);
-    background.fill(0xf7ebc6);
-    background.stroke({ color: 0x8d6a47, width: 2 });
+    background.fill({ color: 0x2c2118, alpha: 0.94 });
+    background.stroke({ color: 0x4a3424, width: 2 });
 
     const dots = new Text({
       text: "...",
@@ -1141,7 +1138,7 @@ export class GameRenderer {
         fontFamily: "monospace",
         fontSize: 14,
         fontWeight: "700",
-        fill: 0x3b2b20,
+        fill: 0xf0dcae,
       }),
     });
     dots.anchor.set(0.5, 0.5);
@@ -1307,11 +1304,11 @@ export class GameRenderer {
       6,
     );
     sprite.namePlate.fill({
-      color: isSelf ? 0x5b452f : 0x3d2f23,
-      alpha: isSelf ? 0.86 : 0.72,
+      color: 0x2c2118,
+      alpha: isSelf ? 0.92 : 0.82,
     });
     sprite.namePlate.stroke({
-      color: isSelf ? 0xf2d48d : 0xc9b282,
+      color: isSelf ? 0xe07a2c : 0x6b4a2b,
       width: 2,
       alpha: 0.94,
     });
