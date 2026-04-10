@@ -28,10 +28,10 @@ const SURVIVAL_NEED_META: Array<{
   label: string;
   color: string;
 }> = [
-  { key: "health", label: "Health", color: "#e63946" },
-  { key: "food", label: "Food", color: "#f4a261" },
-  { key: "water", label: "Water", color: "#4dabf7" },
-  { key: "social", label: "Social", color: "#4ecdc4" },
+  { key: "health", label: "Health", color: "#7a2a2a" },
+  { key: "food", label: "Food", color: "#8a6a3d" },
+  { key: "water", label: "Water", color: "#4a7ea0" },
+  { key: "social", label: "Social", color: "#6a8f3a" },
 ];
 
 function requireElement<T extends HTMLElement>(id: string): T {
@@ -76,24 +76,34 @@ export class UI {
     this.chatBtnEl = requireElement<HTMLButtonElement>("chat-btn");
     this.chatHelperEl = requireElement<HTMLDivElement>("chat-helper");
     this.statusEl = requireElement<HTMLDivElement>("status-bar");
-    this.conversationTitleEl = requireElement<HTMLDivElement>("conversation-title");
-    this.conversationStatusEl = requireElement<HTMLDivElement>("conversation-status");
+    this.conversationTitleEl =
+      requireElement<HTMLDivElement>("conversation-title");
+    this.conversationStatusEl = requireElement<HTMLDivElement>(
+      "conversation-status",
+    );
     this.inviteActionsEl = requireElement<HTMLDivElement>("invite-actions");
     this.activeActionsEl = requireElement<HTMLDivElement>("active-actions");
-    this.acceptConvoBtnEl = requireElement<HTMLButtonElement>("accept-convo-btn");
-    this.declineConvoBtnEl = requireElement<HTMLButtonElement>("decline-convo-btn");
+    this.acceptConvoBtnEl =
+      requireElement<HTMLButtonElement>("accept-convo-btn");
+    this.declineConvoBtnEl =
+      requireElement<HTMLButtonElement>("decline-convo-btn");
     this.endConvoBtnEl = requireElement<HTMLButtonElement>("end-convo-btn");
     this.survivalPanelEl = requireElement<HTMLDivElement>("survival-panel");
-    this.inventoryHeaderEl = requireElement<HTMLHeadingElement>("inventory-header");
+    this.inventoryHeaderEl =
+      requireElement<HTMLHeadingElement>("inventory-header");
     this.inventoryPanelEl = requireElement<HTMLDivElement>("inventory-panel");
     this.inventoryListEl = requireElement<HTMLUListElement>("inventory-list");
 
-    this.acceptConvoBtnEl.addEventListener("click", () => this.acceptHandler?.());
+    this.acceptConvoBtnEl.addEventListener("click", () =>
+      this.acceptHandler?.(),
+    );
     this.declineConvoBtnEl.addEventListener("click", () =>
       this.declineHandler?.(),
     );
     this.endConvoBtnEl.addEventListener("click", () => this.endHandler?.());
-    this.inventoryHeaderEl.addEventListener("click", () => this.toggleInventory());
+    this.inventoryHeaderEl.addEventListener("click", () =>
+      this.toggleInventory(),
+    );
   }
 
   setSelfId(id: string | null): void {
@@ -135,14 +145,18 @@ export class UI {
         talkButton.className = "player-talk-btn";
         talkButton.textContent = "Talk";
         talkButton.disabled = !talkablePlayerIds.has(player.id);
-        talkButton.addEventListener("click", () => this.talkHandler?.(player.id));
+        talkButton.addEventListener("click", () =>
+          this.talkHandler?.(player.id),
+        );
         actions.appendChild(talkButton);
 
         const attackButton = document.createElement("button");
         attackButton.className = "player-talk-btn";
         attackButton.textContent = "Attack";
         attackButton.disabled = !attackablePlayerIds.has(player.id);
-        attackButton.addEventListener("click", () => this.attackHandler?.(player.id));
+        attackButton.addEventListener("click", () =>
+          this.attackHandler?.(player.id),
+        );
         actions.appendChild(attackButton);
 
         row.appendChild(actions);
