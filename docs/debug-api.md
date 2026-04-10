@@ -138,6 +138,18 @@ curl -X POST localhost:3001/api/debug/capture-screenshot
 curl localhost:3001/api/debug/screenshot > /tmp/ai-town.png
 ```
 
+## Serialization Helpers
+
+Debug read routes that expose world state share serializers with the WebSocket
+layer so HTTP responses and `entity_update` broadcasts stay in sync.
+
+- `snapshotMapData(world)` in `server/src/stateSnapshots.ts` builds the tile
+  grid, activities, and spawn points returned by `GET /map?format=json`.
+- `serializeDebugWorldEntity(entity)` is the richer debug-only shape behind
+  `GET /entities` and keeps `position` as a nested object.
+- `serializeWorldEntity(entity)` is the flat shape used by `entity_update`
+  broadcasts and the initial world sync payload.
+
 ## Practical Guidance
 
 - Prefer `/scenario` over `/reset` for normal debugging.
