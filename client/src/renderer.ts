@@ -1,6 +1,7 @@
 import {
   Application,
   Assets,
+  ColorMatrixFilter,
   Container,
   Graphics,
   Rectangle,
@@ -40,7 +41,7 @@ const LOOK_AHEAD_PX = TILE_SIZE * 1.25;
 const ATLAS_PATH =
   "/assets/kenney/roguelike-rpg-pack/Spritesheet/roguelikeSheet_transparent.png";
 
-const SKY_COLOR = 0x85c7e5;
+const SKY_COLOR = 0x2f4a5c;
 const NAME_STYLE = new TextStyle({
   fontFamily: "monospace",
   fontSize: 12,
@@ -59,7 +60,7 @@ const BUBBLE_TEXT_STYLE = new TextStyle({
 });
 
 type TileCoord = { col: number; row: number };
-type PathSurfaceType = "dirt" | "cobble" | "track" | "tilled";
+type PathSurfaceType = "dirt";
 
 interface PlayerSprite {
   container: Container;
@@ -221,6 +222,14 @@ export class GameRenderer {
       },
     });
     this.terrainTextures = createTerrainTextureSet();
+
+    const primalTint = new ColorMatrixFilter();
+    primalTint.matrix = [
+      0.88, 0.05, 0, 0, 0.08, 0.06, 0.84, 0, 0, 0.05, 0.04, 0.03, 0.74, 0, 0.01,
+      0, 0, 0, 1, 0,
+    ];
+    this.groundContainer.filters = [primalTint];
+    this.detailContainer.filters = [primalTint];
 
     this.cameraContainer.addChild(this.worldContainer);
     this.worldContainer.addChild(this.groundContainer);
@@ -437,12 +446,9 @@ export class GameRenderer {
     this.addTileSprite(this.groundContainer, groundTexture, x, y);
 
     if (this.isPathTile(x, y)) {
-      const surface = this.pathSurfaceType(x, y);
-      const pathTexture = this.pickPathTexture(surface, x, y);
-      const alpha =
-        surface === "track" ? 0.84 : surface === "tilled" ? 0.94 : 0.98;
-      this.addTileSprite(this.detailContainer, pathTexture, x, y, alpha);
-      this.addPathEdgeDetail(x, y, surface);
+      const pathTexture = this.pickPathTexture("dirt", x, y);
+      this.addTileSprite(this.detailContainer, pathTexture, x, y, 0.88);
+      this.addPathEdgeDetail(x, y, "dirt");
     }
 
     if (tileType === "water") {
@@ -489,7 +495,7 @@ export class GameRenderer {
   private addPathEdgeDetail(
     x: number,
     y: number,
-    surface: PathSurfaceType,
+    _surface: PathSurfaceType,
   ): void {
     const north = this.isPathTile(x, y - 1);
     const south = this.isPathTile(x, y + 1);
@@ -497,125 +503,57 @@ export class GameRenderer {
     const west = this.isPathTile(x - 1, y);
     const px = x * TILE_SIZE;
     const py = y * TILE_SIZE;
-    const edgeShade =
-      surface === "cobble"
-        ? 0x6c665f
-        : surface === "tilled"
-          ? 0x5d371e
-          : 0x5c4126;
-    const edgeLight =
-      surface === "cobble"
-        ? 0xe3d8c6
-        : surface === "tilled"
-          ? 0xc9935d
-          : 0xf2d39a;
-    const sideShade =
-      surface === "cobble"
-        ? 0x797167
-        : surface === "tilled"
-          ? 0x6a4124
-          : 0x6b4a28;
 
     const shade = new Graphics();
     if (!north) {
       shade.rect(px + 6, py + 2, TILE_SIZE - 12, 3);
-      shade.fill({
-        color: edgeShade,
-        alpha: surface === "track" ? 0.12 : 0.18,
-      });
+      shade.fill({ color: 0x5c4126, alpha: 0.16 });
     }
     if (!south) {
       shade.rect(px + 6, py + TILE_SIZE - 5, TILE_SIZE - 12, 3);
-      shade.fill({
-        color: edgeLight,
-        alpha: surface === "track" ? 0.12 : 0.16,
-      });
+      shade.fill({ color: 0xf2d39a, alpha: 0.12 });
     }
     if (!west) {
       shade.rect(px + 2, py + 7, 3, TILE_SIZE - 14);
-      shade.fill({ color: sideShade, alpha: surface === "track" ? 0.1 : 0.14 });
+      shade.fill({ color: 0x6b4a28, alpha: 0.12 });
     }
     if (!east) {
       shade.rect(px + TILE_SIZE - 5, py + 7, 3, TILE_SIZE - 14);
-      shade.fill({
-        color: edgeLight,
-        alpha: surface === "track" ? 0.09 : 0.12,
-      });
+      shade.fill({ color: 0xf2d39a, alpha: 0.1 });
     }
 
     const seed = hashCoord(x, y, 912);
     const pebbleX = px + 8 + (seed % 36);
     const pebbleY = py + 8 + ((seed >> 4) % 30);
     shade.rect(pebbleX, pebbleY, 4, 3);
-    shade.fill({
-      color:
-        surface === "cobble"
-          ? 0xf1e7d7
-          : surface === "tilled"
-            ? 0xd6a46a
-            : 0xe9d3ab,
-      alpha: 0.55,
-    });
+    shade.fill({ color: 0xe9d3ab, alpha: 0.45 });
     shade.rect(
       px + 12 + ((seed >> 7) % 26),
       py + 14 + ((seed >> 10) % 22),
       3,
       2,
     );
-    shade.fill({
-      color:
-        surface === "cobble"
-          ? 0x797063
-          : surface === "tilled"
-            ? 0x724325
-            : 0x8a5b33,
-      alpha: 0.34,
-    });
+    shade.fill({ color: 0x8a5b33, alpha: 0.32 });
 
     this.detailContainer.addChild(shade);
 
-    if (surface === "tilled") {
-      const furrow = new Graphics();
-      furrow.rect(px + 11, py + 1, 2, TILE_SIZE - 2);
-      furrow.fill({ color: 0x6a3e21, alpha: 0.32 });
-      furrow.rect(px + 29, py + 1, 2, TILE_SIZE - 2);
-      furrow.fill({ color: 0x6a3e21, alpha: 0.28 });
-      this.detailContainer.addChild(furrow);
-    }
-
-    if (!north && seed % 3 === 0 && surface !== "cobble") {
+    if (!north && seed % 3 === 0) {
       const tuft = new Graphics();
       tuft.rect(px + 5 + (seed % 18), py + 1, 2, 5);
-      tuft.fill({ color: 0x87b84b, alpha: 0.72 });
+      tuft.fill({ color: 0x6a8f3a, alpha: 0.72 });
       tuft.rect(px + 8 + ((seed >> 4) % 18), py + 2, 2, 4);
-      tuft.fill({ color: 0x93c455, alpha: 0.7 });
+      tuft.fill({ color: 0x9cbf5a, alpha: 0.7 });
       this.propContainer.addChild(tuft);
-      if (surface === "track" || surface === "dirt") {
-        this.addSceneProp(
-          "grass_clump",
-          x + 0.14 + ((seed >> 4) % 6) * 0.05,
-          y + 0.03,
-          seed % 2,
-        );
-      }
     }
-    if (!south && seed % 5 === 0 && surface !== "cobble") {
+    if (!south && seed % 5 === 0) {
       const tuft = new Graphics();
       tuft.rect(px + 9 + (seed % 15), py + TILE_SIZE - 6, 2, 5);
       tuft.fill({ color: 0x7ea947, alpha: 0.7 });
       tuft.rect(px + 14 + ((seed >> 3) % 15), py + TILE_SIZE - 5, 2, 4);
       tuft.fill({ color: 0x9acb57, alpha: 0.68 });
       this.propContainer.addChild(tuft);
-      if (surface === "track" || surface === "dirt") {
-        this.addSceneProp(
-          "grass_clump",
-          x + 0.34 + ((seed >> 5) % 5) * 0.05,
-          y + 0.87,
-          (seed >> 1) % 2,
-        );
-      }
     }
-    if (!east && seed % 4 === 0 && surface !== "track") {
+    if (!east && seed % 4 === 0) {
       this.addSceneProp(
         "stone_cluster",
         x + 0.9,
@@ -623,7 +561,7 @@ export class GameRenderer {
         seed % 2,
       );
     }
-    if (!west && seed % 6 === 0 && surface !== "track") {
+    if (!west && seed % 6 === 0) {
       this.addSceneProp(
         "stone_cluster",
         x + 0.08,
@@ -709,15 +647,9 @@ export class GameRenderer {
   }
 
   private renderWallDecoration(x: number, y: number): void {
-    const wallNorth = this.tileAt(x, y - 1) === "wall";
-    const wallSouth = this.tileAt(x, y + 1) === "wall";
-    const wallEast = this.tileAt(x + 1, y) === "wall";
-    const wallWest = this.tileAt(x - 1, y) === "wall";
-    const isBoundary =
-      x === 0 || y === 0 || x === this.mapWidth - 1 || y === this.mapHeight - 1;
     const seed = hashCoord(x, y, 301);
 
-    if (isBoundary && seed % 3 !== 0) {
+    if (seed % 3 !== 0) {
       const treeTile =
         seed % 5 === 0
           ? this.pickCoord(TILESET.roundTrees, seed)
@@ -726,110 +658,32 @@ export class GameRenderer {
       return;
     }
 
-    if (wallEast || wallWest) {
-      this.addFence(x, y, "horizontal");
-      return;
-    }
-
-    if (wallNorth || wallSouth) {
-      this.addFence(x, y, "vertical");
-      return;
-    }
-
-    const bushTexture = this.pickTile(TILESET.bushes, seed);
-    this.addPropSprite(this.worldObjectContainer, bushTexture, x, y, {
-      anchorY: 0.84,
-      zIndexBias: 8,
-    });
+    this.addSceneProp("stone_cluster", x + 0.5, y + 0.55, seed % 2);
   }
 
   private renderSceneScenery(): void {
-    this.addFarmhouse(1.6, 1.4, "brown");
-    this.addFarmhouse(13.4, 1.4, "brown");
-    this.addFarmhouse(7.8, 13.7, "cream");
-
-    for (let x = 2; x <= 4; x++) {
-      this.addFence(x, 5, "horizontal");
-    }
-    for (let x = 15; x <= 17; x++) {
-      this.addFence(x, 5, "horizontal");
-    }
-
-    const grove: Array<[number, number]> = [
-      [1, 7],
-      [2, 9],
-      [1, 12],
-      [3, 13],
-      [16, 14],
-      [17, 16],
-      [15, 17],
+    // Scatter stump clusters + stone cairns in the forest edges per spec §4.3.
+    // No buildings, fences, mailboxes, or cultivated props — pre-architecture fiction.
+    const stumps: Array<[number, number]> = [
+      [5.2, 2.7],
+      [14.6, 3.2],
+      [2.6, 14.6],
+      [16.3, 13.2],
     ];
-    for (const [x, y] of grove) {
-      const texture = this.pickCoord(
-        TILESET.orchardTrees,
-        hashCoord(x, y, 444),
-      );
-      this.addSplitTree(x, y, texture);
+    for (const [x, y] of stumps) {
+      this.addSceneProp("stump_cluster", x, y);
     }
 
-    const bushes: Array<[number, number]> = [
-      [2, 4],
-      [17, 4],
-      [6, 7],
-      [7, 6],
-      [12, 6],
-      [13, 7],
-      [4, 15],
-      [5, 16],
-      [12, 15],
-      [14, 16],
+    // Reeds at the river bend
+    const reeds: Array<[number, number]> = [
+      [4.8, 4.2],
+      [2.5, 8.0],
+      [3.2, 11.2],
+      [4.5, 10.5],
     ];
-    for (const [x, y] of bushes) {
-      const texture = this.pickTile(TILESET.bushes, hashCoord(x, y, 773));
-      this.addPropSprite(this.worldObjectContainer, texture, x, y, {
-        anchorY: 0.86,
-        zIndexBias: 10,
-      });
+    for (const [x, y] of reeds) {
+      this.addSceneProp("pond_reeds", x, y);
     }
-
-    const well = createEntityTextureSet("water_source");
-    const wellContainer = this.createStaticEntitySprite(well, 4.3, 7.3);
-    this.worldObjectContainer.addChild(wellContainer);
-
-    this.addBenchNook(2.7, 8.0);
-    this.addMarketStall(15.2, 6.8);
-    this.addGardenPatch(4.2, 14.5, 0);
-    this.addGardenPatch(12.6, 14.7, 1);
-    this.addLanternPost(8.5, 11.2);
-    this.addLanternPost(11.5, 11.2);
-    this.addMailbox(3.9, 4.8);
-    this.addMailbox(16.0, 4.8);
-    this.addMailbox(10.7, 16.5);
-    this.addFlowerBed(2.3, 4.6, 0);
-    this.addFlowerBed(14.5, 4.6, 1);
-    this.addFlowerBed(9.1, 16.1, 1);
-    this.addPorchCrate(2.05, 4.9, 0);
-    this.addWoodStack(4.95, 4.95);
-    this.addClothesline(5.45, 2.95, 0);
-    this.addTrellis(1.2, 3.4, 0);
-    this.addPorchCrate(15.55, 4.95, 1);
-    this.addWoodStack(17.2, 4.95);
-    this.addClothesline(12.35, 3.05, 1);
-    this.addTrellis(17.15, 3.45, 1);
-    this.addPorchCrate(8.65, 17.0, 0);
-    this.addWoodStack(11.35, 16.95);
-    this.addClothesline(6.15, 15.35, 0);
-    this.addTrellis(12.1, 15.55, 1);
-    this.addNoticeBoard(12.35, 11.5);
-    this.addWheelbarrow(16.75, 7.9, 0);
-    this.addWheelbarrow(4.95, 14.2, 1);
-    this.addScarecrow(8.55, 15.0, 0);
-    this.addStumpCluster(2.1, 12.45);
-    this.addStumpCluster(16.15, 16.55);
-    this.addPondReeds(8.5, 7.25);
-    this.addPondReeds(11.2, 7.2);
-    this.addPondReeds(8.75, 8.65);
-    this.addPondReeds(10.95, 8.65);
   }
 
   private addBenchNook(tileX: number, tileY: number): void {
@@ -1416,21 +1270,12 @@ export class GameRenderer {
   }
 
   private pickPathTexture(
-    surface: PathSurfaceType,
+    _surface: PathSurfaceType,
     x: number,
     y: number,
   ): Texture {
     const textures = this.requireTerrainTextures();
     const seed = hashCoord(x, y, 91);
-    if (surface === "cobble") {
-      return this.pickTerrainTexture(textures.cobble, seed);
-    }
-    if (surface === "track") {
-      return this.pickTerrainTexture(textures.track, seed);
-    }
-    if (surface === "tilled") {
-      return this.pickTerrainTexture(textures.tilled, seed);
-    }
     return this.pickTerrainTexture(textures.dirt, seed);
   }
 
@@ -1589,81 +1434,15 @@ export class GameRenderer {
   }
 
   private isPathTile(x: number, y: number): boolean {
+    // Trodden-earth paths emerge in a thin radial ring around the central
+    // clearing (spec §4.3). Pure rendering hint — pathfinding ignores this.
     if (this.tileAt(x, y) !== "floor") return false;
-    const centerX = Math.floor(this.mapWidth / 2);
-    const westApproach =
-      (y === 8 && x >= 1 && x <= 3) || (y === 9 && x >= 4 && x <= 6);
-    const plazaSpine =
-      (y === 10 && x >= 7 && x <= 12) ||
-      (y === 11 && x >= centerX - 1 && x <= centerX + 1);
-    const eastApproach =
-      (y === 9 && x >= 13 && x <= 15) || (y === 8 && x >= 16 && x <= 18);
-    const northTrack =
-      (x === centerX && y >= 1 && y <= 4) ||
-      (x === centerX - 1 && y === 5) ||
-      (x === centerX - 2 && y >= 6 && y <= 8) ||
-      (x === centerX - 1 && y === 9);
-    const southTrack =
-      (x === centerX && y === 12) ||
-      (x === centerX - 1 && y >= 13 && y <= 15) ||
-      (x === centerX - 2 && y >= 16 && y <= 17);
-    const leftFarm =
-      (y === 5 && x >= 2 && x <= 4) || (x === 4 && y >= 6 && y <= 8);
-    const rightFarm =
-      (y === 5 && x >= this.mapWidth - 5 && x <= this.mapWidth - 3) ||
-      (x === this.mapWidth - 5 && y >= 6 && y <= 7) ||
-      (x === this.mapWidth - 4 && y === 8);
-    const southPorch =
-      (y === 15 && x >= centerX - 2 && x <= centerX - 1) ||
-      (y === 16 && x === centerX - 2);
-    return (
-      westApproach ||
-      plazaSpine ||
-      eastApproach ||
-      northTrack ||
-      southTrack ||
-      leftFarm ||
-      rightFarm ||
-      southPorch
-    );
-  }
-
-  private pathSurfaceType(x: number, y: number): PathSurfaceType {
-    if (this.isPlazaTile(x, y)) {
-      return "cobble";
-    }
-    if (this.isCultivatedStripTile(x, y)) {
-      return "tilled";
-    }
-    if (this.isMeadowTrackTile(x, y)) {
-      return "track";
-    }
-    return "dirt";
-  }
-
-  private isPlazaTile(x: number, y: number): boolean {
-    return (y === 10 && x >= 8 && x <= 12) || (y === 11 && x >= 8 && x <= 11);
-  }
-
-  private isCultivatedStripTile(x: number, y: number): boolean {
-    const centerX = Math.floor(this.mapWidth / 2);
-    return (
-      (x === centerX - 1 && y >= 13 && y <= 15) ||
-      (x === centerX - 2 && y >= 15 && y <= 17) ||
-      (y === 15 && x >= centerX - 2 && x <= centerX - 1) ||
-      (y === 5 && x >= 2 && x <= 4) ||
-      (y === 5 && x >= this.mapWidth - 5 && x <= this.mapWidth - 3)
-    );
-  }
-
-  private isMeadowTrackTile(x: number, y: number): boolean {
-    return (
-      (y === 8 && x >= 1 && x <= 3) ||
-      (y === 9 && x >= 4 && x <= 6) ||
-      (y === 9 && x >= 13 && x <= 15) ||
-      (y === 8 && x >= 16 && x <= 18) ||
-      (x === Math.floor(this.mapWidth / 2) - 2 && y >= 6 && y <= 8)
-    );
+    const centerX = 10;
+    const centerY = 10;
+    const dx = x - centerX;
+    const dy = y - centerY;
+    const distSq = dx * dx + dy * dy;
+    return distSq >= 4 && distSq <= 9;
   }
 
   private isPondBankTile(x: number, y: number): boolean {

@@ -46,7 +46,7 @@ describe("NpcAutonomyManager", () => {
       steps: [
         {
           actionId: GOTO_ACTION_ID,
-          targetPosition: { x: 17, y: 17 },
+          targetPosition: { x: 15, y: 12 },
         },
       ],
       totalCost: 1,
@@ -82,7 +82,7 @@ describe("NpcAutonomyManager", () => {
       steps: [
         {
           actionId: GOTO_ACTION_ID,
-          targetPosition: { x: 17, y: 17 },
+          targetPosition: { x: 15, y: 12 },
         },
       ],
       totalCost: 1,
@@ -290,7 +290,9 @@ describe("NpcAutonomyManager", () => {
     state.currentPlanSource = "scripted";
 
     const managerInternals = manager as unknown as {
-      buildCurrentDebugPlan: (currentState: typeof state) => DebugFeedEventPayload["plan"] | null;
+      buildCurrentDebugPlan: (
+        currentState: typeof state,
+      ) => DebugFeedEventPayload["plan"] | null;
       createNpcDebugEvent: (
         npcId: string,
         params: Omit<
@@ -303,13 +305,15 @@ describe("NpcAutonomyManager", () => {
 
     const eventPlan = managerInternals.buildCurrentDebugPlan(state);
     expect(eventPlan).toBeTruthy();
-    managerInternals.emitDebugEvent(managerInternals.createNpcDebugEvent("npc_1", {
-      type: "plan_started",
-      severity: "info",
-      title: "Plan started",
-      message: "npc_1 started satisfy water via scripted.",
-      plan: eventPlan ?? undefined,
-    }));
+    managerInternals.emitDebugEvent(
+      managerInternals.createNpcDebugEvent("npc_1", {
+        type: "plan_started",
+        severity: "info",
+        title: "Plan started",
+        message: "npc_1 started satisfy water via scripted.",
+        plan: eventPlan ?? undefined,
+      }),
+    );
 
     const started = events.find((event) => event.type === "plan_started");
     expect(started).toBeDefined();
