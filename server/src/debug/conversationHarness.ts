@@ -321,14 +321,14 @@ const CONVERSATION_HARNESS_SCENARIOS: Record<
 > = {
   human_to_npc_conversation: {
     description:
-      "Connect one human, start a conversation with npc_alice, and wait for the NPC reply.",
+      "Connect one human, start a conversation with npc_kael, and wait for the NPC reply.",
     run: async (runtime) => {
       const human = await runtime.connectHuman("Harness Alice");
       await runtime.moveTo(human, 4, 3);
 
       runtime.send(human, {
         type: "start_convo",
-        data: { targetId: "npc_alice" },
+        data: { targetId: "npc_kael" },
       });
       const active = await runtime.waitForConversationState(
         human,
@@ -343,7 +343,7 @@ const CONVERSATION_HARNESS_SCENARIOS: Record<
         human,
         (message) =>
           message.data.convoId === active.data.id &&
-          message.data.playerId === "npc_alice",
+          message.data.playerId === "npc_kael",
       );
 
       return {
@@ -359,7 +359,7 @@ const CONVERSATION_HARNESS_SCENARIOS: Record<
   },
   npc_to_human_conversation: {
     description:
-      "Connect one human near npc_alice and wait for NPC initiation after the join grace window.",
+      "Connect one human near npc_kael and wait for NPC initiation after the join grace window.",
     run: async (runtime) => {
       const human = await runtime.connectHuman("Harness Human");
       await runtime.moveTo(human, 4, 3);
@@ -368,22 +368,22 @@ const CONVERSATION_HARNESS_SCENARIOS: Record<
         human,
         "active",
         (message) =>
-          message.data.player1Id === "npc_alice" ||
-          message.data.player2Id === "npc_alice",
+          message.data.player1Id === "npc_kael" ||
+          message.data.player2Id === "npc_kael",
         12_000,
       );
       const firstNpcMessage = await runtime.waitForChatMessage(
         human,
         (message) =>
           message.data.convoId === active.data.id &&
-          message.data.playerId === "npc_alice",
+          message.data.playerId === "npc_kael",
         12_000,
       );
 
       return {
         summary: {
           convoId: active.data.id,
-          initiator: "npc_alice",
+          initiator: "npc_kael",
           activeState: active.data.state,
           npcReplyObserved: true,
           firstNpcMessageTick: firstNpcMessage.data.tick,
@@ -557,7 +557,7 @@ const CONVERSATION_HARNESS_SCENARIOS: Record<
   },
   join_grace_period: {
     description:
-      "Connect one human near npc_alice and verify no conversation updates arrive during the grace period.",
+      "Connect one human near npc_kael and verify no conversation updates arrive during the grace period.",
     run: async (runtime) => {
       const human = await runtime.connectHuman("Harness Grace");
       await runtime.moveTo(human, 4, 3);

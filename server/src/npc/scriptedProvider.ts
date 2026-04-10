@@ -14,7 +14,11 @@ import type {
   NpcReflectionRequest,
   NpcReplyRequest,
 } from "./provider.js";
-import { buildGoalSelectionPrompt, buildReflectionPrompt, buildReplyPrompt } from "./provider.js";
+import {
+  buildGoalSelectionPrompt,
+  buildReflectionPrompt,
+  buildReplyPrompt,
+} from "./provider.js";
 
 const TOPIC_STOP_WORDS = new Set([
   "a",
@@ -40,7 +44,10 @@ export class ScriptedNpcProvider implements NpcModelProvider {
   readonly name = "scripted";
 
   async generateReply(request: NpcReplyRequest): Promise<NpcModelResponse> {
-    const lastPartnerMessage = this.findLastPartnerMessage(request.messages, request.partner.id);
+    const lastPartnerMessage = this.findLastPartnerMessage(
+      request.messages,
+      request.partner.id,
+    );
     const content = lastPartnerMessage
       ? this.buildContextualReply(request, lastPartnerMessage)
       : this.greetingSeed(request);
@@ -58,7 +65,7 @@ export class ScriptedNpcProvider implements NpcModelProvider {
     const mostRecent =
       request.memories[0]?.content ?? "I need more experiences.";
     return {
-      content: `I'm noticing a pattern in town life: ${mostRecent}`,
+      content: `A pattern is forming in how we live here: ${mostRecent}`,
       prompt: buildReflectionPrompt(request),
       latencyMs: 0,
     };

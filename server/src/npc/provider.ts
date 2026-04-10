@@ -12,7 +12,10 @@ import type { Message } from "../engine/conversation.js";
 import type { Player } from "../engine/types.js";
 
 const SURVIVAL_DEATH_RULE =
-  "If your health, food, water, or social value reaches 0, you die and disappear from town.";
+  "If your health, food, water, or social value reaches 0, you die and your body is lost to the land.";
+
+const WORLD_FRAMING =
+  "You have no name for this place. You know only what you have seen with your own eyes or heard from those around you. Do not speak of towns, villages, cities, houses, jobs, or anything your eyes have not shown you.";
 
 /** Input context assembled by the orchestrator for one NPC conversation turn. */
 export interface NpcReplyRequest {
@@ -109,21 +112,22 @@ export function buildReplyPrompt(request: NpcReplyRequest): string {
       : "None.";
 
   return [
-    "You are roleplaying as an NPC in a tile-based town simulation.",
+    "You are roleplaying as an early human awake in an unfamiliar land.",
+    WORLD_FRAMING,
     `Stay in character as ${request.npc.name}.`,
     `Description: ${request.npc.description}`,
     `Personality: ${request.npc.personality ?? "Unknown"}`,
-    `Conversation partner: ${request.partner.name}.`,
+    `The one before you: ${request.partner.name}.`,
     SURVIVAL_DEATH_RULE,
-    "Respond with exactly one natural in-character chat message.",
+    "Respond with exactly one natural in-character line of speech.",
     "Do not narrate actions, do not mention prompts, tools, policies, or being an AI.",
-    "Keep the reply under 45 words unless the conversation clearly requires more detail.",
+    "Keep the reply under 45 words unless the moment clearly calls for more.",
     "",
     "Relevant memories:",
     memories,
     "",
-    "Recent transcript:",
-    transcript || `${request.partner.name} has just approached you.`,
+    "Recent words between you:",
+    transcript || `${request.partner.name} has just come near you.`,
   ].join("\n");
 }
 
@@ -140,13 +144,14 @@ export function buildReflectionPrompt(request: NpcReflectionRequest): string {
     .join("\n");
 
   return [
-    "You are generating an internal reflection for an NPC in a town simulation.",
-    `NPC: ${request.npc.name}`,
+    "You are generating an inner thought for an early human in an unfamiliar land.",
+    WORLD_FRAMING,
+    `You are ${request.npc.name}.`,
     `Description: ${request.npc.description}`,
     `Personality: ${request.npc.personality ?? "Unknown"}`,
     SURVIVAL_DEATH_RULE,
-    "Write one short first-person reflection about what the NPC has learned or inferred.",
-    "Keep it under 80 words. This is private memory, not spoken dialogue.",
+    "Write one short first-person thought about what you have learned or sensed.",
+    "Keep it under 80 words. This is private, not spoken aloud.",
     "",
     "Recent memories:",
     memories || "None.",
@@ -167,9 +172,10 @@ export function buildGoalSelectionPrompt(request: NpcGoalRequest): string {
     .join("\n");
 
   const invItems = Object.entries(request.inventory);
-  const invLine = invItems.length > 0
-    ? invItems.map(([item, count]) => `${item} x${count}`).join(", ")
-    : "empty";
+  const invLine =
+    invItems.length > 0
+      ? invItems.map(([item, count]) => `${item} x${count}`).join(", ")
+      : "empty";
 
   const nearbyLines = request.nearbyEntities
     .slice(0, 5)
@@ -186,8 +192,9 @@ export function buildGoalSelectionPrompt(request: NpcGoalRequest): string {
     .join("\n");
 
   return [
-    `You are ${request.npc.name}. ${request.npc.description}`,
+    `You are ${request.npc.name}, an early human in an unfamiliar land. ${request.npc.description}`,
     `Personality: ${request.npc.personality ?? "Unknown"}`,
+    WORLD_FRAMING,
     SURVIVAL_DEATH_RULE,
     "",
     "Current state:",

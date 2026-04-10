@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryNpcStore } from "../src/db/npcStore.js";
 import { InMemoryRepository } from "../src/db/repository.js";
+import { PlaceholderEmbedder } from "../src/npc/embedding.js";
+import { MemoryManager } from "../src/npc/memory.js";
+import { NpcOrchestrator } from "../src/npc/orchestrator.js";
 import type {
   NpcModelProvider,
   NpcModelResponse,
   NpcReflectionRequest,
   NpcReplyRequest,
 } from "../src/npc/provider.js";
-import { PlaceholderEmbedder } from "../src/npc/embedding.js";
-import { MemoryManager } from "../src/npc/memory.js";
-import { NpcOrchestrator } from "../src/npc/orchestrator.js";
 import { TestGame } from "./helpers/testGame.js";
 
 class TestProvider implements NpcModelProvider {
@@ -125,7 +125,9 @@ describe("NpcOrchestrator", () => {
     expect(conversation?.messages).toHaveLength(3);
     expect(conversation?.messages[2].playerId).toBe("npc_alice");
     expect(store.messages).toHaveLength(3);
-    expect(store.generations.filter((record) => record.kind === "reply")).toHaveLength(2);
+    expect(
+      store.generations.filter((record) => record.kind === "reply"),
+    ).toHaveLength(2);
   });
 
   it("lets NPCs initiate conversations with nearby humans", async () => {
@@ -171,7 +173,9 @@ describe("NpcOrchestrator", () => {
     tg.tick(3);
     await flushAsyncWork();
 
-    expect(tg.game.conversations.getPlayerConversation("human_1")).toBeUndefined();
+    expect(
+      tg.game.conversations.getPlayerConversation("human_1"),
+    ).toBeUndefined();
   });
 
   it("stores ended conversations and generates reflections for NPCs", async () => {
@@ -197,7 +201,7 @@ describe("NpcOrchestrator", () => {
     await memoryManager.addMemory({
       playerId: "npc_alice",
       type: "observation",
-      content: "The baker mentioned a town rumor.",
+      content: "Another whispered of strange tracks in the mud.",
       importance: 30,
       tick: 0,
     });
@@ -217,7 +221,10 @@ describe("NpcOrchestrator", () => {
     tg.game.enqueue({
       type: "say",
       playerId: "human_1",
-      data: { convoId: conversation!.id, content: "How's the town today?" },
+      data: {
+        convoId: conversation!.id,
+        content: "Have you seen anything new today?",
+      },
     });
     tg.tick();
     await flushAsyncWork();
@@ -237,7 +244,9 @@ describe("NpcOrchestrator", () => {
     expect(reflections).toHaveLength(1);
     expect(reflections[0].content).toContain("npc_alice learned");
     expect(store.conversations.get(conversation!.id)?.state).toBe("ended");
-    expect(store.generations.some((record) => record.kind === "reflection")).toBe(true);
+    expect(
+      store.generations.some((record) => record.kind === "reflection"),
+    ).toBe(true);
   });
 
   it("marks NPCs as waiting while an LLM reply is in flight", async () => {
@@ -272,7 +281,8 @@ describe("NpcOrchestrator", () => {
 
     expect(tg.game.getPlayer("npc_alice")?.isWaitingForResponse).toBe(false);
     expect(
-      tg.game.conversations.getPlayerConversation("human_1")?.messages[0]?.content,
+      tg.game.conversations.getPlayerConversation("human_1")?.messages[0]
+        ?.content,
     ).toBe("Still here.");
   });
 });

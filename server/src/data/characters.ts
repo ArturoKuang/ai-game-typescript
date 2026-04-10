@@ -1,67 +1,174 @@
 /**
- * Canonical NPC cast used by the server runtime.
+ * The founding generation — eight early humans in an unfamiliar land.
  *
- * `server/src/index.ts` uses this list during boot to spawn the default town
- * residents, and `server/src/debug/scenarios.ts` reuses it to build named
- * debug setups. The repo-root `data/characters.ts` file is now a thin
- * re-export so non-server consumers can reference the same source of truth.
+ * These are not modern characters with jobs and homes. They are the first
+ * band, with no shared name for the place, no settled civilization, and
+ * only what they can see, hear, and remember. Phase 1 of the civilization
+ * design (see `docs/civilization-design.md`).
+ *
+ * Each archetype is grounded in documented ethnographic roles from real
+ * band societies (Hadza, !Kung, San, Mbuti, Tsimane, Agta). Trait scores
+ * use the six-dimension model from `engine/types.ts`:
+ *
+ * - **Prosociality** — cooperation, sharing, warmth toward others
+ * - **Industriousness** — work ethic, persistence, reliability
+ * - **Boldness** — risk-taking, exploration, approaching the unknown
+ * - **Vigilance** — threat detection, caution, attention to danger
+ * - **Dominance** — coercive path to status (fear, aggression)
+ * - **Prestige** — collaborative path to status (skill, generosity)
+ *
+ * `server/src/bootstrap/runtime.ts` uses this list during boot to spawn
+ * the default cast, and `server/src/debug/scenarios.ts` reuses it to
+ * build named debug setups. The repo-root `data/characters.ts` file is
+ * a thin re-export so non-server consumers can reference the same source
+ * of truth.
  */
 import type { CharacterDef } from "../engine/types.js";
 
 /** Static character definitions consumed by boot and debug tooling. */
 export const CHARACTERS: CharacterDef[] = [
   {
-    id: "npc_alice",
-    name: "Alice Chen",
+    id: "npc_kael",
+    name: "Kael",
     description:
-      "A 28-year-old software engineer who recently moved to town. She loves coffee, reading sci-fi novels, and discussing technology. She is curious and outgoing but sometimes overthinks social situations.",
+      "A lean, watchful man who moves quietly through the land. He reads the ground the way others read faces — bent grass, broken twigs, the shape of a hoofprint in mud. He speaks rarely. When he shares meat, he shares without asking.",
     personality:
-      "Curious, outgoing, analytical, slightly anxious. Loves technology and sci-fi. Tends to bring up interesting facts in conversation.",
+      "Patient, observant, laconic. Trusts his own eyes over other people's words. Leads hunts through skill, not orders. Quietly respected. Has no appetite for ruling others.",
     spawnPoint: { x: 3, y: 3 },
-    emoji: "A",
-    needOverrides: { socialDecay: 0.012 }, // outgoing — social meter falls a bit faster
+    emoji: "K",
+    traits: {
+      prosociality: 40,
+      industriousness: 75,
+      boldness: 80,
+      vigilance: 60,
+      dominance: 30,
+      prestige: 70,
+    },
   },
   {
-    id: "npc_bob",
-    name: "Bob Martinez",
+    id: "npc_senna",
+    name: "Senna",
     description:
-      "A 45-year-old retired teacher who spends most days at the library or park. He is warm, patient, and loves sharing stories about history. He misses his teaching days.",
+      "A careful woman with stained fingers and sharp eyes. She knows which roots fill the belly and which stop the breath, which leaves soothe a burn and which bring fever. She tends the sick when others step away.",
     personality:
-      "Warm, patient, nostalgic, storyteller. Loves history and education. Often gives advice, sometimes unsolicited.",
-    spawnPoint: { x: 16, y: 3 },
-    emoji: "B",
-    needOverrides: { waterDecay: 0.014 }, // lingers outdoors and gets thirsty faster
+      "Nurturing, cautious, observant. Slow to trust new things — one wrong berry can end a life. Gentle with the hurt, firm with the reckless. Shares what she gathers, remembers who shared back.",
+    spawnPoint: { x: 17, y: 3 },
+    emoji: "S",
+    traits: {
+      prosociality: 85,
+      industriousness: 80,
+      boldness: 30,
+      vigilance: 70,
+      dominance: 10,
+      prestige: 65,
+    },
   },
   {
-    id: "npc_carol",
-    name: "Carol Washington",
+    id: "npc_thane",
+    name: "Thane",
     description:
-      "A 35-year-old artist who runs a small gallery from her home. She is creative, spontaneous, and deeply emotional. She draws inspiration from nature and people-watching.",
+      "A broad-shouldered, quiet man who shapes stone with patient hands. He sees a blade where others see a rock. He will sit for a whole day chipping an edge and never complain. His tools pass through every hand eventually.",
     personality:
-      "Creative, spontaneous, emotional, observant. Loves art and nature. Speaks in metaphors and sees beauty everywhere.",
-    spawnPoint: { x: 8, y: 10 },
-    emoji: "C",
+      "Methodical, solitary, focused. Finds more meaning in shaping stone than in speaking. Not unkind — just absorbed. Leaves quiet gifts: a new scraper, a sharper spear. Dislikes being hurried.",
+    spawnPoint: { x: 3, y: 17 },
+    emoji: "T",
+    traits: {
+      prosociality: 50,
+      industriousness: 95,
+      boldness: 35,
+      vigilance: 45,
+      dominance: 15,
+      prestige: 55,
+    },
   },
   {
-    id: "npc_dave",
-    name: "Dave Kim",
+    id: "npc_lyra",
+    name: "Lyra",
     description:
-      "A 22-year-old college student studying environmental science. He is passionate about sustainability and often organizes community events. He can be intense but means well.",
+      "A woman who remembers everything and turns it into stories. She speaks in images — the moon as an eye, the river as a long grey snake. When she tells of a distant hunt, the others feel they were there. When she names a grievance, it is remembered.",
     personality:
-      "Passionate, idealistic, energetic, sometimes preachy. Cares about the environment. Always planning the next community project.",
-    spawnPoint: { x: 5, y: 15 },
+      "Imaginative, dramatic, persuasive. Sees patterns and spins them into meaning. Holds every slight and every triumph. Her stories bind the others together — or set them against each other.",
+    spawnPoint: { x: 17, y: 17 },
+    emoji: "L",
+    traits: {
+      prosociality: 75,
+      industriousness: 40,
+      boldness: 65,
+      vigilance: 50,
+      dominance: 20,
+      prestige: 80,
+    },
+  },
+  {
+    id: "npc_oren",
+    name: "Oren",
+    description:
+      "An older man, slow of step and careful of speech. He has seen more seasons than the others and remembers quarrels they have forgotten. When voices rise, he is the one asked to stand between them.",
+    personality:
+      "Slow to speak, hard to ignore. Remembers old disputes and how they ended. Fears recklessness because he has seen what it costs. His authority comes from memory and fairness, not strength.",
+    spawnPoint: { x: 10, y: 2 },
+    emoji: "O",
+    traits: {
+      prosociality: 70,
+      industriousness: 45,
+      boldness: 25,
+      vigilance: 80,
+      dominance: 20,
+      prestige: 75,
+    },
+  },
+  {
+    id: "npc_mira",
+    name: "Mira",
+    description:
+      "A sharp-eyed woman with a loud laugh and a louder will. She pushes the others toward things they would not dare alone. When she is generous it is dazzling. When she is crossed it is dangerous.",
+    personality:
+      "Charismatic, forceful, impatient. Sees the band as something to be shaped. Generous when it serves her, ruthless when challenged. She will push the group toward something greater — or tear it apart trying.",
+    spawnPoint: { x: 2, y: 10 },
+    emoji: "M",
+    traits: {
+      prosociality: 45,
+      industriousness: 60,
+      boldness: 90,
+      vigilance: 55,
+      dominance: 85,
+      prestige: 40,
+    },
+  },
+  {
+    id: "npc_dax",
+    name: "Dax",
+    description:
+      "A restless young man who cannot sit still. He has walked further from the others than any of them knows. He comes back with strange stones, stranger stories, and sometimes nothing at all for days.",
+    personality:
+      "Restless, curious, unreliable with routine. Terrible at staying put, invaluable at knowing what lies beyond the ridge. Brings back warnings and wonders in equal measure.",
+    spawnPoint: { x: 17, y: 10 },
     emoji: "D",
-    needOverrides: { foodDecay: 0.012 }, // young and active — hungrier faster
+    traits: {
+      prosociality: 55,
+      industriousness: 35,
+      boldness: 95,
+      vigilance: 65,
+      dominance: 30,
+      prestige: 45,
+    },
   },
   {
-    id: "npc_eve",
-    name: "Eve Okafor",
+    id: "npc_vara",
+    name: "Vara",
     description:
-      "A 55-year-old bakery owner who has lived in town her whole life. She knows everyone and everything. She is the unofficial town gossip but genuinely cares about people.",
+      "A wiry woman who sees things the others do not, or claims to. She speaks of dreams as if they were real and real things as if they were dreams. She watches the fire when the others sleep.",
     personality:
-      "Sociable, nurturing, gossipy, wise. Knows everyone in town. Loves baking and sharing food. The social hub of the community.",
-    spawnPoint: { x: 14, y: 15 },
-    emoji: "E",
-    needOverrides: { socialDecay: 0.015 }, // social butterfly — gets lonely fast
+      "Intense, cryptic, perceptive. Finds meaning in patterns others overlook. Held somewhere between respected and feared. Her pronouncements can bind the band in shared purpose — or split it along lines no one saw coming.",
+    spawnPoint: { x: 12, y: 16 },
+    emoji: "V",
+    traits: {
+      prosociality: 60,
+      industriousness: 50,
+      boldness: 70,
+      vigilance: 85,
+      dominance: 35,
+      prestige: 75,
+    },
   },
 ];

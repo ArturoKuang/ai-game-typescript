@@ -201,8 +201,8 @@ export class MemoryManager {
 
     const reflectionContent =
       topics.length > 0
-        ? `Reflecting on recent experiences: ${topics.join("; ")}. These interactions have shaped my understanding of the community.`
-        : `I've been observing the town and reflecting on what I've experienced so far.`;
+        ? `Turning over what has happened: ${topics.join("; ")}. Each meeting changes what I know of the others around me.`
+        : "I have been watching this place and those who share it, turning over what I have seen.";
 
     const reflection = await this.addMemory({
       playerId,

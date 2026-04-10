@@ -48,6 +48,7 @@ import type {
   PlayerState,
   Position,
   TickResult,
+  Traits,
 } from "./types.js";
 import { World } from "./world.js";
 
@@ -152,6 +153,7 @@ export class GameLoop {
     description?: string;
     personality?: string;
     speed?: number;
+    traits?: Traits;
   }): Player {
     if (this.players_.has(params.id)) {
       throw new Error(`Player ${params.id} already exists`);
@@ -177,6 +179,7 @@ export class GameLoop {
       inputSpeed: 5.0,
       hp: 100,
       maxHp: 100,
+      traits: params.traits,
     };
 
     this.players_.set(params.id, player);
@@ -432,6 +435,7 @@ export class GameLoop {
               description: cmd.data.description,
               personality: cmd.data.personality,
               speed: cmd.data.speed,
+              traits: cmd.data.traits,
             });
           } catch {
             // Player already exists — skip

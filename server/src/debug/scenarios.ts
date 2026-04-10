@@ -31,27 +31,30 @@ function spawnCharacter(
     isNpc: true,
     description: char.description,
     personality: char.personality,
+    traits: char.traits,
   });
 }
 
 export const SCENARIOS: Record<string, ScenarioDef> = {
   empty: {
-    description: "Empty world, no players",
+    description: "Empty land, no one here",
     setup: () => {
       // Nothing to do
     },
   },
 
-  two_npcs_near_cafe: {
-    description: "Alice and Bob spawned near the cafe",
+  two_founders_meet: {
+    description:
+      "Kael the tracker and Oren the elder spawn near each other in the north",
     setup: (game) => {
-      spawnCharacter(game, "npc_alice", 2, 2);
-      spawnCharacter(game, "npc_bob", 4, 2);
+      spawnCharacter(game, "npc_kael", 2, 2);
+      spawnCharacter(game, "npc_oren", 4, 2);
     },
   },
 
-  crowded_town: {
-    description: "All 5 NPCs spawned at various locations",
+  founding_band: {
+    description:
+      "All 8 founding humans spawned at their starting positions across the land",
     setup: (game) => {
       for (const char of CHARACTERS) {
         spawnCharacter(game, char.id);

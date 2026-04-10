@@ -83,6 +83,14 @@ export interface Player {
   hp?: number;
   /** Maximum hit points. Undefined defaults to PLAYER_DEFAULT_HP (100). */
   maxHp?: number;
+
+  // --- Personality ---
+  /**
+   * Anthropologically grounded trait scores. Copied from `CharacterDef.traits`
+   * at spawn time for canonical NPCs. Optional because ad-hoc test spawns and
+   * human players do not need them.
+   */
+  traits?: Traits;
 }
 
 /** A point-of-interest on the map that players can interact with. */
@@ -161,6 +169,7 @@ export type Command =
         description?: string;
         personality?: string;
         speed?: number;
+        traits?: Traits;
       };
     }
   | {
@@ -246,6 +255,40 @@ export interface NeedOverrides {
   socialDecay?: number;
 }
 
+/**
+ * Six-dimension trait model grounded in evolutionary anthropology.
+ *
+ * Prosociality + Industriousness are the two dominant axes found in
+ * forager-farmer populations (Tsimane study — the Big Five collapses
+ * into these two among people who actually live close to ancestral
+ * conditions). Boldness + Vigilance capture the approach/avoidance
+ * (reward/threat) dimension. Dominance + Prestige are the two paths
+ * to social status (dual strategies theory): dominance through
+ * coercion, prestige through earned skill and generosity.
+ *
+ * Each value is 0–100. Phase 1 stores them on static character
+ * definitions and passes them through to `Player` at spawn time.
+ * Phase 2 will feed them into the GOAP planner's goal weighting.
+ */
+export interface Traits {
+  prosociality: number;
+  industriousness: number;
+  boldness: number;
+  vigilance: number;
+  dominance: number;
+  prestige: number;
+}
+
+/** Neutral baseline traits — all dimensions at 50. */
+export const NEUTRAL_TRAITS: Traits = {
+  prosociality: 50,
+  industriousness: 50,
+  boldness: 50,
+  vigilance: 50,
+  dominance: 50,
+  prestige: 50,
+};
+
 /** Static definition of an NPC loaded from `data/characters.ts`. */
 export interface CharacterDef {
   id: string;
@@ -254,6 +297,8 @@ export interface CharacterDef {
   personality: string;
   spawnPoint: Position;
   emoji: string;
+  /** Anthropologically grounded trait scores (0-100 per dimension). */
+  traits: Traits;
   /** Per-character need decay overrides. */
   needOverrides?: NeedOverrides;
 }

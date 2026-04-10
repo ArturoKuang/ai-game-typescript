@@ -6,11 +6,11 @@
  * verify nothing breaks.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { TestGame } from "./helpers/testGame.js";
-import { SCENARIOS, listScenarios } from "../src/debug/scenarios.js";
 import { CHARACTERS } from "../src/data/characters.js";
-import { cosineSimilarity, PlaceholderEmbedder } from "../src/npc/embedding.js";
+import { SCENARIOS, listScenarios } from "../src/debug/scenarios.js";
 import type { GameEvent } from "../src/engine/types.js";
+import { PlaceholderEmbedder, cosineSimilarity } from "../src/npc/embedding.js";
+import { TestGame } from "./helpers/testGame.js";
 
 // ---------- Scenario contracts ----------
 
@@ -19,24 +19,30 @@ describe("Scenario contracts", () => {
 
   afterEach(() => tg?.destroy());
 
-  it("crowded_town spawns 5 NPCs with correct IDs", () => {
+  it("founding_band spawns all 8 founding humans with correct IDs", () => {
     tg = new TestGame({ map: "default" });
-    SCENARIOS.crowded_town.setup(tg.game);
+    SCENARIOS.founding_band.setup(tg.game);
 
     const players = tg.game.getPlayers();
-    const npcIds = players.filter((p) => p.isNpc).map((p) => p.id).sort();
+    const npcIds = players
+      .filter((p) => p.isNpc)
+      .map((p) => p.id)
+      .sort();
     expect(npcIds).toEqual([
-      "npc_alice",
-      "npc_bob",
-      "npc_carol",
-      "npc_dave",
-      "npc_eve",
+      "npc_dax",
+      "npc_kael",
+      "npc_lyra",
+      "npc_mira",
+      "npc_oren",
+      "npc_senna",
+      "npc_thane",
+      "npc_vara",
     ]);
   });
 
   it("scenario NPCs match character definitions", () => {
     tg = new TestGame({ map: "default" });
-    SCENARIOS.crowded_town.setup(tg.game);
+    SCENARIOS.founding_band.setup(tg.game);
 
     for (const char of CHARACTERS) {
       const player = tg.game.getPlayer(char.id);
@@ -50,8 +56,8 @@ describe("Scenario contracts", () => {
     const list = listScenarios();
     const names = list.map((s) => s.name).sort();
     expect(names).toContain("empty");
-    expect(names).toContain("two_npcs_near_cafe");
-    expect(names).toContain("crowded_town");
+    expect(names).toContain("two_founders_meet");
+    expect(names).toContain("founding_band");
   });
 });
 

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { type Server, createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type Express } from "express";
@@ -12,13 +12,13 @@ import { checkConnection, getPool } from "../db/client.js";
 import { runMigrations } from "../db/migrate.js";
 import {
   InMemoryNpcStore,
-  PostgresNpcStore,
   type NpcPersistenceStore,
+  PostgresNpcStore,
 } from "../db/npcStore.js";
 import {
   InMemoryRepository,
-  Repository,
   type MemoryStore,
+  Repository,
 } from "../db/repository.js";
 import { createDebugRouter } from "../debug/router.js";
 import { GameLoop } from "../engine/gameLoop.js";
@@ -175,7 +175,10 @@ function resolveServerRoot(moduleUrl: string): string {
   return join(dirname(fileURLToPath(moduleUrl)), "..", "..");
 }
 
-function loadMapData(serverRoot: string): { mapPath: string; mapData: MapData } {
+function loadMapData(serverRoot: string): {
+  mapPath: string;
+  mapData: MapData;
+} {
   const mapPath = resolveMapPath(serverRoot);
   const mapData = JSON.parse(readFileSync(mapPath, "utf-8")) as MapData;
   return { mapPath, mapData };
@@ -209,6 +212,7 @@ function spawnDefaultNpcs(
         isNpc: true,
         description: char.description,
         personality: char.personality,
+        traits: char.traits,
       });
       console.log(
         `Spawned NPC: ${char.name} at (${char.spawnPoint.x}, ${char.spawnPoint.y})`,
@@ -219,10 +223,7 @@ function spawnDefaultNpcs(
   }
 }
 
-function wirePersistence(
-  game: GameLoop,
-  npcStore: NpcPersistenceStore,
-): void {
+function wirePersistence(game: GameLoop, npcStore: NpcPersistenceStore): void {
   game.on("spawn", (event) => {
     if (!event.playerId) {
       return;

@@ -28,10 +28,9 @@ describe("ASCII Map Renderer", () => {
     expect(legend.A).toContain("alice");
   });
 
-  it("renders activities on default map", () => {
+  it("renders the default map legend", () => {
     tg = new TestGame({ map: "default" });
     const { ascii } = renderAsciiMap(tg.game);
-    // Should contain activity emoji first chars
     expect(ascii).toContain("Legend:");
   });
 
@@ -57,18 +56,18 @@ describe("Scenarios", () => {
     expect(tg.game.getPlayers()).toHaveLength(0);
   });
 
-  it("two_npcs_near_cafe spawns 2 NPCs", () => {
+  it("two_founders_meet spawns 2 NPCs", () => {
     tg = new TestGame({ map: "default" });
-    SCENARIOS.two_npcs_near_cafe.setup(tg.game);
+    SCENARIOS.two_founders_meet.setup(tg.game);
     const players = tg.game.getPlayers();
     expect(players).toHaveLength(2);
     expect(players.every((p) => p.isNpc)).toBe(true);
   });
 
-  it("crowded_town spawns 5 NPCs", () => {
+  it("founding_band spawns all 8 founding humans", () => {
     tg = new TestGame({ map: "default" });
-    SCENARIOS.crowded_town.setup(tg.game);
-    expect(tg.game.getPlayers()).toHaveLength(5);
+    SCENARIOS.founding_band.setup(tg.game);
+    expect(tg.game.getPlayers()).toHaveLength(8);
   });
 });
 
@@ -110,7 +109,9 @@ describe("GameLogger", () => {
     logger.log({ tick: 2, type: "input_move", playerId: "alice" });
     logger.log({ tick: 3, type: "player_collision", playerId: "alice" });
 
-    const events = logger.getEvents({ types: ["input_move", "player_collision"] });
+    const events = logger.getEvents({
+      types: ["input_move", "player_collision"],
+    });
     expect(events.map((event) => event.type)).toEqual([
       "input_move",
       "player_collision",

@@ -7,7 +7,7 @@ import {
 import { TestGame } from "./helpers/testGame.js";
 
 const SURVIVAL_DEATH_RULE =
-  "If your health, food, water, or social value reaches 0, you die and disappear from town.";
+  "If your health, food, water, or social value reaches 0, you die and your body is lost to the land.";
 
 describe("NPC prompt builders", () => {
   let tg: TestGame;

@@ -54,8 +54,8 @@ Provides named respawn setups while keeping the loaded world intact.
 Built-in scenarios:
 
 - `empty`
-- `two_npcs_near_cafe`
-- `crowded_town`
+- `two_founders_meet`
+- `founding_band`
 
 ### `movementHarness.ts`
 
