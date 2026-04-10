@@ -28,25 +28,143 @@ export interface FarmhouseTextureSet {
   roof: Texture;
 }
 
-const SKIN_TONES = ["#f1d3b3", "#d8aa7d", "#b9845e", "#8d5d3d"];
+// 16-color palette anchors from art-redesign-spec.md §3.1
+const PAL = {
+  boneBlack: "#1b1410",
+  soot: "#2c2118",
+  umber: "#4a3424",
+  clay: "#6b4a2b",
+  ochre: "#8a6a3d",
+  straw: "#b58c4a",
+  bone: "#d9b779",
+  parchment: "#f0dcae",
+  mossDark: "#3b5a2a",
+  moss: "#6a8f3a",
+  sage: "#9cbf5a",
+  deepWater: "#2f4a5c",
+  river: "#4a7ea0",
+  ember: "#a63a1e",
+  flame: "#e07a2c",
+  blood: "#7a2a2a",
+} as const;
+
+const SKIN_TONES = [PAL.parchment, PAL.bone, PAL.straw, PAL.ochre, PAL.clay];
 const HAIR_TONES = [
-  "#3a2a1d",
-  "#70472b",
-  "#d7a441",
-  "#6f3a1d",
-  "#2b5c45",
-  "#9d542d",
+  PAL.boneBlack,
+  PAL.umber,
+  PAL.clay,
+  PAL.ochre,
+  PAL.bone,
+  PAL.ember,
 ];
 const SHIRT_TONES = [
-  "#4d86c8",
-  "#6aa84f",
-  "#d08c3f",
-  "#b04d62",
-  "#5c72d6",
-  "#4fb3a8",
+  PAL.ochre,
+  PAL.straw,
+  PAL.clay,
+  PAL.moss,
+  PAL.sage,
+  PAL.blood,
 ];
-const PANTS_TONES = ["#4a5a6b", "#5b4e7a", "#5a4337", "#335f73"];
-const BOOT_TONES = ["#3f2e24", "#564133", "#2d2d2d"];
+const PANTS_TONES = [PAL.umber, PAL.clay, PAL.mossDark, PAL.deepWater];
+const BOOT_TONES = [PAL.boneBlack, PAL.soot, PAL.umber];
+
+type AccessoryKind =
+  | "hood_spear"
+  | "shawl"
+  | "club"
+  | "basket"
+  | "stick"
+  | "ember"
+  | "pack"
+  | "antlers"
+  | "newcomer"
+  | null;
+
+interface FounderPreset {
+  skin: string;
+  hair: string;
+  shirt: string;
+  pants: string;
+  boots: string;
+  accent: string;
+  accessory: AccessoryKind;
+}
+
+// Per spec §5.1 — silhouette cues per founder, anchored to §3.1 palette.
+const FOUNDER_PRESETS: Record<string, FounderPreset> = {
+  npc_kael: {
+    skin: PAL.bone,
+    hair: PAL.boneBlack,
+    shirt: PAL.ochre,
+    pants: PAL.clay,
+    boots: PAL.umber,
+    accent: PAL.moss,
+    accessory: "hood_spear",
+  },
+  npc_senna: {
+    skin: PAL.parchment,
+    hair: PAL.umber,
+    shirt: PAL.sage,
+    pants: PAL.umber,
+    boots: PAL.soot,
+    accent: PAL.bone,
+    accessory: "shawl",
+  },
+  npc_thane: {
+    skin: PAL.straw,
+    hair: PAL.boneBlack,
+    shirt: PAL.blood,
+    pants: PAL.umber,
+    boots: PAL.soot,
+    accent: PAL.clay,
+    accessory: "club",
+  },
+  npc_lyra: {
+    skin: PAL.bone,
+    hair: PAL.clay,
+    shirt: PAL.straw,
+    pants: PAL.mossDark,
+    boots: PAL.umber,
+    accent: PAL.sage,
+    accessory: "basket",
+  },
+  npc_oren: {
+    skin: PAL.straw,
+    hair: PAL.parchment,
+    shirt: PAL.umber,
+    pants: PAL.clay,
+    boots: PAL.soot,
+    accent: PAL.bone,
+    accessory: "stick",
+  },
+  npc_mira: {
+    skin: PAL.bone,
+    hair: PAL.ember,
+    shirt: PAL.soot,
+    pants: PAL.umber,
+    boots: PAL.boneBlack,
+    accent: PAL.flame,
+    accessory: "ember",
+  },
+  npc_dax: {
+    skin: PAL.straw,
+    hair: PAL.umber,
+    shirt: PAL.river,
+    pants: PAL.clay,
+    boots: PAL.umber,
+    accent: PAL.deepWater,
+    accessory: "pack",
+  },
+  npc_vara: {
+    skin: PAL.bone,
+    hair: PAL.soot,
+    shirt: PAL.mossDark,
+    pants: PAL.umber,
+    boots: PAL.boneBlack,
+    accent: PAL.flame,
+    accessory: "antlers",
+  },
+};
 
 type PixelRect = {
   x: number;
@@ -97,16 +215,13 @@ function makeTexture(
 }
 
 function actorPalette(
+  key: string,
   seed: number,
   isNpc: boolean,
-): {
-  skin: string;
-  hair: string;
-  shirt: string;
-  pants: string;
-  boots: string;
-  accent: string;
-} {
+): FounderPreset {
+  const preset = FOUNDER_PRESETS[key];
+  if (preset) return preset;
+
   return {
     skin: pick(SKIN_TONES, seed, 1),
     hair: pick(HAIR_TONES, seed, 4),
@@ -115,12 +230,133 @@ function actorPalette(
       : pick(SHIRT_TONES, seed ^ 0x3f, 10),
     pants: pick(PANTS_TONES, seed, 13),
     boots: pick(BOOT_TONES, seed, 16),
-    accent: pick(["#f7e27c", "#d7f0a9", "#f4c3d4", "#a9dcff"], seed, 19),
+    accent: pick([PAL.bone, PAL.sage, PAL.straw, PAL.river], seed, 19),
+    accessory: isNpc ? null : "newcomer",
   };
 }
 
+function accessoryRects(
+  accessory: AccessoryKind,
+  orientation: Orientation,
+  bob: number,
+  accent: string,
+): PixelRect[] {
+  if (!accessory) return [];
+  const rects: PixelRect[] = [];
+  const y = bob;
+
+  switch (accessory) {
+    case "hood_spear": {
+      // Kael: hood over head + spear shaft diagonal over shoulder
+      rects.push({ x: 3, y: 1 + y, w: 10, h: 2, color: PAL.mossDark });
+      rects.push({ x: 4, y: 2 + y, w: 1, h: 2, color: PAL.mossDark });
+      rects.push({ x: 11, y: 2 + y, w: 1, h: 2, color: PAL.mossDark });
+      if (orientation === "down" || orientation === "up") {
+        rects.push({ x: 13, y: 3 + y, w: 1, h: 8, color: PAL.clay });
+        rects.push({ x: 13, y: 2 + y, w: 1, h: 1, color: PAL.bone });
+      } else if (orientation === "right") {
+        rects.push({ x: 13, y: 4 + y, w: 1, h: 9, color: PAL.clay });
+        rects.push({ x: 13, y: 3 + y, w: 1, h: 1, color: PAL.bone });
+      } else {
+        rects.push({ x: 2, y: 4 + y, w: 1, h: 9, color: PAL.clay });
+        rects.push({ x: 2, y: 3 + y, w: 1, h: 1, color: PAL.bone });
+      }
+      return rects;
+    }
+    case "shawl": {
+      // Senna: wide draped shawl across shoulders + satchel at hip
+      rects.push({ x: 3, y: 6 + y, w: 10, h: 2, color: accent });
+      rects.push({ x: 3, y: 8 + y, w: 1, h: 2, color: accent });
+      rects.push({ x: 12, y: 8 + y, w: 1, h: 2, color: accent });
+      if (orientation === "right") {
+        rects.push({ x: 11, y: 9 + y, w: 2, h: 2, color: PAL.clay });
+      } else if (orientation === "left") {
+        rects.push({ x: 3, y: 9 + y, w: 2, h: 2, color: PAL.clay });
+      } else {
+        rects.push({ x: 11, y: 9 + y, w: 1, h: 2, color: PAL.clay });
+      }
+      return rects;
+    }
+    case "club": {
+      // Thane: broad pauldron + club hanging at side
+      rects.push({ x: 3, y: 6 + y, w: 2, h: 2, color: PAL.soot });
+      rects.push({ x: 11, y: 6 + y, w: 2, h: 2, color: PAL.soot });
+      const clubX =
+        orientation === "left" ? 3 : orientation === "right" ? 12 : 12;
+      rects.push({ x: clubX, y: 9 + y, w: 1, h: 4, color: PAL.clay });
+      rects.push({ x: clubX - 1, y: 11 + y, w: 3, h: 2, color: PAL.clay });
+      return rects;
+    }
+    case "basket": {
+      // Lyra: round basket silhouette bulging at hip/back
+      const baskX = orientation === "left" ? 2 : 11;
+      rects.push({ x: baskX, y: 7 + y, w: 3, h: 4, color: PAL.ochre });
+      rects.push({ x: baskX, y: 7 + y, w: 3, h: 1, color: PAL.clay });
+      rects.push({ x: baskX + 1, y: 6 + y, w: 1, h: 1, color: PAL.sage });
+      return rects;
+    }
+    case "stick": {
+      // Oren: long walking stick + stooped long beard
+      rects.push({ x: 5, y: 6 + y, w: 6, h: 1, color: PAL.parchment });
+      rects.push({ x: 6, y: 7 + y, w: 4, h: 1, color: PAL.parchment });
+      if (orientation === "right") {
+        rects.push({ x: 13, y: 2 + y, w: 1, h: 12, color: PAL.clay });
+        rects.push({ x: 12, y: 1 + y, w: 2, h: 2, color: PAL.umber });
+      } else if (orientation === "left") {
+        rects.push({ x: 2, y: 2 + y, w: 1, h: 12, color: PAL.clay });
+        rects.push({ x: 2, y: 1 + y, w: 2, h: 2, color: PAL.umber });
+      } else {
+        rects.push({ x: 13, y: 2 + y, w: 1, h: 12, color: PAL.clay });
+      }
+      return rects;
+    }
+    case "ember": {
+      // Mira: soot-smudged face + glowing ember pouch
+      rects.push({ x: 5, y: 4 + y, w: 1, h: 1, color: PAL.soot });
+      rects.push({ x: 10, y: 4 + y, w: 1, h: 1, color: PAL.soot });
+      rects.push({ x: 6, y: 10 + y, w: 4, h: 2, color: PAL.flame });
+      rects.push({ x: 7, y: 11 + y, w: 2, h: 1, color: PAL.bone });
+      return rects;
+    }
+    case "pack": {
+      // Dax: square pack on back, visible from every angle
+      if (orientation === "down") {
+        rects.push({ x: 4, y: 5 + y, w: 8, h: 5, color: PAL.clay });
+        rects.push({ x: 4, y: 5 + y, w: 8, h: 1, color: PAL.umber });
+      } else if (orientation === "up") {
+        rects.push({ x: 4, y: 5 + y, w: 8, h: 5, color: PAL.clay });
+        rects.push({ x: 5, y: 6 + y, w: 6, h: 3, color: PAL.umber });
+      } else if (orientation === "right") {
+        rects.push({ x: 3, y: 6 + y, w: 3, h: 5, color: PAL.clay });
+        rects.push({ x: 3, y: 6 + y, w: 3, h: 1, color: PAL.umber });
+      } else {
+        rects.push({ x: 10, y: 6 + y, w: 3, h: 5, color: PAL.clay });
+        rects.push({ x: 10, y: 6 + y, w: 3, h: 1, color: PAL.umber });
+      }
+      return rects;
+    }
+    case "antlers": {
+      // Vara: antlered headband + twin blades at waist
+      rects.push({ x: 3, y: 0 + y, w: 1, h: 2, color: PAL.bone });
+      rects.push({ x: 2, y: 0 + y, w: 1, h: 1, color: PAL.bone });
+      rects.push({ x: 12, y: 0 + y, w: 1, h: 2, color: PAL.bone });
+      rects.push({ x: 13, y: 0 + y, w: 1, h: 1, color: PAL.bone });
+      rects.push({ x: 3, y: 10 + y, w: 1, h: 2, color: PAL.flame });
+      rects.push({ x: 12, y: 10 + y, w: 1, h: 2, color: PAL.flame });
+      return rects;
+    }
+    case "newcomer": {
+      // Human "newcomer" — simpler outline, no gear. Subtle headband only.
+      rects.push({ x: 4, y: 2 + y, w: 8, h: 1, color: accent });
+      return rects;
+    }
+    default:
+      return rects;
+  }
+}
+
 function createActorFrame(
-  palette: ReturnType<typeof actorPalette>,
+  palette: FounderPreset,
   orientation: Orientation,
   frameIndex: number,
   animationState: ActorAnimationState,
@@ -129,7 +365,7 @@ function createActorFrame(
   const bob = animationState === "idle" ? 0 : frameIndex === 1 ? 1 : 0;
   const talkRaisedArm = animationState === "talk";
 
-  rects.push({ x: 4, y: 13, w: 8, h: 2, color: "#00000033" });
+  rects.push({ x: 4, y: 13, w: 8, h: 2, color: "#1b141055" });
 
   if (orientation === "down") {
     rects.push({ x: 5, y: 2 + bob, w: 6, h: 4, color: palette.skin });
@@ -239,6 +475,15 @@ function createActorFrame(
       h: 2,
       color: palette.accent,
     });
+  }
+
+  for (const rect of accessoryRects(
+    palette.accessory,
+    orientation,
+    bob,
+    palette.accent,
+  )) {
+    rects.push(rect);
   }
 
   return makeTexture(16, 16, rects);
@@ -824,7 +1069,7 @@ export function createActorTextureSet(
   isNpc: boolean,
 ): ActorTextureSet {
   const seed = hashString(key);
-  const palette = actorPalette(seed, isNpc);
+  const palette = actorPalette(key, seed, isNpc);
 
   return {
     idle: orientationMap((orientation) => [

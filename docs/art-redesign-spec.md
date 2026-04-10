@@ -332,3 +332,23 @@ Each phase is independently shippable and visibly better than the previous.
    accent).
 4. No frame of the game contains cobblestone, wooden fences, or farmhouses.
 5. Courier New appears nowhere in the client.
+
+---
+
+## Implementation notes (2026-04-10)
+
+**Phase 4 status — procedural MVP, not hand-drawn:** Phase 4 ships with per-
+founder procedural silhouettes instead of the 24×32 × 44-frame hand-drawn
+sheets described in §5.1 / §5.2. `client/src/pixelSprites.ts` now dispatches
+on `characterId` to a `FOUNDER_PRESETS` table that sets palette anchors and a
+distinguishing accessory overlay (`hood_spear`, `shawl`, `club`, `basket`,
+`stick`, `ember`, `pack`, `antlers`) per the silhouette cues in §5.1. Frames
+stay 16×16 in the existing 3-frame walk / 2-frame talk / 1-frame idle budget.
+Emote sprites and the 12 fps quantization from §5.2 are not yet implemented —
+the existing `waitingIndicator` continues to serve as the "thinking" affordance.
+
+This satisfies Success Criterion #2 at reduced fidelity (distinguishable at
+a glance via silhouette + palette anchor, but not at the hand-drawn quality
+the spec describes). A follow-up phase is needed to replace the procedural
+generators with 24×32 sheets and add the full emote sprite sheet.
+
