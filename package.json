@@ -1,16 +1,23 @@
 {
   "private": true,
   "scripts": {
+    "prepare": "husky",
     "check": "biome check .",
     "check:fix": "biome check --write .",
+    "precommit": "lint-staged",
     "test": "cd server && npm test",
     "test:perf": "cd server && npm run test:perf",
     "open:dashboard": "node scripts/open-dashboard.mjs",
     "dev": "concurrently -n server,client -c blue,green \"docker compose up --build\" \"cd client && npm run dev\"",
     "dev:host-server": "docker compose up -d db && concurrently -n server,client,dashboard -c blue,green,magenta \"cd server && DATABASE_URL=postgres://aitown:aitown_dev@localhost:5432/aitown npm run dev\" \"cd client && npm run dev -- --host 127.0.0.1\" \"npm run open:dashboard\""
   },
+  "lint-staged": {
+    "*.{js,cjs,mjs,ts,tsx}": "biome check --write"
+  },
   "devDependencies": {
     "@biomejs/biome": "^1.9",
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0"
   }
 }
