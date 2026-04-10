@@ -23,12 +23,7 @@
     ["wall","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","floor","wall"],
     ["wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall","wall"]
   ],
-  "activities": [
-    { "id": 1, "name": "cafe counter", "description": "A cozy cafe counter with steaming coffee", "x": 3, "y": 3, "capacity": 2, "emoji": "☕" },
-    { "id": 2, "name": "reading nook", "description": "A quiet corner with comfortable chairs and bookshelves", "x": 16, "y": 3, "capacity": 2, "emoji": "📚" },
-    { "id": 3, "name": "park bench west", "description": "A wooden bench under an oak tree", "x": 5, "y": 15, "capacity": 2, "emoji": "🪑" },
-    { "id": 4, "name": "park bench east", "description": "A bench overlooking the pond", "x": 14, "y": 15, "capacity": 2, "emoji": "🪑" }
-  ],
+  "activities": [],
   "spawnPoints": [
     { "x": 2, "y": 8 },
     { "x": 17, "y": 8 },
@@ -40,8 +35,6 @@
     { "type": "berry_bush", "x": 7, "y": 5, "properties": { "berries": 5 }, "emoji": "🫐" },
     { "type": "berry_bush", "x": 3, "y": 12, "properties": { "berries": 5 }, "emoji": "🫐" },
     { "type": "berry_bush", "x": 15, "y": 7, "properties": { "berries": 5 }, "emoji": "🫐" },
-    { "type": "bench", "x": 5, "y": 15, "properties": {}, "emoji": "🪑" },
-    { "type": "bench", "x": 14, "y": 15, "properties": {}, "emoji": "🪑" },
     { "type": "ground_item", "x": 8, "y": 6, "properties": { "itemId": "raw_food", "quantity": 1 }, "emoji": "🫐" },
     { "type": "ground_item", "x": 4, "y": 13, "properties": { "itemId": "raw_food", "quantity": 2 }, "emoji": "🫐" },
     { "type": "ground_item", "x": 16, "y": 8, "properties": { "itemId": "raw_food", "quantity": 1 }, "emoji": "🫐" },

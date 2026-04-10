@@ -1,3 +1,7 @@
+import {
+  appendConversationMessage,
+  upsertConversationSnapshot,
+} from "./conversationDebugState.js";
 /**
  * Client entry point — orchestrates rendering, networking, input, and prediction.
  *
@@ -30,10 +34,6 @@ import {
   predictLocalPlayerStep,
 } from "./prediction.js";
 import { GameRenderer } from "./renderer.js";
-import {
-  appendConversationMessage,
-  upsertConversationSnapshot,
-} from "./conversationDebugState.js";
 import type {
   Conversation,
   FullGameState,
@@ -84,6 +84,9 @@ const canvas = document.getElementById("game-canvas") as HTMLCanvasElement;
 const renderer = new GameRenderer(canvas);
 const client = new GameClient();
 const ui = new UI();
+const autoJoinName = new URLSearchParams(window.location.search).get(
+  "autojoin",
+);
 
 async function start() {
   await renderer.init();
@@ -93,9 +96,7 @@ async function start() {
     const mapRes = await fetch("/data/map.json");
     if (mapRes.ok) {
       const mapData = await mapRes.json();
-      const actRes = await fetch("/api/debug/activities");
-      const activities = actRes.ok ? await actRes.json() : [];
-      renderer.renderMap(mapData.tiles, activities);
+      renderer.renderMap(mapData.tiles);
       mapTiles = mapData.tiles;
       mapLoaded = true;
     }
@@ -120,13 +121,17 @@ async function start() {
         }
         tiles.push(row);
       }
-      renderer.renderMap(tiles, []);
+      renderer.renderMap(tiles);
       mapLoaded = true;
     }
   }
 
   // Connect WebSocket
   client.connect();
+  client.onOpen(() => {
+    if (!autoJoinName || selfId || awaitingJoinConfirmation) return;
+    requestJoin(autoJoinName);
+  });
 
   // --- WASD / Arrow key continuous movement with input_start/input_stop ---
   const KEY_TO_DIR: Record<string, MoveDirection> = {
@@ -284,7 +289,11 @@ async function start() {
       if (player.state === "conversing") continue;
       talkablePlayerIds.add(player.id);
     }
-    ui.updatePlayerList(gameState.players, talkablePlayerIds, attackablePlayerIds);
+    ui.updatePlayerList(
+      gameState.players,
+      talkablePlayerIds,
+      attackablePlayerIds,
+    );
 
     if (!selfId || !currentConversation) {
       ui.renderConversationPanel({
@@ -391,6 +400,7 @@ async function start() {
           awaitingJoinConfirmation = false;
           renderer.setSelfId(selfId);
           ui.setSelfId(selfId);
+          joinBtn.textContent = "Joined";
           ui.addChatMessage("", `You joined as ${msg.data.name}`, true);
         }
         refreshConversationUi();
@@ -424,6 +434,7 @@ async function start() {
           renderer.setSelfId(null);
           ui.setSelfId(null);
           ui.setStatus("You died. Enter a name to rejoin.");
+          joinBtn.textContent = "Join";
           joinBtn.removeAttribute("disabled");
           nameInput.removeAttribute("disabled");
         }
@@ -610,13 +621,22 @@ async function start() {
   // Join button
   const joinBtn = document.getElementById("join-btn")!;
   const nameInput = document.getElementById("name-input") as HTMLInputElement;
-  joinBtn.addEventListener("click", () => {
-    const name = nameInput.value.trim();
-    if (!name) return;
+  function requestJoin(name: string): void {
+    const trimmed = name.trim();
+    if (!trimmed || awaitingJoinConfirmation || selfId) return;
     awaitingJoinConfirmation = true;
-    client.send({ type: "join", data: { name } });
+    client.send({ type: "join", data: { name: trimmed } });
+    joinBtn.textContent = "Joining...";
     joinBtn.setAttribute("disabled", "true");
     nameInput.setAttribute("disabled", "true");
+  }
+
+  if (autoJoinName) {
+    nameInput.value = autoJoinName;
+  }
+
+  joinBtn.addEventListener("click", () => {
+    requestJoin(nameInput.value);
   });
   nameInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") joinBtn.click();

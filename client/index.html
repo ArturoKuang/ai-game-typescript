@@ -889,6 +889,185 @@
       line-height: 1.4;
       margin-top: 2px;
     }
+    :root {
+      --panel-bg: rgba(246, 236, 210, 0.95);
+      --panel-border: #8a6b47;
+      --panel-shadow: rgba(68, 45, 28, 0.28);
+      --ink: #35271d;
+      --accent: #9c6c3f;
+      --accent-soft: #dbc398;
+      --grass-edge: #4f7f42;
+    }
+    body {
+      background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.22), transparent 30%),
+        linear-gradient(180deg, #9fd3ea 0%, #86c06c 42%, #6fa05b 100%);
+      color: var(--ink);
+      font-family: monospace;
+      letter-spacing: 0.02em;
+    }
+    #game-container {
+      padding: 18px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)),
+        radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.28), transparent 36%);
+    }
+    #game-canvas {
+      width: 100%;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+      border: 6px solid #f6e6b6;
+      border-radius: 18px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      box-shadow:
+        0 0 0 4px rgba(79, 127, 66, 0.45),
+        0 24px 48px rgba(38, 55, 29, 0.28);
+      background: #85c7e5;
+    }
+    #sidebar {
+      width: 360px;
+      padding: 18px;
+      background:
+        linear-gradient(180deg, rgba(255, 252, 244, 0.96), rgba(243, 228, 193, 0.96)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.3), transparent);
+      border-left: 3px solid rgba(138, 107, 71, 0.42);
+      box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.4);
+      overflow-y: auto;
+    }
+    #sidebar h2,
+    #conversation-title,
+    #inventory-header {
+      color: var(--ink);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    #sidebar h2 {
+      margin-top: 14px;
+      font-size: 13px;
+    }
+    #join-section,
+    #conversation-panel,
+    #survival-panel,
+    #inventory-panel,
+    #chat-messages,
+    #status-bar,
+    #player-list li {
+      background: var(--panel-bg);
+      border: 2px solid rgba(138, 107, 71, 0.42);
+      box-shadow: 0 8px 18px var(--panel-shadow);
+    }
+    #conversation-panel,
+    #survival-panel,
+    #inventory-panel,
+    #chat-messages,
+    #status-bar {
+      border-radius: 12px;
+    }
+    #conversation-panel,
+    #survival-panel,
+    #inventory-panel,
+    #chat-messages {
+      padding: 12px;
+    }
+    #player-list {
+      gap: 8px;
+    }
+    #player-list li {
+      border-radius: 10px;
+    }
+    #chat-messages {
+      background:
+        linear-gradient(180deg, rgba(255, 251, 240, 0.98), rgba(242, 229, 197, 0.98));
+      min-height: 180px;
+    }
+    .chat-msg {
+      color: var(--ink);
+    }
+    .chat-msg .sender,
+    .chat-msg .system {
+      color: var(--accent);
+      font-weight: 700;
+    }
+    #conversation-status,
+    #chat-helper,
+    .survival-empty,
+    .inv-empty,
+    #status-bar {
+      color: #6b5440;
+    }
+    input,
+    button {
+      border-radius: 10px;
+      border: 2px solid rgba(138, 107, 71, 0.42);
+      background: rgba(255, 248, 232, 0.95);
+      color: var(--ink);
+      font-family: inherit;
+      box-shadow: 0 4px 10px rgba(68, 45, 28, 0.12);
+    }
+    button {
+      background:
+        linear-gradient(180deg, #f5d79d, #d9ab6d);
+      border-color: #91653f;
+      color: #3d2b1f;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      transition:
+        transform 120ms ease-out,
+        box-shadow 120ms ease-out,
+        filter 120ms ease-out,
+        background 120ms ease-out;
+    }
+    button:not(:disabled):hover {
+      transform: translateY(-1px);
+      filter: saturate(1.04);
+      box-shadow: 0 8px 16px rgba(88, 58, 34, 0.18);
+    }
+    button:disabled {
+      background: linear-gradient(180deg, #ded4bf, #c8bea7);
+      color: #7c7063;
+      border-color: #aa9d88;
+      box-shadow: none;
+    }
+    input:disabled {
+      background: rgba(221, 209, 183, 0.88);
+      color: #7e705f;
+      border-color: rgba(154, 128, 96, 0.42);
+      box-shadow: none;
+    }
+    .player-talk-btn {
+      min-width: 72px;
+    }
+    #join-section button:disabled,
+    #chat-section button:disabled,
+    .player-talk-btn:disabled {
+      filter: grayscale(0.2);
+      opacity: 0.9;
+    }
+    #chat-input:disabled {
+      background:
+        linear-gradient(180deg, rgba(233, 225, 206, 0.96), rgba(219, 208, 186, 0.96));
+    }
+    #player-list li {
+      transition:
+        transform 120ms ease-out,
+        box-shadow 120ms ease-out,
+        border-color 120ms ease-out;
+    }
+    #player-list li:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 18px rgba(86, 62, 39, 0.14);
+      border-color: rgba(145, 112, 72, 0.56);
+    }
+    .survival-bar {
+      background: rgba(95, 74, 54, 0.16);
+      border: 1px solid rgba(95, 74, 54, 0.18);
+    }
+    .survival-fill {
+      box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.16);
+    }
   </style>
 </head>
 <body>

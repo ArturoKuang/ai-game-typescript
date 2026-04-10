@@ -128,10 +128,6 @@ Rules:
 - window blur releases every held direction
 - input is ignored when a form field is focused
 
-### Mouse
-
-Canvas click sends `move` with a tile coordinate. The server computes the path.
-
 ### Chat And Conversations
 
 - chat submit sends `say`

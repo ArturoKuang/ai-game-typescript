@@ -92,9 +92,8 @@ Once the client is open:
 
 1. Enter a name and click `Join`.
 2. Use `WASD` or the arrow keys for held-input movement.
-3. Click the map to use server-side pathfinding.
-4. Press `E` to pick up the nearest item.
-5. Press `I` to toggle the inventory panel.
+3. Press `E` to pick up the nearest item.
+4. Press `I` to toggle the inventory panel.
 
 Useful UI surfaces:
 
