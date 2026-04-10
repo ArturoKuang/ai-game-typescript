@@ -34,7 +34,13 @@ const TILE_SOURCE_SIZE = 16;
 const TILE_GAP = 1;
 const TILE_SCALE = 4;
 const TILE_SIZE = TILE_SOURCE_SIZE * TILE_SCALE;
-const ACTOR_SCALE = 5;
+const ACTOR_SCALE = 6;
+const ACTOR_OUTLINE_OFFSETS: Array<[number, number]> = [
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+];
 const ENTITY_SCALE = TILE_SCALE;
 const LOOK_AHEAD_PX = TILE_SIZE * 1.25;
 
@@ -64,7 +70,9 @@ type PathSurfaceType = "dirt";
 
 interface PlayerSprite {
   container: Container;
+  groundRing: Graphics;
   shadow: Graphics;
+  outlineSprites: Sprite[];
   sprite: Sprite;
   namePlate: Graphics;
   nameLabel: Text;
@@ -326,13 +334,32 @@ export class GameRenderer {
           ? 0
           : Math.floor(now / (renderState === "talk" ? 220 : 170)) %
             frames.length;
-      sprite.sprite.texture = frames[frameIndex];
+      const currentFrame = frames[frameIndex];
+      sprite.sprite.texture = currentFrame;
+      for (const outline of sprite.outlineSprites) {
+        outline.texture = currentFrame;
+      }
+
+      const isSelf = player.id === this.selfId;
+      sprite.groundRing.clear();
+      sprite.groundRing.ellipse(0, 6, TILE_SIZE * 0.34, TILE_SIZE * 0.16);
+      sprite.groundRing.fill({
+        color: isSelf ? 0xe07a2c : 0xd9b779,
+        alpha: 0.28,
+      });
+      sprite.groundRing.ellipse(0, 6, TILE_SIZE * 0.34, TILE_SIZE * 0.16);
+      sprite.groundRing.stroke({
+        color: isSelf ? 0xe07a2c : 0xd9b779,
+        width: 2,
+        alpha: 0.72,
+      });
+
       sprite.shadow.clear();
-      sprite.shadow.ellipse(0, 5, TILE_SIZE * 0.22, TILE_SIZE * 0.12);
-      sprite.shadow.fill({ color: 0x000000, alpha: 0.35 });
-      if (player.id === this.selfId) {
-        sprite.shadow.ellipse(0, 4, TILE_SIZE * 0.27, TILE_SIZE * 0.15);
-        sprite.shadow.stroke({ color: 0xe07a2c, width: 2, alpha: 0.55 });
+      sprite.shadow.ellipse(0, 6, TILE_SIZE * 0.26, TILE_SIZE * 0.13);
+      sprite.shadow.fill({ color: 0x000000, alpha: 0.55 });
+      if (isSelf) {
+        sprite.shadow.ellipse(0, 5, TILE_SIZE * 0.3, TILE_SIZE * 0.16);
+        sprite.shadow.stroke({ color: 0xe07a2c, width: 2, alpha: 0.8 });
       }
 
       this.updateWaitingIndicator(sprite, player.isWaitingForResponse === true);
@@ -954,12 +981,24 @@ export class GameRenderer {
 
   private createPlayerSprite(player: Player): PlayerSprite {
     const container = new Container();
+    const groundRing = new Graphics();
     const shadow = new Graphics();
     const sprite = new Sprite(Texture.EMPTY);
     const namePlate = new Graphics();
     sprite.anchor.set(0.5, 0.82);
     sprite.scale.set(ACTOR_SCALE);
     sprite.roundPixels = true;
+
+    const outlineSprites: Sprite[] = ACTOR_OUTLINE_OFFSETS.map(([dx, dy]) => {
+      const outline = new Sprite(Texture.EMPTY);
+      outline.anchor.set(0.5, 0.82);
+      outline.scale.set(ACTOR_SCALE);
+      outline.roundPixels = true;
+      outline.tint = 0x1b1410;
+      outline.x = dx * ACTOR_SCALE;
+      outline.y = dy * ACTOR_SCALE;
+      return outline;
+    });
 
     const nameLabel = new Text({
       text: player.name,
@@ -972,7 +1011,11 @@ export class GameRenderer {
       ? createBearTextureSet(player.id)
       : createActorTextureSet(player.id, player.isNpc);
 
+    container.addChild(groundRing);
     container.addChild(shadow);
+    for (const outline of outlineSprites) {
+      container.addChild(outline);
+    }
     container.addChild(sprite);
     container.addChild(namePlate);
     container.addChild(nameLabel);
@@ -981,7 +1024,9 @@ export class GameRenderer {
 
     return {
       container,
+      groundRing,
       shadow,
+      outlineSprites,
       sprite,
       namePlate,
       nameLabel,
