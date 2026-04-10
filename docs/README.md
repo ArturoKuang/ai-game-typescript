@@ -20,8 +20,11 @@ If a behavior is not covered here, the source of truth is the code in
   conversations, events, and invariants.
 - [Networking](networking.md): WebSocket protocol, HTTP surfaces, and transport
   boundaries.
-- [NPC system](npc-system.md): autonomy, dialogue orchestration, providers, and
-  memory.
+- [NPC system](npc-system.md): dialogue orchestration, providers, and memory.
+- [Autonomy](autonomy.md): needs, GOAP planning, the action set, and the
+  entity manager NPCs plan against.
+- [Bears and combat](bears.md): bear AI, combat commands, loot, and the
+  Game-of-Life spawning automaton.
 - [Client system](client-system.md): browser bootstrap, prediction, rendering,
   UI, and debug overlay behavior.
 - [Persistence](persistence.md): database wiring, repositories, and fallback
@@ -30,7 +33,8 @@ If a behavior is not covered here, the source of truth is the code in
   ownership.
 - [Infrastructure](infrastructure.md): scripts, ports, Docker, and environment
   variables.
-- [Testing](testing.md): suite structure, harnesses, and verification workflow.
+- [Testing](testing.md): suite structure, harnesses, scenarios, evals, and
+  verification workflow.
 
 ## Debugging And Workflow
 
@@ -59,7 +63,8 @@ for in-progress systems, so read them as context rather than API reference.
 | `server/src/engine/gameLoop.ts` | Tick pipeline and command processing | [Server engine](server-engine.md) |
 | `server/src/network/websocket.ts` | WebSocket server and event bridge | [Networking](networking.md) |
 | `server/src/debug/router.ts` | Debug API routes | [Debug API](debug-api.md) |
-| `server/src/autonomy/manager.ts` | NPC autonomy and survival state | [NPC system](npc-system.md) |
+| `server/src/autonomy/manager.ts` | NPC autonomy and survival state | [Autonomy](autonomy.md) |
+| `server/src/bears/bearManager.ts` | Bear AI, combat commands, GoL spawning | [Bears and combat](bears.md) |
 | `server/src/npc/orchestrator.ts` | NPC dialogue scheduling and memory hooks | [NPC system](npc-system.md) |
 | `client/src/main.ts` | Browser coordinator and debug polling | [Client system](client-system.md) |
 | `client/src/renderer.ts` | PixiJS renderer and overlays | [Client system](client-system.md) |
