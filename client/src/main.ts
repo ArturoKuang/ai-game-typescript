@@ -53,6 +53,7 @@ let mapLoaded = false;
 let mapTiles: TileType[][] | null = null;
 const playerSurvival = new Map<string, PlayerSurvivalData>();
 const PLAYER_ATTACK_REACH = 2;
+const PLAYER_TALK_REACH = 8;
 
 function conversationIncludesPlayer(
   conversation: Conversation,
@@ -170,6 +171,37 @@ async function start() {
 
   function getSelfPlayer(): Player | undefined {
     return selfId ? getPlayer(selfId) : undefined;
+  }
+
+  function findNearestTalkTargetId(): string | undefined {
+    if (!gameState) return undefined;
+    const selfPlayer = getSelfPlayer();
+    if (!selfPlayer) return undefined;
+
+    // Can't start a new conversation while already in one
+    const occupied = new Set<string>();
+    for (const convo of gameState.conversations) {
+      if (convo.state === "ended") continue;
+      if (conversationIncludesPlayer(convo, selfPlayer.id)) return undefined;
+      occupied.add(convo.player1Id);
+      occupied.add(convo.player2Id);
+    }
+
+    const candidates = gameState.players
+      .filter(
+        (player) =>
+          player.id !== selfPlayer.id &&
+          !occupied.has(player.id) &&
+          player.state !== "conversing",
+      )
+      .map((player) => ({
+        id: player.id,
+        distance: manhattanDistance(selfPlayer, player),
+      }))
+      .filter((c) => c.distance <= PLAYER_TALK_REACH)
+      .sort((a, b) => a.distance - b.distance);
+
+    return candidates[0]?.id;
   }
 
   function findNearestAttackTargetId(): string | undefined {
@@ -300,6 +332,22 @@ async function start() {
       currentConversation?.id ?? null,
     );
     ui.setActiveConversation(currentConversation ?? null);
+
+    if (selfPlayer) {
+      const talkableCandidates = gameState.players
+        .filter((p) => p.id !== selfPlayer.id)
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          distance: manhattanDistance(selfPlayer, p),
+          talkable: talkablePlayerIds.has(p.id),
+        }))
+        .filter((c) => c.distance <= PLAYER_TALK_REACH)
+        .sort((a, b) => a.distance - b.distance);
+      ui.updateTalkableList(talkableCandidates);
+    } else {
+      ui.updateTalkableList([]);
+    }
 
     if (selfPlayer) {
       const activity = currentConversation
@@ -773,6 +821,15 @@ async function start() {
       const targetId = findNearestAttackTargetId();
       if (targetId) {
         client.send({ type: "attack", data: { targetId } });
+      }
+      return;
+    }
+
+    if (e.key === "t" || e.key === "T") {
+      e.preventDefault();
+      const targetId = findNearestTalkTargetId();
+      if (targetId) {
+        client.send({ type: "start_convo", data: { targetId } });
       }
       return;
     }

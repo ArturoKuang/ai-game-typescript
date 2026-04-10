@@ -86,6 +86,7 @@ export class UI {
   private tabModalEl: HTMLDivElement;
   private joinOverlayEl: HTMLElement | null;
   private convoListEl: HTMLUListElement;
+  private talkableListEl: HTMLUListElement;
   private inventoryVisible = false;
   private tabModalVisible = false;
   private selfId: string | null = null;
@@ -141,6 +142,7 @@ export class UI {
     this.tabModalEl = requireElement<HTMLDivElement>("tab-modal");
     this.joinOverlayEl = optionalElement<HTMLDivElement>("join-overlay");
     this.convoListEl = requireElement<HTMLUListElement>("convo-list");
+    this.talkableListEl = requireElement<HTMLUListElement>("talkable-list");
 
     this.acceptConvoBtnEl.addEventListener("click", () =>
       this.acceptHandler?.(),
@@ -302,6 +304,47 @@ export class UI {
       this.rehydrateChatHistory(conversation);
     } else {
       this.chatHistoryEl.innerHTML = "";
+    }
+  }
+
+  updateTalkableList(
+    candidates: ReadonlyArray<{
+      id: string;
+      name: string;
+      distance: number;
+      talkable: boolean;
+    }>,
+  ): void {
+    this.talkableListEl.innerHTML = "";
+
+    if (candidates.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "convo-empty";
+      empty.textContent = "No one in range";
+      empty.setAttribute("aria-disabled", "true");
+      this.talkableListEl.appendChild(empty);
+      return;
+    }
+
+    for (const candidate of candidates) {
+      const li = document.createElement("li");
+      li.setAttribute("aria-disabled", candidate.talkable ? "false" : "true");
+
+      const name = document.createElement("span");
+      name.className = "talkable-name";
+      name.textContent = candidate.name;
+
+      const dist = document.createElement("span");
+      dist.className = "talkable-dist";
+      dist.textContent = `${candidate.distance}t`;
+
+      li.appendChild(name);
+      li.appendChild(dist);
+
+      if (candidate.talkable) {
+        li.addEventListener("click", () => this.talkHandler?.(candidate.id));
+      }
+      this.talkableListEl.appendChild(li);
     }
   }
 

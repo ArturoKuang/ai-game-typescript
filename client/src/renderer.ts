@@ -58,11 +58,11 @@ const NAME_STYLE = new TextStyle({
 });
 const BUBBLE_TEXT_STYLE = new TextStyle({
   fontFamily: "monospace",
-  fontSize: 13,
+  fontSize: 14,
   fontWeight: "700",
-  fill: 0xf0dcae,
+  fill: 0x2c2118,
   wordWrap: true,
-  wordWrapWidth: 180,
+  wordWrapWidth: 220,
 });
 
 type TileCoord = { col: number; row: number };
@@ -387,37 +387,42 @@ export class GameRenderer {
 
     const bubble = new Container();
     const text = new Text({
-      text: content.length > 42 ? `${content.slice(0, 39)}...` : content,
+      text: content.length > 60 ? `${content.slice(0, 57)}...` : content,
       style: BUBBLE_TEXT_STYLE,
     });
     text.anchor.set(0.5, 1);
 
+    const paddingX = 12;
+    const paddingY = 10;
+    const bgX = -text.width / 2 - paddingX;
+    const bgY = -text.height - paddingY;
+    const bgW = text.width + paddingX * 2;
+    const bgH = text.height + paddingY * 2;
+
+    const dropShadow = new Graphics();
+    dropShadow.roundRect(bgX + 3, bgY + 4, bgW, bgH, 6);
+    dropShadow.fill({ color: 0x000000, alpha: 0.55 });
+
     const background = new Graphics();
-    const paddingX = 8;
-    const paddingY = 6;
-    background.roundRect(
-      -text.width / 2 - paddingX,
-      -text.height - paddingY,
-      text.width + paddingX * 2,
-      text.height + paddingY * 2,
-      6,
-    );
-    background.fill({ color: 0x2c2118, alpha: 0.94 });
-    background.stroke({ color: 0x4a3424, width: 2 });
+    background.roundRect(bgX, bgY, bgW, bgH, 6);
+    background.fill({ color: 0xf0dcae, alpha: 0.97 });
+    background.stroke({ color: 0x4a3424, width: 3 });
 
     const tail = new Graphics();
     tail.poly([
-      { x: -5, y: 0 },
-      { x: 5, y: 0 },
-      { x: 0, y: 8 },
+      { x: -6, y: -1 },
+      { x: 6, y: -1 },
+      { x: 0, y: 10 },
     ]);
-    tail.fill({ color: 0x2c2118, alpha: 0.94 });
-    tail.stroke({ color: 0x4a3424, width: 2 });
+    tail.fill({ color: 0xf0dcae, alpha: 0.97 });
+    tail.stroke({ color: 0x4a3424, width: 3 });
 
+    bubble.addChild(dropShadow);
     bubble.addChild(background);
     bubble.addChild(tail);
     bubble.addChild(text);
-    bubble.y = -TILE_SIZE * 0.7;
+    bubble.y = -TILE_SIZE * 0.95;
+    bubble.zIndex = 1000;
 
     sprite.container.addChild(bubble);
     sprite.chatBubble = bubble;
@@ -426,7 +431,7 @@ export class GameRenderer {
         sprite.container.removeChild(sprite.chatBubble);
         sprite.chatBubble = null;
       }
-    }, 5000);
+    }, 7000);
   }
 
   updateEntities(entities: WorldEntity[]): void {

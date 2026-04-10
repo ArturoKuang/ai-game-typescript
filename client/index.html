@@ -237,6 +237,57 @@
       padding-bottom: 6px;
       border-bottom: 1px solid var(--umber);
     }
+    #convo-sidebar h3:not(:first-child) {
+      margin-top: 8px;
+    }
+    #talkable-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 180px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    #talkable-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--umber);
+      border-radius: 3px;
+      background: var(--bone-black);
+      cursor: pointer;
+      transition:
+        border-color 120ms ease-out,
+        background 120ms ease-out;
+    }
+    #talkable-list li:hover {
+      border-color: var(--flame);
+      background: var(--umber);
+    }
+    #talkable-list li[aria-disabled="true"] {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+    #talkable-list li[aria-disabled="true"]:hover {
+      border-color: var(--umber);
+      background: var(--bone-black);
+    }
+    .talkable-name {
+      color: var(--parchment);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .talkable-dist {
+      color: var(--straw);
+      font-size: 10px;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
     #convo-list {
       list-style: none;
       display: flex;
@@ -1604,6 +1655,8 @@
     <div id="event-log" class="hud-zone hud-top-right" aria-label="Event log"></div>
 
     <aside id="convo-sidebar" class="hud-zone" aria-label="Conversations">
+      <h3>Talk to</h3>
+      <ul id="talkable-list"></ul>
       <h3>Conversations</h3>
       <ul id="convo-list"></ul>
     </aside>
@@ -1618,12 +1671,13 @@
         <h3>Controls</h3>
         <ul class="control-list">
           <li><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> / arrows — Walk</li>
-          <li><kbd>E</kbd> — Pick up items nearby</li>
+          <li><kbd>T</kbd> — Talk to nearest founder</li>
           <li><kbd>F</kbd> — Attack nearest target</li>
+          <li><kbd>E</kbd> — Pick up items nearby</li>
           <li><kbd>I</kbd> — Open/close inventory</li>
           <li><kbd>Tab</kbd> — Show the band roster</li>
+          <li><kbd>?</kbd> — This help panel</li>
           <li><kbd>Esc</kbd> — Close any modal</li>
-          <li>Click <strong>Talk</strong> in the roster to start a conversation</li>
         </ul>
       </section>
       <section>
