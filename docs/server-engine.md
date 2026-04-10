@@ -161,6 +161,14 @@ Used by click-to-move, rendezvous movement, and some debug routes.
 - movement follows waypoints at `player.speed`
 - completion snaps to the final tile and emits `move_end`
 
+Path speed defaults live in `movementConfig.ts`. Human players use
+`HUMAN_DEFAULT_PATH_SPEED` (1.0 tiles/tick, the historical click-to-move pace).
+NPCs use `computeNpcPathSpeed(npcId)`, which hashes the NPC id into a stable
+stride around `NPC_DEFAULT_PATH_SPEED` (≈0.08 tiles/tick, ~1.6 tiles/sec at
+20 tps) with `NPC_SPEED_VARIANCE` jitter so two NPCs rarely walk in lockstep.
+The hash is independent of the engine RNG, so stride stays consistent across
+save/load and reconnects.
+
 ### One-Tile Direction Moves
 
 Still used for compatibility and debug surfaces.
