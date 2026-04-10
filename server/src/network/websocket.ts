@@ -245,7 +245,7 @@ export class GameWebSocketServer {
         return;
       }
 
-      // Combat / bear events
+      // Combat and item events
       case "bear_spawn":
       case "bear_death":
       case "bear_attack":
@@ -548,7 +548,7 @@ export class GameWebSocketServer {
         this.game.enqueue({
           type: "attack",
           playerId: info.playerId,
-          data: { targetBearId: msg.data.targetBearId },
+          data: { targetId: msg.data.targetId },
         });
         return;
       }

@@ -128,4 +128,29 @@ describe("Debug router admin facade", () => {
       tg.game.logger.getEvents({ types: ["convo_ended"] }).at(-1)?.type,
     ).toBe("convo_ended");
   });
+
+  it("debug reset clears simulation state without unloading the world", async () => {
+    await startHarness();
+
+    tg.spawn("alice", 1, 1);
+    expect(tg.game.playerCount).toBe(1);
+
+    const reset = await fetchJson<{ ok: boolean }>(port, "/api/debug/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(reset.status).toBe(200);
+    expect(reset.body.ok).toBe(true);
+    expect(tg.game.playerCount).toBe(0);
+
+    const state = await fetchJson<{
+      tick: number;
+      playerCount: number;
+      world: { width: number; height: number } | null;
+    }>(port, "/api/debug/state");
+    expect(state.status).toBe(200);
+    expect(state.body.tick).toBe(0);
+    expect(state.body.playerCount).toBe(0);
+    expect(state.body.world).toEqual({ width: 5, height: 5 });
+  });
 });

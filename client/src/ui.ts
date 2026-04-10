@@ -63,6 +63,7 @@ export class UI {
   private inventoryVisible = true;
   private selfId: string | null = null;
   private talkHandler: ((playerId: string) => void) | null = null;
+  private attackHandler: ((playerId: string) => void) | null = null;
   private acceptHandler: (() => void) | null = null;
   private declineHandler: (() => void) | null = null;
   private endHandler: (() => void) | null = null;
@@ -106,6 +107,7 @@ export class UI {
   updatePlayerList(
     players: Player[],
     talkablePlayerIds: ReadonlySet<string>,
+    attackablePlayerIds: ReadonlySet<string>,
   ): void {
     this.playerListEl.innerHTML = "";
 
@@ -126,12 +128,24 @@ export class UI {
       row.appendChild(label);
 
       if (!isSelf) {
-        const button = document.createElement("button");
-        button.className = "player-talk-btn";
-        button.textContent = "Talk";
-        button.disabled = !talkablePlayerIds.has(player.id);
-        button.addEventListener("click", () => this.talkHandler?.(player.id));
-        row.appendChild(button);
+        const actions = document.createElement("div");
+        actions.className = "player-actions";
+
+        const talkButton = document.createElement("button");
+        talkButton.className = "player-talk-btn";
+        talkButton.textContent = "Talk";
+        talkButton.disabled = !talkablePlayerIds.has(player.id);
+        talkButton.addEventListener("click", () => this.talkHandler?.(player.id));
+        actions.appendChild(talkButton);
+
+        const attackButton = document.createElement("button");
+        attackButton.className = "player-talk-btn";
+        attackButton.textContent = "Attack";
+        attackButton.disabled = !attackablePlayerIds.has(player.id);
+        attackButton.addEventListener("click", () => this.attackHandler?.(player.id));
+        actions.appendChild(attackButton);
+
+        row.appendChild(actions);
       }
 
       li.appendChild(row);
@@ -226,6 +240,10 @@ export class UI {
 
   onTalk(callback: (playerId: string) => void): void {
     this.talkHandler = callback;
+  }
+
+  onAttack(callback: (playerId: string) => void): void {
+    this.attackHandler = callback;
   }
 
   onAcceptConversation(callback: () => void): void {

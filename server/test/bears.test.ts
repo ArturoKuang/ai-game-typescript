@@ -119,7 +119,7 @@ describe("BearManager", () => {
       tg.spawn("attacker", 2, 2); // adjacent
 
       // Attack: 10 damage per hit, bear has 20 HP -> 2 hits to kill
-      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetBearId: bearId } });
+      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetId: bearId } });
       tg.tick(1);
 
       const bear = em.get(bearId)!;
@@ -127,7 +127,7 @@ describe("BearManager", () => {
 
       // Wait for the player attack cooldown then attack again
       tg.tick(PLAYER_ATTACK_COOLDOWN);
-      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetBearId: bearId } });
+      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetId: bearId } });
       tg.tick(1);
 
       // Bear should be dead
@@ -173,19 +173,59 @@ describe("BearManager", () => {
       tg.game.enqueue({
         type: "attack",
         playerId: "attacker",
-        data: { targetBearId: bearId },
+        data: { targetId: bearId },
       });
       tg.tick(1);
 
       expect((em.get(bearId)!.properties.hp as number)).toBe(10);
     });
 
+    it("player can attack another player and force a respawn", () => {
+      tg.spawn("attacker", 2, 2);
+      tg.spawn("victim", 2, 3);
+      const victim = tg.getPlayer("victim");
+      victim.hp = 10;
+
+      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetId: "victim" } });
+      tg.tick(1);
+
+      expect(victim.hp).toBe(100);
+      expect(victim.x).toBe(1);
+      expect(victim.y).toBe(1);
+      expect(victim.state).toBe("idle");
+      expect(victim.currentConvoId).toBeUndefined();
+    });
+
+    it("killing a player ends their active conversation", () => {
+      tg.spawn("attacker", 2, 2);
+      tg.spawn("victim", 2, 3);
+      tg.spawn("partner", 3, 3);
+      tg.getPlayer("victim").hp = 10;
+
+      tg.game.enqueue({
+        type: "start_convo",
+        playerId: "victim",
+        data: { targetId: "partner" },
+      });
+      tg.game.enqueue({
+        type: "accept_convo",
+        playerId: "partner",
+        data: { convoId: 1 },
+      });
+      tg.tick(1);
+
+      expect(tg.game.conversations.getConversation(1)?.state).toBe("active");
+
+      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetId: "victim" } });
+      tg.tick(1);
+
+      expect(tg.game.conversations.getConversation(1)?.state).toBe("ended");
+      expect(tg.getPlayer("victim").currentConvoId).toBeUndefined();
+    });
+
     it("nearby NPCs automatically attack and kill bears", () => {
       const bearId = bm.debugSpawnBear(3, 3);
       tg.spawn("npc_hunter", 3, 4, true);
-
-      tg.tick(1);
-      expect((em.get(bearId)!.properties.hp as number)).toBe(20);
 
       tg.tick(1);
       expect((em.get(bearId)!.properties.hp as number)).toBe(10);
@@ -194,16 +234,26 @@ describe("BearManager", () => {
       expect(em.get(bearId)).toBeUndefined();
     });
 
+    it("nearby NPCs automatically attack nearby players", () => {
+      tg.spawn("npc_hunter", 3, 3, true);
+      tg.spawn("victim", 3, 4);
+      const victim = tg.getPlayer("victim");
+
+      tg.tick(1);
+
+      expect(victim.hp).toBe(90);
+    });
+
     it("attack respects cooldown", () => {
       const bearId = bm.debugSpawnBear(2, 3);
       tg.spawn("attacker", 2, 2);
 
-      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetBearId: bearId } });
+      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetId: bearId } });
       tg.tick(1);
       expect((em.get(bearId)!.properties.hp as number)).toBe(10);
 
       // Attack again immediately (should be on cooldown)
-      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetBearId: bearId } });
+      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetId: bearId } });
       tg.tick(1);
       expect((em.get(bearId)!.properties.hp as number)).toBe(10); // unchanged
     });
@@ -212,7 +262,7 @@ describe("BearManager", () => {
       const bearId = bm.debugSpawnBear(5, 5);
       tg.spawn("attacker", 1, 1); // far away
 
-      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetBearId: bearId } });
+      bm.enqueue({ type: "attack", playerId: "attacker", data: { targetId: bearId } });
       tg.tick(1);
       expect((em.get(bearId)!.properties.hp as number)).toBe(20); // unchanged
     });

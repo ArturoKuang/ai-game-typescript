@@ -205,7 +205,7 @@ export type Command =
   | {
       type: "attack";
       playerId: string;
-      data: { targetBearId: string };
+      data: { targetId: string };
     }
   | {
       type: "pickup";

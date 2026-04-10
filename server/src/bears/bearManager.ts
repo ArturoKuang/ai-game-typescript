@@ -1,5 +1,5 @@
 /**
- * Bear monster system — AI, combat, loot, and Game-of-Life spawning.
+ * Bear and combat system — bear AI, player attacks, loot, and GoL spawning.
  *
  * Bears are WorldEntities managed by the EntityManager. The BearManager
  * hooks into GameLoop.onAfterTick to run bear AI, process combat commands,
@@ -7,6 +7,7 @@
  */
 import type { GameLoop } from "../engine/gameLoop.js";
 import type { GameEvent, Position } from "../engine/types.js";
+import { snapshotConversation } from "../engine/conversation.js";
 import type { NpcInventory } from "../autonomy/types.js";
 import { EntityManager } from "../autonomy/entityManager.js";
 import {
@@ -47,7 +48,7 @@ export type BearState = "idle" | "aggro" | "attacking" | "dead";
 export interface BearCommand {
   type: "attack" | "pickup" | "eat";
   playerId: string;
-  data: { targetBearId?: string; entityId?: string; item?: string };
+  data: { targetId?: string; entityId?: string; item?: string };
 }
 
 export class BearManager {
@@ -69,7 +70,7 @@ export class BearManager {
       this.enqueue({
         type: "attack",
         playerId: cmd.playerId,
-        data: { targetBearId: cmd.data.targetBearId },
+        data: { targetId: cmd.data.targetId },
       });
     });
     this.game.onCommand("pickup", (cmd) => {
@@ -150,7 +151,7 @@ export class BearManager {
       this.updateBearAI(bear.id, tick);
     }
 
-    // 3. Let nearby NPCs swing back once a bear is actively attacking.
+    // 3. Let nearby NPCs opportunistically attack nearby combat targets.
     this.processAutomaticNpcAttacks(tick);
 
     // 4. GoL evaluation on cadence
@@ -178,7 +179,7 @@ export class BearManager {
     for (const cmd of cmds) {
       switch (cmd.type) {
         case "attack":
-          this.handlePlayerAttack(cmd.playerId, cmd.data.targetBearId!, tick);
+          this.handlePlayerAttack(cmd.playerId, cmd.data.targetId!, tick);
           break;
         case "pickup":
           this.handlePickup(cmd.playerId, cmd.data.entityId!, tick);
@@ -190,33 +191,122 @@ export class BearManager {
     }
   }
 
-  private handlePlayerAttack(playerId: string, bearId: string, tick: number): void {
-    const player = this.game.getPlayer(playerId);
-    if (!player || (player.hp !== undefined && player.hp <= 0)) return;
+  private handlePlayerAttack(playerId: string, targetId: string, tick: number): void {
+    const attacker = this.game.getPlayer(playerId);
+    if (!attacker || !this.isAlive(attacker) || targetId === playerId) {
+      return;
+    }
 
+    const targetPlayer = this.game.getPlayer(targetId);
+    if (targetPlayer) {
+      this.handlePlayerVsPlayerAttack(attacker, targetPlayer, tick);
+      return;
+    }
+
+    const bear = this.entities.get(targetId);
+    if (
+      !bear ||
+      bear.destroyed ||
+      bear.type !== "bear" ||
+      bear.properties.state === "dead"
+    ) {
+      return;
+    }
+
+    this.handlePlayerVsBearAttack(attacker, bear.id, tick);
+  }
+
+  private handlePlayerVsPlayerAttack(
+    attacker: {
+      id: string;
+      x: number;
+      y: number;
+      hp?: number;
+      maxHp?: number;
+    },
+    target: {
+      id: string;
+      x: number;
+      y: number;
+      hp?: number;
+      maxHp?: number;
+    },
+    tick: number,
+  ): void {
+    if (!this.isAlive(target)) {
+      return;
+    }
+
+    if (!this.tryBeginPlayerAttack(attacker.id, attacker, target, tick)) {
+      return;
+    }
+
+    const maxHp = target.maxHp ?? PLAYER_DEFAULT_HP;
+    const currentHp = target.hp ?? maxHp;
+    const newHp = Math.max(0, currentHp - PLAYER_ATTACK_DAMAGE);
+    target.hp = newHp;
+
+    this.emitEvent(tick, "player_attack", attacker.id, {
+      targetId: target.id,
+      targetPlayerId: target.id,
+      targetType: "player",
+      damage: PLAYER_ATTACK_DAMAGE,
+      targetHp: newHp,
+    });
+
+    this.emitEvent(tick, "player_damage", target.id, {
+      source: attacker.id,
+      sourceType: "player",
+      damage: PLAYER_ATTACK_DAMAGE,
+      hp: newHp,
+    });
+
+    if (newHp <= 0) {
+      this.handlePlayerDeath(target.id, tick, {
+        cause: "combat",
+        source: attacker.id,
+        killerId: attacker.id,
+      });
+    }
+  }
+
+  private handlePlayerVsBearAttack(
+    attacker: {
+      id: string;
+      x: number;
+      y: number;
+      hp?: number;
+      maxHp?: number;
+    },
+    bearId: string,
+    tick: number,
+  ): void {
     const bear = this.entities.get(bearId);
-    if (!bear || bear.destroyed || bear.type !== "bear" || bear.properties.state === "dead") return;
+    if (
+      !bear ||
+      bear.destroyed ||
+      bear.type !== "bear" ||
+      bear.properties.state === "dead"
+    ) {
+      return;
+    }
 
-    // Range check (Manhattan distance)
-    const dist = Math.abs(player.x - bear.position.x) + Math.abs(player.y - bear.position.y);
-    if (dist > PLAYER_ATTACK_RANGE + 1) return; // +1 for tile adjacency
+    if (!this.tryBeginPlayerAttack(attacker.id, attacker, bear.position, tick)) {
+      return;
+    }
 
-    // Cooldown check
-    const lastAttack = this.playerAttackCooldowns.get(playerId) ?? -Infinity;
-    if (tick - lastAttack < PLAYER_ATTACK_COOLDOWN) return;
-    this.playerAttackCooldowns.set(playerId, tick);
-
-    // Deal damage
     const newHp = Math.max(0, (bear.properties.hp as number) - PLAYER_ATTACK_DAMAGE);
     this.entities.updateProperty(bearId, "hp", newHp);
 
-    this.emitEvent(tick, "player_attack", playerId, {
+    this.emitEvent(tick, "player_attack", attacker.id, {
+      targetId: bearId,
       bearId,
+      targetType: "bear",
       damage: PLAYER_ATTACK_DAMAGE,
       bearHp: newHp,
+      targetHp: newHp,
     });
 
-    // Bear death
     if (newHp <= 0) {
       this.killBear(bearId, tick, "killed");
     }
@@ -290,16 +380,12 @@ export class BearManager {
 
   private processAutomaticNpcAttacks(tick: number): void {
     for (const player of this.game.getPlayers()) {
-      if (!player.isNpc || player.state === "conversing") continue;
-      if ((player.hp ?? player.maxHp ?? PLAYER_DEFAULT_HP) <= 0) continue;
+      if (!player.isNpc || !this.isAlive(player)) continue;
+      if (this.game.conversations.getPlayerConversation(player.id)) continue;
 
-      const pos = { x: Math.round(player.x), y: Math.round(player.y) };
-      const targetBear = this.entities
-        .getNearby(pos, PLAYER_ATTACK_RANGE + 1, "bear")
-        .find((bear) => bear.properties.state === "attacking");
-
-      if (!targetBear) continue;
-      this.handlePlayerAttack(player.id, targetBear.id, tick);
+      const targetId = this.findAutomaticNpcTarget(player.id);
+      if (!targetId) continue;
+      this.handlePlayerAttack(player.id, targetId, tick);
     }
   }
 
@@ -483,11 +569,30 @@ export class BearManager {
   // Player death / respawn
   // ---------------------------------------------------------------------------
 
-  private handlePlayerDeath(playerId: string, tick: number): void {
+  private handlePlayerDeath(
+    playerId: string,
+    tick: number,
+    data: Record<string, unknown> = {},
+  ): void {
     const player = this.game.getPlayer(playerId);
     if (!player) return;
 
-    this.emitEvent(tick, "player_death", playerId, {});
+    const conversation = this.game.conversations.getPlayerConversation(playerId);
+    if (conversation && conversation.state !== "ended") {
+      const ended = this.game.conversations.endConversation(
+        conversation.id,
+        tick,
+        "missing_player",
+      );
+      this.emitEvent(tick, "convo_ended", playerId, {
+        convoId: ended.id,
+        reason: ended.endedReason,
+        participantIds: [ended.player1Id, ended.player2Id],
+        conversation: snapshotConversation(ended),
+      });
+    }
+
+    this.emitEvent(tick, "player_death", playerId, data);
 
     // Respawn at a random spawn point with full HP
     const spawns = this.game.world.getSpawnPoints();
@@ -496,6 +601,8 @@ export class BearManager {
     player.y = spawn.y;
     player.hp = player.maxHp ?? PLAYER_DEFAULT_HP;
     player.state = "idle";
+    player.currentConvoId = undefined;
+    player.isWaitingForResponse = false;
     player.path = undefined;
     player.targetX = undefined;
     player.targetY = undefined;
@@ -750,6 +857,67 @@ export class BearManager {
   /** Get inventory capacity. */
   getInventoryCapacity(): number {
     return PLAYER_INVENTORY_CAPACITY;
+  }
+
+  private isAlive(player: { hp?: number; maxHp?: number }): boolean {
+    return (player.hp ?? player.maxHp ?? PLAYER_DEFAULT_HP) > 0;
+  }
+
+  private tryBeginPlayerAttack(
+    playerId: string,
+    attacker: { x: number; y: number },
+    target: Position,
+    tick: number,
+  ): boolean {
+    const dist = Math.abs(attacker.x - target.x) + Math.abs(attacker.y - target.y);
+    if (dist > PLAYER_ATTACK_RANGE + 1) {
+      return false;
+    }
+
+    const lastAttack = this.playerAttackCooldowns.get(playerId) ?? -Infinity;
+    if (tick - lastAttack < PLAYER_ATTACK_COOLDOWN) {
+      return false;
+    }
+
+    this.playerAttackCooldowns.set(playerId, tick);
+    return true;
+  }
+
+  private findAutomaticNpcTarget(playerId: string): string | undefined {
+    const attacker = this.game.getPlayer(playerId);
+    if (!attacker) {
+      return undefined;
+    }
+
+    const nearbyPlayers = this.game
+      .getPlayers()
+      .filter((other) => {
+        if (other.id === playerId || !this.isAlive(other)) {
+          return false;
+        }
+        const dist = Math.abs(other.x - attacker.x) + Math.abs(other.y - attacker.y);
+        return dist <= PLAYER_ATTACK_RANGE + 1;
+      })
+      .sort((left, right) => {
+        const leftDist =
+          Math.abs(left.x - attacker.x) + Math.abs(left.y - attacker.y);
+        const rightDist =
+          Math.abs(right.x - attacker.x) + Math.abs(right.y - attacker.y);
+        return leftDist - rightDist;
+      });
+
+    if (nearbyPlayers.length > 0) {
+      return nearbyPlayers[0].id;
+    }
+
+    const pos = { x: Math.round(attacker.x), y: Math.round(attacker.y) };
+    return this.entities
+      .getNearby(pos, PLAYER_ATTACK_RANGE + 1, "bear")
+      .find(
+        (bear) =>
+          bear.properties.state === "aggro" ||
+          bear.properties.state === "attacking",
+      )?.id;
   }
 
   private emitEvent(

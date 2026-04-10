@@ -152,7 +152,7 @@ describe("WebSocket protocol", () => {
 
     const attackMsg: ClientMessage = {
       type: "attack",
-      data: { targetBearId: "bear_1" },
+      data: { targetId: "target_1" },
     };
     expect(attackMsg.type).toBe("attack");
   });

@@ -16,6 +16,7 @@ import { DebugGameAdmin, DebugRouteError, errorMessage } from "./admin.js";
 import type { NpcAutonomyManager } from "../autonomy/manager.js";
 import type { BearManager } from "../bears/bearManager.js";
 import type { GameLoop } from "../engine/gameLoop.js";
+import type { MapData } from "../engine/types.js";
 import type { MemoryManager } from "../npc/memory.js";
 import type { NpcProviderDiagnosticsSource } from "../npc/resilientProvider.js";
 import type { GameWebSocketServer } from "../network/websocket.js";
@@ -199,7 +200,9 @@ export function createDebugRouter(
   });
 
   router.post("/reset", (_req, res) => {
+    const mapData = snapshotWorld(game);
     game.reset();
+    game.loadWorld(mapData);
     res.json({ ok: true });
   });
 
@@ -489,4 +492,23 @@ export function createDebugRouter(
   }
 
   return router;
+}
+
+function snapshotWorld(game: GameLoop): MapData {
+  const tiles: MapData["tiles"] = [];
+  for (let y = 0; y < game.world.height; y++) {
+    const row: MapData["tiles"][number] = [];
+    for (let x = 0; x < game.world.width; x++) {
+      row.push(game.world.getTile(x, y)?.type ?? "wall");
+    }
+    tiles.push(row);
+  }
+
+  return {
+    width: game.world.width,
+    height: game.world.height,
+    tiles,
+    activities: game.world.getActivities().map((activity) => ({ ...activity })),
+    spawnPoints: game.world.getSpawnPoints().map((spawn) => ({ ...spawn })),
+  };
 }

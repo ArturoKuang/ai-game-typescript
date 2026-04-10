@@ -5,7 +5,7 @@
  * 1. Initialize PixiJS renderer.
  * 2. Fetch the tile map from `/data/map.json` (fallback to blank bordered map).
  * 3. Connect WebSocket to the game server.
- * 4. Register input handlers (WASD, click-to-move, chat, conversation actions).
+ * 4. Register input handlers (WASD, chat, conversation actions).
  * 5. Start the render loop with client-side prediction.
  *
  * ## Server reconciliation
@@ -52,6 +52,7 @@ let awaitingJoinConfirmation = false;
 let mapLoaded = false;
 let mapTiles: TileType[][] | null = null;
 const playerSurvival = new Map<string, PlayerSurvivalData>();
+const PLAYER_ATTACK_REACH = 2;
 
 function conversationIncludesPlayer(
   conversation: Conversation,
@@ -69,6 +70,13 @@ function getConversationPartnerId(
   return conversation.player1Id === playerId
     ? conversation.player2Id
     : conversation.player1Id;
+}
+
+function manhattanDistance(
+  left: { x: number; y: number },
+  right: { x: number; y: number },
+): number {
+  return Math.abs(left.x - right.x) + Math.abs(left.y - right.y);
 }
 
 // Init
@@ -155,6 +163,47 @@ async function start() {
     return gameState?.players.find((player) => player.id === playerId);
   }
 
+  function getSelfPlayer(): Player | undefined {
+    return selfId ? getPlayer(selfId) : undefined;
+  }
+
+  function findNearestAttackTargetId(): string | undefined {
+    if (!gameState) return undefined;
+    const selfPlayer = getSelfPlayer();
+    if (!selfPlayer) return undefined;
+
+    const candidates = [
+      ...gameState.players
+        .filter((player) => player.id !== selfPlayer.id)
+        .map((player) => ({
+          id: player.id,
+          x: player.x,
+          y: player.y,
+          targetType: "player" as const,
+        })),
+      ...(gameState.entities ?? [])
+        .filter((entity) => entity.type === "bear" && !entity.destroyed)
+        .map((entity) => ({
+          id: entity.id,
+          x: entity.x,
+          y: entity.y,
+          targetType: "bear" as const,
+        })),
+    ]
+      .map((candidate) => ({
+        ...candidate,
+        distance: manhattanDistance(selfPlayer, candidate),
+      }))
+      .filter((candidate) => candidate.distance <= PLAYER_ATTACK_REACH)
+      .sort(
+        (left, right) =>
+          left.distance - right.distance ||
+          left.targetType.localeCompare(right.targetType),
+      );
+
+    return candidates[0]?.id;
+  }
+
   /** Generate system chat messages describing a conversation state change. */
   function describeConversationUpdate(
     previous: Conversation | undefined,
@@ -211,8 +260,10 @@ async function start() {
 
     const currentConversation = getSelfConversation();
     const talkablePlayerIds = new Set<string>();
+    const attackablePlayerIds = new Set<string>();
     const selfBusy = Boolean(currentConversation);
     const occupiedPlayerIds = new Set<string>();
+    const selfPlayer = getSelfPlayer();
 
     for (const conversation of gameState.conversations) {
       if (conversation.state === "ended") continue;
@@ -222,12 +273,18 @@ async function start() {
 
     for (const player of gameState.players) {
       if (!selfId || player.id === selfId) continue;
+      if (
+        selfPlayer &&
+        manhattanDistance(selfPlayer, player) <= PLAYER_ATTACK_REACH
+      ) {
+        attackablePlayerIds.add(player.id);
+      }
       if (selfBusy) continue;
       if (occupiedPlayerIds.has(player.id)) continue;
       if (player.state === "conversing") continue;
       talkablePlayerIds.add(player.id);
     }
-    ui.updatePlayerList(gameState.players, talkablePlayerIds);
+    ui.updatePlayerList(gameState.players, talkablePlayerIds, attackablePlayerIds);
 
     if (!selfId || !currentConversation) {
       ui.renderConversationPanel({
@@ -574,6 +631,10 @@ async function start() {
     client.send({ type: "start_convo", data: { targetId: playerId } });
   });
 
+  ui.onAttack((playerId) => {
+    client.send({ type: "attack", data: { targetId: playerId } });
+  });
+
   ui.onUseInventoryItem((itemId) => {
     client.send({ type: "eat", data: { item: itemId } });
   });
@@ -615,15 +676,6 @@ async function start() {
     }
   });
 
-  // Click to move (pathfinding)
-  canvas.addEventListener("click", (e) => {
-    if (!selfId) return;
-    const tile = renderer.screenToTile(e.clientX, e.clientY);
-    if (tile) {
-      client.send({ type: "move", data: { x: tile.x, y: tile.y } });
-    }
-  });
-
   function isInputFocused(): boolean {
     const tag = document.activeElement?.tagName;
     return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
@@ -644,6 +696,15 @@ async function start() {
       e.preventDefault();
       if (selfId) {
         client.send({ type: "pickup_nearby" });
+      }
+      return;
+    }
+
+    if (e.key === "f" || e.key === "F") {
+      e.preventDefault();
+      const targetId = findNearestAttackTargetId();
+      if (targetId) {
+        client.send({ type: "attack", data: { targetId } });
       }
       return;
     }

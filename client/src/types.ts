@@ -280,7 +280,7 @@ export type ClientMessage =
   | { type: "accept_convo"; data: { convoId: number } }
   | { type: "decline_convo"; data: { convoId: number } }
   | { type: "end_convo" }
-  | { type: "attack"; data: { targetBearId: string } }
+  | { type: "attack"; data: { targetId: string } }
   | { type: "pickup"; data: { entityId: string } }
   | { type: "eat"; data: { item: string } }
   | { type: "pickup_nearby" }
