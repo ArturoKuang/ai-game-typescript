@@ -31,22 +31,382 @@
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      background: var(--soot);
+      background: var(--bone-black);
       color: var(--parchment);
       font-family: var(--font-pixel);
-      display: flex;
       height: 100vh;
+      width: 100vw;
       overflow: hidden;
     }
     #game-container {
-      flex: 1;
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+    }
+    #game-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      cursor: pointer;
+    }
+    .hud-zone {
+      position: absolute;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .hud-zone > *, .hud-zone input, .hud-zone button, .hud-zone ul, .hud-zone li, .hud-zone h1, .hud-zone h2 {
+      pointer-events: auto;
+    }
+    .hud-top-left { top: 18px; left: 18px; }
+    .hud-top-right { top: 18px; right: 18px; width: 280px; }
+    .hud-bottom-left { bottom: 18px; left: 18px; }
+    .hud-bottom-center {
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(600px, calc(100vw - 48px));
+    }
+    #needs-ring {
+      width: 96px;
+      height: 96px;
+    }
+    #needs-ring-canvas {
+      width: 96px;
+      height: 96px;
+      image-rendering: pixelated;
+      filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+    }
+    #event-log {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 11px;
+      max-height: 150px;
+    }
+    .event-log-entry {
+      background: rgba(44, 33, 24, 0.82);
+      border: 1px solid var(--umber);
+      color: var(--parchment);
+      padding: 6px 10px;
+      border-radius: 3px;
+      line-height: 1.35;
+      animation: eventFadeIn 220ms ease-out;
+    }
+    @keyframes eventFadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    #actor-badge {
       display: flex;
       align-items: center;
-      justify-content: center;
-      position: relative;
-      padding: 16px;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--soot);
+      border: 2px solid var(--umber);
+      border-radius: 4px;
+      min-width: 200px;
+      max-width: 260px;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.42);
     }
-    #game-canvas { cursor: pointer; }
+    #actor-badge-portrait {
+      width: 36px;
+      height: 36px;
+      background: var(--umber);
+      border: 1px solid var(--clay);
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+    #actor-badge-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    #actor-badge-name {
+      color: var(--bone);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #actor-badge-activity {
+      color: var(--straw);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #chat-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    #chat-history {
+      background: var(--soot);
+      border: 2px solid var(--umber);
+      border-radius: 4px;
+      padding: 8px 10px;
+      max-height: 140px;
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      display: none;
+    }
+    #chat-bar.focus-expanded #chat-history {
+      display: block;
+    }
+    #chat-history .chat-msg { padding: 2px 0; color: var(--parchment); }
+    #chat-history .chat-msg .sender { font-weight: 700; color: var(--flame); }
+    #chat-history .chat-msg .system { color: var(--straw); font-style: italic; }
+    #chat-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--soot);
+      border: 2px solid var(--umber);
+      border-radius: 4px;
+      padding: 6px 10px;
+    }
+    #chat-bar-partner {
+      color: var(--bone);
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #chat-bar #chat-input {
+      flex: 1;
+      background: var(--bone-black);
+      border: 1px solid var(--clay);
+      color: var(--parchment);
+      padding: 6px 10px;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    #chat-bar #chat-btn {
+      background: var(--clay);
+      color: var(--parchment);
+      border: 2px solid var(--umber);
+      padding: 4px 12px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    #chat-bar #chat-btn:hover:not(:disabled),
+    #chat-bar #accept-convo-btn:hover,
+    #chat-bar #decline-convo-btn:hover,
+    #chat-bar #end-convo-btn:hover {
+      background: var(--flame);
+      border-color: var(--ember);
+      color: var(--soot);
+    }
+    #chat-bar #chat-btn:disabled {
+      background: var(--bone-black);
+      color: var(--clay);
+    }
+    .chat-bar-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .chat-bar-actions button {
+      background: var(--clay);
+      color: var(--parchment);
+      border: 2px solid var(--umber);
+      padding: 5px 14px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    #join-overlay {
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--soot);
+      border: 2px solid var(--clay);
+      border-radius: 4px;
+      padding: 28px 32px;
+      box-shadow: 0 18px 36px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      align-items: center;
+    }
+    #join-overlay.hidden {
+      display: none;
+    }
+    #join-overlay h1 {
+      color: var(--bone);
+      font-size: 22px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    #join-overlay #join-section {
+      display: flex;
+      gap: 10px;
+    }
+    #join-overlay #name-input {
+      background: var(--bone-black);
+      border: 1px solid var(--clay);
+      color: var(--parchment);
+      padding: 8px 12px;
+      font-family: inherit;
+      font-size: 14px;
+      min-width: 200px;
+    }
+    #join-overlay #join-btn {
+      background: var(--clay);
+      color: var(--parchment);
+      border: 2px solid var(--umber);
+      padding: 8px 18px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    #join-overlay #join-btn:hover:not(:disabled) {
+      background: var(--flame);
+      border-color: var(--ember);
+      color: var(--soot);
+    }
+    #tab-modal {
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--soot);
+      border: 2px solid var(--clay);
+      border-radius: 4px;
+      padding: 24px 28px;
+      min-width: 320px;
+      max-width: 480px;
+      max-height: 70vh;
+      overflow-y: auto;
+      box-shadow: 0 18px 36px rgba(0, 0, 0, 0.6);
+      z-index: 20;
+    }
+    #tab-modal.hidden { display: none; }
+    #tab-modal h2 {
+      color: var(--bone);
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 14px;
+    }
+    #tab-modal #player-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 13px;
+    }
+    #tab-modal #player-list li {
+      padding: 8px 10px;
+      border: 1px solid var(--umber);
+      border-radius: 3px;
+      background: var(--bone-black);
+    }
+    .modal-hint {
+      margin-top: 14px;
+      color: var(--straw);
+      font-size: 11px;
+      text-align: center;
+    }
+    #inventory-drawer {
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--soot);
+      border: 2px solid var(--clay);
+      border-radius: 4px;
+      padding: 16px 20px;
+      min-width: 380px;
+      max-width: 520px;
+      box-shadow: 0 18px 36px rgba(0, 0, 0, 0.6);
+      z-index: 15;
+    }
+    #inventory-drawer.hidden { display: none; }
+    #inventory-drawer #inventory-header {
+      color: var(--bone);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 12px;
+    }
+    #inventory-drawer #inventory-list {
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 8px;
+      font-size: 12px;
+    }
+    #inventory-drawer #inventory-list li {
+      padding: 10px 6px;
+      border: 1px solid var(--umber);
+      border-radius: 2px;
+      background: var(--bone-black);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      min-height: 72px;
+      color: var(--parchment);
+      text-align: center;
+    }
+    #inventory-drawer .inv-item-label { font-size: 11px; }
+    #inventory-drawer .inv-item-count { color: var(--straw); font-size: 10px; }
+    #inventory-drawer .inv-empty {
+      grid-column: 1 / -1;
+      color: var(--clay);
+      font-style: italic;
+      padding: 20px;
+      text-align: center;
+    }
+    #status-bar {
+      bottom: 4px;
+      right: 8px;
+      font-size: 10px;
+      color: var(--straw);
+      background: rgba(27, 20, 16, 0.72);
+      padding: 3px 8px;
+      border-radius: 2px;
+    }
+    .hidden { display: none; }
+    .player-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .player-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    .player-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .player-talk-btn {
+      background: var(--clay);
+      color: var(--parchment);
+      border: 1px solid var(--umber);
+      padding: 3px 10px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+    .player-talk-btn:hover:not(:disabled) {
+      background: var(--flame);
+      border-color: var(--ember);
+      color: var(--soot);
+    }
+    .player-talk-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .player-npc { color: var(--sage); }
+    .player-human { color: var(--straw); }
+    .player-self { color: var(--flame); font-weight: bold; }
     #sidebar-header {
       display: flex;
       align-items: center;
@@ -993,45 +1353,60 @@
 <body>
   <div id="game-container">
     <canvas id="game-canvas"></canvas>
-  </div>
-  <div id="sidebar">
-    <div id="sidebar-header">
-      <h2>AI Town</h2>
+
+    <div id="needs-ring" class="hud-zone hud-top-left" aria-label="Survival needs">
+      <canvas id="needs-ring-canvas" width="192" height="192"></canvas>
     </div>
-    <div id="join-section">
-      <input id="name-input" type="text" placeholder="Your name..." />
-      <button id="join-btn">Join</button>
+
+    <div id="event-log" class="hud-zone hud-top-right" aria-label="Event log"></div>
+
+    <div id="actor-badge" class="hud-zone hud-bottom-left">
+      <div id="actor-badge-portrait" aria-hidden="true"></div>
+      <div id="actor-badge-text">
+        <div id="actor-badge-name">Not joined</div>
+        <div id="actor-badge-activity">—</div>
+      </div>
     </div>
-    <h2>Players</h2>
-    <ul id="player-list"></ul>
-    <h2>Conversation</h2>
-    <div id="conversation-panel">
-      <div id="conversation-title">No active conversation</div>
-      <div id="conversation-status">Start a conversation from the player list to chat.</div>
-      <div id="invite-actions" class="conversation-actions hidden">
+
+    <div id="chat-bar" class="hud-zone hud-bottom-center">
+      <div id="chat-history" aria-label="Conversation history"></div>
+      <div id="chat-bar-row">
+        <div id="chat-bar-partner" title="Current partner">—</div>
+        <input id="chat-input" type="text" placeholder="Start a conversation to chat" disabled />
+        <button id="chat-btn" disabled>Send</button>
+      </div>
+      <div id="conversation-title" class="hidden">No active conversation</div>
+      <div id="conversation-status" class="hidden">Start a conversation to chat.</div>
+      <div id="chat-helper" class="hidden">Start a conversation to chat.</div>
+      <div id="invite-actions" class="chat-bar-actions hidden">
         <button id="accept-convo-btn">Accept</button>
         <button id="decline-convo-btn">Decline</button>
       </div>
-      <div id="active-actions" class="conversation-actions hidden">
+      <div id="active-actions" class="chat-bar-actions hidden">
         <button id="end-convo-btn">End conversation</button>
       </div>
     </div>
-    <h2>Survival</h2>
-    <div id="survival-panel">
-      <div class="survival-empty">Join to see your survival values.</div>
+
+    <div id="join-overlay" class="hud-zone">
+      <h1>AI Town</h1>
+      <div id="join-section">
+        <input id="name-input" type="text" placeholder="Your name..." />
+        <button id="join-btn">Join</button>
+      </div>
     </div>
-    <h2 id="inventory-header" style="cursor:pointer;">Inventory (0/10) [I]</h2>
-    <div id="inventory-panel">
+
+    <div id="tab-modal" class="hud-zone modal hidden" aria-label="Band">
+      <h2>Band</h2>
+      <ul id="player-list"></ul>
+      <div class="modal-hint">Tab to close</div>
+    </div>
+
+    <div id="inventory-drawer" class="hud-zone hidden" aria-label="Inventory">
+      <h2 id="inventory-header">Inventory (0/10) [I]</h2>
       <ul id="inventory-list"></ul>
     </div>
-    <h2>Transcript</h2>
-    <div id="chat-messages"></div>
-    <div id="chat-helper">Start a conversation to chat.</div>
-    <div id="chat-section">
-      <input id="chat-input" type="text" placeholder="Say something..." disabled />
-      <button id="chat-btn" disabled>Send</button>
-    </div>
-    <div id="status-bar">Connecting...</div>
+
+    <div id="status-bar" class="hud-zone">Connecting...</div>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>

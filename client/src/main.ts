@@ -295,6 +295,23 @@ async function start() {
       attackablePlayerIds,
     );
 
+    if (selfPlayer) {
+      const activity = currentConversation
+        ? currentConversation.state === "active"
+          ? `Talking with ${getPlayerName(getConversationPartnerId(currentConversation, selfPlayer.id))}`
+          : currentConversation.state === "walking"
+            ? "Walking to meet"
+            : "Awaiting reply"
+        : selfPlayer.state === "walking"
+          ? "Walking"
+          : selfPlayer.state === "doing_activity"
+            ? "Foraging"
+            : "Idle";
+      ui.updateActorBadge(selfPlayer.name, activity);
+    } else {
+      ui.updateActorBadge("Not joined", "Press Join to enter");
+    }
+
     if (!selfId || !currentConversation) {
       ui.renderConversationPanel({
         title: "No active conversation",
@@ -702,6 +719,13 @@ async function start() {
   }
 
   window.addEventListener("keydown", (e) => {
+    // Tab: toggle band modal (allowed even when chat input is focused)
+    if (e.key === "Tab") {
+      e.preventDefault();
+      ui.togglePlayerModal();
+      return;
+    }
+
     if (isInputFocused()) return;
 
     // I key: toggle inventory panel

@@ -1,12 +1,19 @@
 /**
- * DOM-based UI manager for the game sidebar.
+ * HUD manager — writes to the floating DOM zones over the game canvas.
  *
- * Manages the player list, chat log, conversation panel, survival panel,
- * and inventory. Debug controls intentionally live in the separate dashboard.
+ * Phase 3 relocated the sidebar into four HUD zones + two modals:
+ *   - needs ring (top-left, canvas-drawn radial arcs)
+ *   - event log (top-right, fading system messages)
+ *   - actor badge (bottom-left, self status)
+ *   - chat bar (bottom-center, expands on focus)
+ *   - Tab modal (centered player list)
+ *   - I drawer (bottom inventory grid)
+ *
+ * Debug controls intentionally live in the separate dashboard.
  */
 import type { Player, PlayerSurvivalData } from "./types.js";
 
-/** Describes what the conversation panel should display. */
+/** Describes what the chat bar should display for the current conversation. */
 export interface ConversationPanelView {
   title: string;
   status: string;
@@ -19,19 +26,22 @@ export interface ConversationPanelView {
 /** Item display metadata keyed by item ID. */
 const ITEM_DISPLAY: Record<string, { name: string; emoji: string }> = {
   raw_food: { name: "Berries", emoji: "\uD83E\uDED0" },
-  cooked_food: { name: "Cooked Food", emoji: "\uD83C\uDF72" },
-  bear_meat: { name: "Bear Meat", emoji: "\uD83E\uDD69" },
+  cooked_food: { name: "Cooked", emoji: "\uD83C\uDF72" },
+  bear_meat: { name: "Meat", emoji: "\uD83E\uDD69" },
 };
 
-const SURVIVAL_NEED_META: Array<{
-  key: keyof Omit<PlayerSurvivalData, "playerId">;
-  label: string;
-  color: string;
-}> = [
-  { key: "health", label: "Health", color: "#7a2a2a" },
-  { key: "food", label: "Food", color: "#8a6a3d" },
-  { key: "water", label: "Water", color: "#4a7ea0" },
-  { key: "social", label: "Social", color: "#6a8f3a" },
+const NEED_RING_COLORS = {
+  ok: "#d9b779",
+  warn: "#e07a2c",
+  crit: "#7a2a2a",
+} as const;
+
+const NEED_RING_RADII = [82, 64, 46, 28];
+const NEED_KEYS: Array<keyof Omit<PlayerSurvivalData, "playerId">> = [
+  "health",
+  "food",
+  "water",
+  "social",
 ];
 
 function requireElement<T extends HTMLElement>(id: string): T {
@@ -42,25 +52,42 @@ function requireElement<T extends HTMLElement>(id: string): T {
   return element as T;
 }
 
+function optionalElement<T extends HTMLElement>(id: string): T | null {
+  const element = document.getElementById(id);
+  return (element as T | null) ?? null;
+}
+
+function severityColor(value: number): string {
+  if (value < 25) return NEED_RING_COLORS.crit;
+  if (value < 55) return NEED_RING_COLORS.warn;
+  return NEED_RING_COLORS.ok;
+}
+
 export class UI {
   private playerListEl: HTMLUListElement;
-  private chatMessagesEl: HTMLDivElement;
+  private chatHistoryEl: HTMLDivElement;
   private chatInputEl: HTMLInputElement;
   private chatBtnEl: HTMLButtonElement;
-  private chatHelperEl: HTMLDivElement;
   private statusEl: HTMLDivElement;
-  private conversationTitleEl: HTMLDivElement;
-  private conversationStatusEl: HTMLDivElement;
   private inviteActionsEl: HTMLDivElement;
   private activeActionsEl: HTMLDivElement;
   private acceptConvoBtnEl: HTMLButtonElement;
   private declineConvoBtnEl: HTMLButtonElement;
   private endConvoBtnEl: HTMLButtonElement;
-  private survivalPanelEl: HTMLDivElement;
   private inventoryHeaderEl: HTMLHeadingElement;
-  private inventoryPanelEl: HTMLDivElement;
+  private inventoryDrawerEl: HTMLDivElement;
   private inventoryListEl: HTMLUListElement;
-  private inventoryVisible = true;
+  private needsCanvas: HTMLCanvasElement;
+  private needsCtx: CanvasRenderingContext2D | null;
+  private eventLogEl: HTMLDivElement;
+  private actorBadgeNameEl: HTMLDivElement;
+  private actorBadgeActivityEl: HTMLDivElement;
+  private chatBarEl: HTMLDivElement;
+  private chatBarPartnerEl: HTMLDivElement;
+  private tabModalEl: HTMLDivElement;
+  private joinOverlayEl: HTMLElement | null;
+  private inventoryVisible = false;
+  private tabModalVisible = false;
   private selfId: string | null = null;
   private talkHandler: ((playerId: string) => void) | null = null;
   private attackHandler: ((playerId: string) => void) | null = null;
@@ -71,16 +98,10 @@ export class UI {
 
   constructor() {
     this.playerListEl = requireElement<HTMLUListElement>("player-list");
-    this.chatMessagesEl = requireElement<HTMLDivElement>("chat-messages");
+    this.chatHistoryEl = requireElement<HTMLDivElement>("chat-history");
     this.chatInputEl = requireElement<HTMLInputElement>("chat-input");
     this.chatBtnEl = requireElement<HTMLButtonElement>("chat-btn");
-    this.chatHelperEl = requireElement<HTMLDivElement>("chat-helper");
     this.statusEl = requireElement<HTMLDivElement>("status-bar");
-    this.conversationTitleEl =
-      requireElement<HTMLDivElement>("conversation-title");
-    this.conversationStatusEl = requireElement<HTMLDivElement>(
-      "conversation-status",
-    );
     this.inviteActionsEl = requireElement<HTMLDivElement>("invite-actions");
     this.activeActionsEl = requireElement<HTMLDivElement>("active-actions");
     this.acceptConvoBtnEl =
@@ -88,11 +109,21 @@ export class UI {
     this.declineConvoBtnEl =
       requireElement<HTMLButtonElement>("decline-convo-btn");
     this.endConvoBtnEl = requireElement<HTMLButtonElement>("end-convo-btn");
-    this.survivalPanelEl = requireElement<HTMLDivElement>("survival-panel");
     this.inventoryHeaderEl =
       requireElement<HTMLHeadingElement>("inventory-header");
-    this.inventoryPanelEl = requireElement<HTMLDivElement>("inventory-panel");
+    this.inventoryDrawerEl = requireElement<HTMLDivElement>("inventory-drawer");
     this.inventoryListEl = requireElement<HTMLUListElement>("inventory-list");
+    this.needsCanvas = requireElement<HTMLCanvasElement>("needs-ring-canvas");
+    this.needsCtx = this.needsCanvas.getContext("2d");
+    this.eventLogEl = requireElement<HTMLDivElement>("event-log");
+    this.actorBadgeNameEl = requireElement<HTMLDivElement>("actor-badge-name");
+    this.actorBadgeActivityEl = requireElement<HTMLDivElement>(
+      "actor-badge-activity",
+    );
+    this.chatBarEl = requireElement<HTMLDivElement>("chat-bar");
+    this.chatBarPartnerEl = requireElement<HTMLDivElement>("chat-bar-partner");
+    this.tabModalEl = requireElement<HTMLDivElement>("tab-modal");
+    this.joinOverlayEl = optionalElement<HTMLDivElement>("join-overlay");
 
     this.acceptConvoBtnEl.addEventListener("click", () =>
       this.acceptHandler?.(),
@@ -104,10 +135,22 @@ export class UI {
     this.inventoryHeaderEl.addEventListener("click", () =>
       this.toggleInventory(),
     );
+    this.chatInputEl.addEventListener("focus", () => {
+      this.chatBarEl.classList.add("focus-expanded");
+    });
+    this.chatInputEl.addEventListener("blur", () => {
+      this.chatBarEl.classList.remove("focus-expanded");
+    });
+    this.drawNeedsRing(null);
   }
 
   setSelfId(id: string | null): void {
     this.selfId = id;
+    if (id && this.joinOverlayEl) {
+      this.joinOverlayEl.classList.add("hidden");
+    } else if (!id && this.joinOverlayEl) {
+      this.joinOverlayEl.classList.remove("hidden");
+    }
   }
 
   setStatus(text: string): void {
@@ -168,9 +211,8 @@ export class UI {
   }
 
   renderConversationPanel(view: ConversationPanelView): void {
-    this.conversationTitleEl.textContent = view.title;
-    this.conversationStatusEl.textContent = view.status;
-    this.chatHelperEl.textContent = view.status;
+    this.chatBarPartnerEl.textContent =
+      view.title === "No active conversation" ? "—" : view.title;
     this.chatInputEl.disabled = !view.chatEnabled;
     this.chatBtnEl.disabled = !view.chatEnabled;
     this.chatInputEl.placeholder = view.chatPlaceholder;
@@ -179,49 +221,7 @@ export class UI {
   }
 
   updatePlayerSurvival(survival: PlayerSurvivalData | null): void {
-    this.survivalPanelEl.innerHTML = "";
-
-    if (!survival) {
-      const empty = document.createElement("div");
-      empty.className = "survival-empty";
-      empty.textContent = this.selfId
-        ? "Waiting for survival data..."
-        : "Join to see your survival values.";
-      this.survivalPanelEl.appendChild(empty);
-      return;
-    }
-
-    for (const need of SURVIVAL_NEED_META) {
-      const row = document.createElement("div");
-      row.className = "survival-row";
-
-      const header = document.createElement("div");
-      header.className = "survival-row-header";
-
-      const label = document.createElement("span");
-      label.className = "survival-label";
-      label.textContent = need.label;
-
-      const value = document.createElement("span");
-      value.className = "survival-value";
-      value.textContent = survival[need.key].toFixed(0);
-
-      header.appendChild(label);
-      header.appendChild(value);
-
-      const bar = document.createElement("div");
-      bar.className = "survival-bar";
-
-      const fill = document.createElement("div");
-      fill.className = "survival-fill";
-      fill.style.background = need.color;
-      fill.style.width = `${Math.max(0, Math.min(100, survival[need.key]))}%`;
-
-      bar.appendChild(fill);
-      row.appendChild(header);
-      row.appendChild(bar);
-      this.survivalPanelEl.appendChild(row);
-    }
+    this.drawNeedsRing(survival);
   }
 
   addChatMessage(senderName: string, content: string, isSystem = false): void {
@@ -230,12 +230,13 @@ export class UI {
 
     if (isSystem) {
       div.innerHTML = `<span class="system">${this.escapeHtml(content)}</span>`;
+      this.appendEventLogEntry(content);
     } else {
       div.innerHTML = `<span class="sender">${this.escapeHtml(senderName)}:</span> ${this.escapeHtml(content)}`;
     }
 
-    this.chatMessagesEl.appendChild(div);
-    this.chatMessagesEl.scrollTop = this.chatMessagesEl.scrollHeight;
+    this.chatHistoryEl.appendChild(div);
+    this.chatHistoryEl.scrollTop = this.chatHistoryEl.scrollHeight;
   }
 
   onChatSubmit(callback: (text: string) => void): void {
@@ -278,7 +279,17 @@ export class UI {
 
   toggleInventory(): void {
     this.inventoryVisible = !this.inventoryVisible;
-    this.inventoryPanelEl.classList.toggle("hidden", !this.inventoryVisible);
+    this.inventoryDrawerEl.classList.toggle("hidden", !this.inventoryVisible);
+  }
+
+  togglePlayerModal(): void {
+    this.tabModalVisible = !this.tabModalVisible;
+    this.tabModalEl.classList.toggle("hidden", !this.tabModalVisible);
+  }
+
+  updateActorBadge(name: string, activity: string): void {
+    this.actorBadgeNameEl.textContent = name;
+    this.actorBadgeActivityEl.textContent = activity;
   }
 
   updateInventory(items: Record<string, number>, capacity: number): void {
@@ -327,16 +338,77 @@ export class UI {
     }
   }
 
-  /** Map player state to a suffix icon for the player list. */
+  private appendEventLogEntry(text: string): void {
+    const entry = document.createElement("div");
+    entry.className = "event-log-entry";
+    entry.textContent = text;
+    this.eventLogEl.appendChild(entry);
+    const maxEntries = 3;
+    while (this.eventLogEl.children.length > maxEntries) {
+      this.eventLogEl.removeChild(this.eventLogEl.firstChild!);
+    }
+    setTimeout(() => {
+      if (entry.parentElement === this.eventLogEl) {
+        entry.style.opacity = "0";
+        entry.style.transition = "opacity 400ms ease-out";
+        setTimeout(() => entry.remove(), 400);
+      }
+    }, 6000);
+  }
+
+  private drawNeedsRing(survival: PlayerSurvivalData | null): void {
+    const ctx = this.needsCtx;
+    if (!ctx) return;
+    const size = this.needsCanvas.width;
+    const cx = size / 2;
+    const cy = size / 2;
+    ctx.clearRect(0, 0, size, size);
+
+    ctx.fillStyle = "rgba(27, 20, 16, 0.72)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2 - 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#4a3424";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2 - 4, 0, Math.PI * 2);
+    ctx.stroke();
+
+    for (let i = 0; i < NEED_KEYS.length; i++) {
+      const key = NEED_KEYS[i];
+      const radius = NEED_RING_RADII[i];
+      const value = survival?.[key] ?? 0;
+      const clamped = Math.max(0, Math.min(100, value));
+      const startAngle = -Math.PI / 2;
+      const endAngle = startAngle + (Math.PI * 2 * clamped) / 100;
+
+      ctx.strokeStyle = "rgba(74, 52, 36, 0.6)";
+      ctx.lineWidth = 12;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      if (clamped > 0) {
+        ctx.strokeStyle = severityColor(clamped);
+        ctx.lineWidth = 12;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, startAngle, endAngle);
+        ctx.stroke();
+      }
+    }
+
+    ctx.lineCap = "butt";
+  }
+
   private stateIcon(player: Player): string {
     if (player.isWaitingForResponse) return " ...";
-    if (player.state === "conversing") return " 💬";
-    if (player.state === "walking") return " 🚶";
-    if (player.state === "doing_activity") return " 📖";
+    if (player.state === "conversing") return " \uD83D\uDCAC";
+    if (player.state === "walking") return " \uD83D\uDEB6";
+    if (player.state === "doing_activity") return " \uD83D\uDCD6";
     return "";
   }
 
-  /** Escape HTML to prevent XSS when inserting user-provided text into the DOM. */
   private escapeHtml(text: string): string {
     const div = document.createElement("div");
     div.textContent = text;
