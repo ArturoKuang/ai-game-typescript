@@ -911,14 +911,20 @@ export class NpcAutonomyManager {
 
       if (planIsStale) return;
 
-      this.storeGoalReasoningMemory(npcId, response.goalId, response.reasoning);
-      this.executeGoalSelectionPlan(
+      const plannedGoal = this.executeGoalSelectionPlan(
         npcId,
         state,
         response.goalId,
         options,
         response.reasoning,
       );
+      if (plannedGoal) {
+        this.storeGoalReasoningMemory(
+          npcId,
+          plannedGoal.goalId,
+          plannedGoal.reasoning,
+        );
+      }
     } catch (error) {
       console.warn(`LLM goal selection failed for ${npcId}:`, error);
     } finally {

@@ -741,12 +741,15 @@ describe("NpcAutonomyManager", () => {
         berries: 3,
       },
     );
+    const repo = new InMemoryRepository();
+    const memoryManager = new MemoryManager(repo, new PlaceholderEmbedder(64));
     const provider = new RecordingGoalProvider(
       "satisfy_social",
       "I want to talk first",
     );
     const manager = new NpcAutonomyManager(tg.game, entityManager, {
       provider,
+      memoryManager,
     });
     const state = manager.getState("npc_1");
     state.needs.food = 10;
@@ -772,6 +775,7 @@ describe("NpcAutonomyManager", () => {
         ) => Promise<void>;
       }
     ).tryLlmGoalSelection("npc_1", state, tg.game.currentTick);
+    await flushAsyncWork();
 
     expect(
       provider.lastGoalRequest?.availableGoals.map((goal) => goal.id),
@@ -786,6 +790,23 @@ describe("NpcAutonomyManager", () => {
     expect(state.currentPlanReasoning).toContain(
       "Fallback from satisfy_social",
     );
+
+    const observationMemories = await memoryManager.getMemories("npc_1", {
+      limit: 10,
+      type: "observation",
+    });
+    expect(
+      observationMemories.some(
+        (memory) =>
+          memory.content ===
+          "I decided to address my food: I want to talk first. Fallback from satisfy_social because it was not plannable.",
+      ),
+    ).toBe(true);
+    expect(
+      observationMemories.some((memory) =>
+        memory.content.includes("address my social"),
+      ),
+    ).toBe(false);
   });
 
   it("records nearby observations into remembered targets", () => {
