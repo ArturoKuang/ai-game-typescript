@@ -51,6 +51,7 @@ describe("NPC prompt builders", () => {
         },
         inventory: {},
         nearbyEntities: [],
+        rememberedTargets: [],
         recentMemories: [],
         availableGoals: [
           { id: "satisfy_food", description: "Find something to eat" },
@@ -58,5 +59,40 @@ describe("NPC prompt builders", () => {
         currentTick: tg.game.currentTick,
       }),
     ).toContain(SURVIVAL_DEATH_RULE);
+  });
+
+  it("includes remembered targets in goal prompts", () => {
+    tg = new TestGame();
+    const npc = tg.spawn("npc_1", 1, 1, true);
+
+    const prompt = buildGoalSelectionPrompt({
+      npc,
+      needs: {
+        health: 100,
+        food: 25,
+        water: 50,
+        social: 50,
+      },
+      inventory: {},
+      nearbyEntities: [],
+      rememberedTargets: [
+        {
+          type: "water_source",
+          distance: 6,
+          ageTicks: 40,
+          source: "observation",
+          availability: "available",
+        },
+      ],
+      recentMemories: [],
+      availableGoals: [
+        { id: "satisfy_water", description: "Find something to drink" },
+      ],
+      currentTick: tg.game.currentTick,
+    });
+
+    expect(prompt).toContain("Remembered targets:");
+    expect(prompt).toContain("water_source");
+    expect(prompt).toContain("seen 40 ticks ago");
   });
 });

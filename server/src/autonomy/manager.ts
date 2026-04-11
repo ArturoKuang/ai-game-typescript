@@ -1,4 +1,5 @@
 import type { NpcPersistenceStore } from "../db/npcStore.js";
+import type { Memory } from "../db/repository.js";
 import type {
   DebugActionDefinition,
   DebugFeedEventPayload,
@@ -12,21 +13,19 @@ import type {
  * 3. Check for critical need crossings → interrupt current plan
  * 4. If no plan → trigger goal selection → run GOAP planner
  * 5. Execute current plan step
- * 6. Idle wander fallback if no plan found
+ * 6. Route low-priority roaming through a GOAP wander plan
  */
 import type {
   Conversation,
   NpcInviteDecision,
 } from "../engine/conversation.js";
 import { manhattanDistance } from "../engine/spatial.js";
-import type {
-  CharacterDef,
-  Command,
-  Position,
-  TickResult,
-} from "../engine/types.js";
+import type { CharacterDef, Position, TickResult } from "../engine/types.js";
 import type { MemoryManager } from "../npc/memory.js";
-import type { NpcModelProvider } from "../npc/provider.js";
+import type {
+  NpcGoalRememberedTarget,
+  NpcModelProvider,
+} from "../npc/provider.js";
 import { registerBuiltinActions } from "./actions/index.js";
 import type { EntityManager } from "./entityManager.js";
 import { executeAutonomyTick, invalidatePlan } from "./executor.js";
@@ -35,7 +34,7 @@ import {
   goalIdToState,
   selectGoalScripted,
 } from "./goalSelector.js";
-import { createInventory } from "./inventory.js";
+import { addItem, createInventory, removeItem } from "./inventory.js";
 import {
   boostNeed,
   createDefaultNeeds,
@@ -46,6 +45,7 @@ import {
 import { plan } from "./planner.js";
 import { ActionRegistry } from "./registry.js";
 import type {
+  ActionHistoryEntry,
   AutonomyGameRuntime,
   AutonomyRuntimePlayer,
   GoalOption,
@@ -58,6 +58,7 @@ import type {
   NpcNeeds,
   Plan,
   PlanSource,
+  RememberedTarget,
   SurvivalSnapshot,
   WorldState,
 } from "./types.js";
@@ -66,8 +67,6 @@ import { snapshotWorldState } from "./worldState.js";
 
 /** Minimum ticks between goal selection attempts per NPC. */
 const GOAL_SELECTION_COOLDOWN = 200;
-/** Idle wander range in tiles. */
-const WANDER_RANGE = 5;
 /** Ticks to wait after idle wander before trying to plan again. */
 const IDLE_WAIT_MIN = 40;
 const IDLE_WAIT_MAX = 100;
@@ -83,10 +82,22 @@ const PLAYER_RAW_FOOD_RESTORE = 40;
 const PLAYER_COOKED_FOOD_RESTORE = 70;
 /** Food restored when a player consumes bear meat. */
 const PLAYER_BEAR_MEAT_FOOD_RESTORE = 55;
-/** How often to broadcast needs to clients (ticks). */
-const NEEDS_BROADCAST_INTERVAL = 40;
+/** How often to broadcast NPC needs to clients (ticks). */
+const NPC_NEEDS_BROADCAST_INTERVAL = 40;
+/** Human survival drives the local HUD, so keep it live every tick. */
+const PLAYER_SURVIVAL_BROADCAST_INTERVAL = 1;
 /** Max ticks an NPC will leave a player invite pending before declining it. */
 const INVITE_DECISION_TIMEOUT = 120;
+/** Number of memories to retrieve when selecting the next autonomy goal. */
+const PLANNING_MEMORY_LIMIT = 5;
+const GOAL_REMEMBERED_TARGET_LIMIT = 5;
+/** Bounded recent action history used by the planner as working memory. */
+const ACTION_HISTORY_LIMIT = 20;
+const REMEMBERED_TARGET_LIMIT = 40;
+const REMEMBERED_TARGET_TTL = 2000;
+const OBSERVATION_RADIUS = 6;
+const OBSERVATION_MEMORY_COOLDOWN = 300;
+const GOAL_SELECTION_OBSERVATION_RADIUS = 10;
 /** Passive water refill when standing by the pond edge. */
 const POND_WATER_RESTORE_PER_TICK = 2;
 /** NPC flee trigger radius for aggressive bears. */
@@ -209,9 +220,26 @@ export class NpcAutonomyManager {
     // Restore food when a player consumes an edible item.
     this.game.on("item_consumed", (event) => {
       if (!event.playerId || typeof event.data?.item !== "string") return;
+      const player = this.game.getPlayer(event.playerId);
+      if (player?.isNpc) {
+        removeItem(this.getState(event.playerId).inventory, event.data.item);
+      }
       const restore = this.foodRestoreForItem(event.data.item);
       if (restore <= 0) return;
       this.boostPlayerNeed(event.playerId, "food", restore);
+    });
+
+    this.game.on("item_pickup", (event) => {
+      if (!event.playerId || typeof event.data?.item !== "string") return;
+      const player = this.game.getPlayer(event.playerId);
+      if (!player?.isNpc) return;
+      const quantity =
+        typeof event.data.quantity === "number" ? event.data.quantity : 1;
+      addItem(
+        this.getState(event.playerId).inventory,
+        event.data.item,
+        quantity,
+      );
     });
 
     this.game.on("spawn", (event) => {
@@ -250,6 +278,9 @@ export class NpcAutonomyManager {
       state = {
         needs: createDefaultNeeds(this.needConfigs),
         inventory: createInventory(),
+        recentActionHistory: [],
+        rememberedTargets: [],
+        lastObservationTickByKey: new Map(),
         currentPlan: null,
         currentPlanSource: null,
         currentPlanReasoning: null,
@@ -313,6 +344,15 @@ export class NpcAutonomyManager {
   /** Get the entity manager (for debug API). */
   getEntityManager(): EntityManager {
     return this.entityManager;
+  }
+
+  reset(): void {
+    this.states.clear();
+    this.playerSurvival.clear();
+    this.goalSelectionInFlight.clear();
+    this.idleCooldowns.clear();
+    this.deadDebugStates.clear();
+    this.debugStateHashes.clear();
   }
 
   /** Register a listener for NPC needs updates (used for client broadcasting). */
@@ -394,13 +434,15 @@ export class NpcAutonomyManager {
   private processAutonomyTick(_result: TickResult): void {
     const players = this.game.getPlayers();
     const npcs = players.filter((p) => p.isNpc);
-    const shouldBroadcast =
-      this.game.currentTick % NEEDS_BROADCAST_INTERVAL === 0;
+    const shouldBroadcastPlayerSurvival =
+      this.game.currentTick % PLAYER_SURVIVAL_BROADCAST_INTERVAL === 0;
+    const shouldBroadcastNpcNeeds =
+      this.game.currentTick % NPC_NEEDS_BROADCAST_INTERVAL === 0;
 
-    this.processHumanSurvivalTick(players, shouldBroadcast);
+    this.processHumanSurvivalTick(players, shouldBroadcastPlayerSurvival);
 
     for (const npc of npcs) {
-      this.processNpcAutonomyTick(npc, shouldBroadcast);
+      this.processNpcAutonomyTick(npc, shouldBroadcastNpcNeeds);
     }
   }
 
@@ -410,6 +452,7 @@ export class NpcAutonomyManager {
   ): void {
     const state = this.getState(npc.id);
     const npcConfigs = this.getNeedConfigs(npc.id);
+    this.observeEnvironment(npc, state);
 
     if (this.handleConversingNpc(npc, state, npcConfigs, shouldBroadcast)) {
       return;
@@ -533,7 +576,8 @@ export class NpcAutonomyManager {
   ): boolean {
     if (
       !this.hasAggressiveBearNearby(npc) ||
-      state.currentPlan?.goalId === "escape_danger"
+      state.currentPlan?.goalId === "escape_danger" ||
+      state.currentExecution?.actionId === "attack_bear"
     ) {
       return false;
     }
@@ -601,10 +645,19 @@ export class NpcAutonomyManager {
       this.game,
       this.entityManager,
     );
+    this.rememberActionTransitions(npcId, state, result.transitions);
     this.emitActionTransitions(npcId, result.transitions);
 
     if (result.planFailed) {
       state.consecutivePlanFailures++;
+      if (!this.hasActionFailureMemory(result.transitions)) {
+        this.rememberActionFailure(
+          npcId,
+          state,
+          planBeforeExecution,
+          result.failReason,
+        );
+      }
       this.emitNpcGoalEvent(npcId, {
         type: "plan_failed",
         severity: "warning",
@@ -763,7 +816,7 @@ export class NpcAutonomyManager {
 
     // Throttle goal selection
     if (tick - state.lastGoalSelectionTick < GOAL_SELECTION_COOLDOWN) {
-      this.idleWander(npcId, state);
+      this.queueIdlePlan(npcId, state);
       return;
     }
 
@@ -771,7 +824,7 @@ export class NpcAutonomyManager {
     const npcConfigs = this.getNeedConfigs(npcId);
     const urgent = getUrgentNeeds(state.needs, npcConfigs);
     if (urgent.length === 0 && !hasCriticalNeed(state.needs, npcConfigs)) {
-      this.idleWander(npcId, state);
+      this.queueIdlePlan(npcId, state);
       return;
     }
 
@@ -779,7 +832,7 @@ export class NpcAutonomyManager {
 
     const goalResult = selectGoalScripted(state.needs, npcConfigs);
     if (!goalResult) {
-      this.idleWander(npcId, state);
+      this.queueIdlePlan(npcId, state);
       return;
     }
 
@@ -815,22 +868,34 @@ export class NpcAutonomyManager {
       const npc = this.game.getPlayer(npcId);
       if (!npc) return;
 
-      const options = buildGoalOptions(state.needs, this.getNeedConfigs(npcId));
-      const nearbyEntities = this.entityManager
-        .getNearby({ x: Math.round(npc.x), y: Math.round(npc.y) }, 10)
-        .slice(0, 5)
-        .map((e) => ({
-          type: e.type,
-          distance: manhattanDistance(e.position, npc),
-          name: e.id,
-        }));
+      const nearbyEntities = this.buildGoalNearbyEntities(npcId, npc);
+      const options = this.rankGoalOptionsForSelection(
+        npc,
+        state,
+        nearbyEntities,
+        buildGoalOptions(state.needs, this.getNeedConfigs(npcId)),
+      );
+      const rememberedTargets = this.buildGoalRememberedTargets(
+        npc,
+        state,
+        options,
+      );
+      const recentMemories = await this.retrievePlanningMemories(
+        npcId,
+        this.buildNpcSurvivalSnapshot(npcId, state, npc),
+        Object.fromEntries(state.inventory),
+        nearbyEntities,
+        rememberedTargets,
+        options,
+      );
 
       const response = await this.provider.generateGoalSelection({
         npc,
         needs: this.buildNpcSurvivalSnapshot(npcId, state, npc),
         inventory: Object.fromEntries(state.inventory),
         nearbyEntities,
-        recentMemories: [],
+        rememberedTargets,
+        recentMemories,
         availableGoals: options,
         currentTick: this.game.currentTick,
       });
@@ -846,28 +911,14 @@ export class NpcAutonomyManager {
 
       if (planIsStale) return;
 
-      // Store reasoning as observation memory (fire-and-forget)
-      if (response.reasoning && this.memoryManager) {
-        this.memoryManager
-          .addMemory({
-            playerId: npcId,
-            type: "observation",
-            content: `I decided to ${response.goalId.replace("satisfy_", "address my ")}: ${response.reasoning}`,
-            importance: 3,
-            tick: this.game.currentTick,
-          })
-          .catch((err) => {
-            console.warn(`Failed to store goal reasoning for ${npcId}:`, err);
-          });
-      }
-
-      const goalState = goalIdToState(response.goalId);
-      if (goalState) {
-        this.executePlan(npcId, state, goalState, response.goalId, {
-          source: "llm",
-          reasoning: response.reasoning,
-        });
-      }
+      this.storeGoalReasoningMemory(npcId, response.goalId, response.reasoning);
+      this.executeGoalSelectionPlan(
+        npcId,
+        state,
+        response.goalId,
+        options,
+        response.reasoning,
+      );
     } catch (error) {
       console.warn(`LLM goal selection failed for ${npcId}:`, error);
     } finally {
@@ -885,10 +936,11 @@ export class NpcAutonomyManager {
     provenance: {
       source: PlanSource;
       reasoning?: string;
+      allowIdleFallback?: boolean;
     },
-  ): void {
+  ): boolean {
     const npc = this.game.getPlayer(npcId);
-    if (!npc) return;
+    if (!npc) return false;
 
     const currentState = snapshotWorldState(
       npcId,
@@ -901,6 +953,7 @@ export class NpcAutonomyManager {
 
     const result = plan(currentState, goalState, this.registry, {
       npcId,
+      currentTick: this.game.currentTick,
       currentState,
       world: this.game.world,
       entityManager: this.entityManager,
@@ -915,6 +968,8 @@ export class NpcAutonomyManager {
           state: player.state,
           isNpc: player.isNpc,
         })),
+      recentActionHistory: state.recentActionHistory,
+      rememberedTargets: state.rememberedTargets,
     });
 
     if (result) {
@@ -936,12 +991,80 @@ export class NpcAutonomyManager {
         plan: this.buildCurrentDebugPlan(state) ?? undefined,
       });
       this.publishDebugStateIfChanged(npcId, state);
-    } else {
-      state.currentPlanSource = null;
-      state.currentPlanReasoning = null;
-      this.idleWander(npcId, state);
-      this.publishDebugStateIfChanged(npcId, state);
+      return true;
     }
+
+    state.currentPlanSource = null;
+    state.currentPlanReasoning = null;
+    if ((provenance.allowIdleFallback ?? true) && goalId !== "idle_wander") {
+      this.queueIdlePlan(npcId, state);
+    }
+    this.publishDebugStateIfChanged(npcId, state);
+    return false;
+  }
+
+  private executeGoalSelectionPlan(
+    npcId: string,
+    state: NpcAutonomyState,
+    selectedGoalId: string,
+    options: GoalOption[],
+    reasoning: string | undefined,
+  ): { goalId: string; reasoning?: string } | null {
+    const candidateGoalIds = [
+      selectedGoalId,
+      ...options
+        .map((option) => option.id)
+        .filter((goalId) => goalId !== selectedGoalId),
+    ];
+
+    for (const goalId of candidateGoalIds) {
+      const goalState = goalIdToState(goalId);
+      if (!goalState) {
+        continue;
+      }
+
+      const goalReasoning =
+        goalId === selectedGoalId
+          ? reasoning
+          : `${reasoning ? `${reasoning}. ` : ""}Fallback from ${selectedGoalId} because it was not plannable.`;
+      const planned = this.executePlan(npcId, state, goalState, goalId, {
+        source: "llm",
+        reasoning: goalReasoning,
+        allowIdleFallback: false,
+      });
+      if (planned) {
+        return { goalId, reasoning: goalReasoning };
+      }
+    }
+
+    this.queueIdlePlan(npcId, state);
+    return null;
+  }
+
+  private storeGoalReasoningMemory(
+    npcId: string,
+    goalId: string,
+    reasoning: string | undefined,
+  ): void {
+    if (!reasoning || !this.memoryManager) {
+      return;
+    }
+
+    const goalDescription = goalId.startsWith("satisfy_")
+      ? `address my ${goalId.slice("satisfy_".length)}`
+      : goalId.replaceAll("_", " ");
+
+    this.memoryManager
+      .addMemory({
+        playerId: npcId,
+        type: "observation",
+        content: `I decided to ${goalDescription}: ${reasoning}`,
+        importance: 3,
+        tick: this.game.currentTick,
+      })
+      .catch((err) => {
+        console.warn(`Failed to store goal reasoning for ${npcId}:`, err);
+      });
   }
 
   private buildDebugState(
@@ -1062,6 +1185,773 @@ export class NpcAutonomyManager {
         detail: transition.reason,
       });
     }
+  }
+
+  private rememberActionTransitions(
+    npcId: string,
+    state: NpcAutonomyState,
+    transitions: ReadonlyArray<{
+      actionId: string;
+      type: "action_started" | "action_completed" | "action_failed";
+      reason?: string;
+      memory?: {
+        content: string;
+        importance: number;
+        hint?: {
+          outcomeTag?:
+            | "resource_found"
+            | "resource_depleted"
+            | "social_success"
+            | "social_unavailable"
+            | "danger";
+          targetType?: string;
+          targetId?: string;
+          targetPosition?: Position;
+        };
+      };
+    }>,
+  ): void {
+    for (const transition of transitions) {
+      if (
+        transition.type !== "action_completed" &&
+        transition.type !== "action_failed"
+      ) {
+        continue;
+      }
+
+      this.appendActionHistoryEntry(state, {
+        actionId: transition.actionId,
+        outcome:
+          transition.type === "action_completed" ? "completed" : "failed",
+        tick: this.game.currentTick,
+        reason: transition.reason,
+        outcomeTag: transition.memory?.hint?.outcomeTag,
+        targetType: transition.memory?.hint?.targetType,
+        targetId: transition.memory?.hint?.targetId,
+        targetPosition: transition.memory?.hint?.targetPosition,
+      });
+      if (
+        transition.memory?.hint?.targetType &&
+        transition.memory.hint.targetPosition
+      ) {
+        this.upsertRememberedTarget(state, {
+          targetType: transition.memory.hint.targetType,
+          targetId: transition.memory.hint.targetId,
+          position: transition.memory.hint.targetPosition,
+          lastSeenTick: this.game.currentTick,
+          source: "action",
+          availability: this.availabilityFromOutcomeTag(
+            transition.memory.hint.outcomeTag,
+          ),
+        });
+      }
+
+      if (!this.memoryManager || !transition.memory) {
+        continue;
+      }
+
+      this.memoryManager
+        .addMemory({
+          playerId: npcId,
+          type: "observation",
+          content: transition.memory.content,
+          importance: transition.memory.importance,
+          tick: this.game.currentTick,
+        })
+        .catch((error) => {
+          console.warn(`Failed to store action memory for ${npcId}:`, error);
+        });
+    }
+  }
+
+  private appendActionHistoryEntry(
+    state: NpcAutonomyState,
+    entry: ActionHistoryEntry,
+  ): void {
+    state.recentActionHistory.push(entry);
+    if (state.recentActionHistory.length > ACTION_HISTORY_LIMIT) {
+      state.recentActionHistory.splice(
+        0,
+        state.recentActionHistory.length - ACTION_HISTORY_LIMIT,
+      );
+    }
+  }
+
+  private observeEnvironment(
+    npc: AutonomyRuntimePlayer,
+    state: NpcAutonomyState,
+  ): void {
+    const pos = { x: Math.round(npc.x), y: Math.round(npc.y) };
+    this.pruneRememberedTargets(state);
+
+    for (const entity of this.entityManager.getNearby(
+      pos,
+      OBSERVATION_RADIUS,
+    )) {
+      const target = this.toRememberedTargetFromEntity(entity);
+      if (!target) {
+        continue;
+      }
+      this.upsertRememberedTarget(state, target);
+
+      const notable = this.describeNotableObservation(entity);
+      if (notable) {
+        this.rememberObservation(
+          npc.id,
+          state,
+          notable.key,
+          notable.content,
+          notable.importance,
+        );
+      }
+    }
+
+    for (const player of this.game.getPlayers()) {
+      if (player.id === npc.id) {
+        continue;
+      }
+      const distance = manhattanDistance(pos, player);
+      if (distance > OBSERVATION_RADIUS) {
+        continue;
+      }
+      this.upsertRememberedTarget(state, {
+        targetType: "player",
+        targetId: player.id,
+        position: { x: Math.round(player.x), y: Math.round(player.y) },
+        lastSeenTick: this.game.currentTick,
+        source: "observation",
+        availability:
+          player.state === "conversing" ? "unavailable" : "available",
+      });
+    }
+  }
+
+  private toRememberedTargetFromEntity(entity: {
+    id: string;
+    type: string;
+    position: Position;
+    destroyed: boolean;
+    properties: Record<string, unknown>;
+  }): RememberedTarget | null {
+    if (entity.destroyed) {
+      return null;
+    }
+
+    switch (entity.type) {
+      case "berry_bush":
+        return {
+          targetType: entity.type,
+          targetId: entity.id,
+          position: entity.position,
+          lastSeenTick: this.game.currentTick,
+          source: "observation",
+          availability:
+            ((entity.properties.berries as number | undefined) ?? 0) > 0
+              ? "available"
+              : "depleted",
+        };
+      case "water_source":
+      case "campfire":
+      case "ground_item":
+      case "bear_meat":
+        return {
+          targetType: entity.type,
+          targetId: entity.id,
+          position: entity.position,
+          lastSeenTick: this.game.currentTick,
+          source: "observation",
+          availability: "available",
+        };
+      case "bear":
+        if (entity.properties.state === "dead") {
+          return null;
+        }
+        return {
+          targetType: entity.type,
+          targetId: entity.id,
+          position: entity.position,
+          lastSeenTick: this.game.currentTick,
+          source: "observation",
+          availability: "danger",
+        };
+      default:
+        return null;
+    }
+  }
+
+  private describeNotableObservation(entity: {
+    id: string;
+    type: string;
+    position: Position;
+    properties: Record<string, unknown>;
+  }): { key: string; content: string; importance: number } | null {
+    switch (entity.type) {
+      case "berry_bush":
+        if (((entity.properties.berries as number | undefined) ?? 0) > 0) {
+          return {
+            key: `observed:${entity.id}:berries`,
+            content: `I noticed a berry bush with fruit at (${entity.position.x}, ${entity.position.y}).`,
+            importance: 2,
+          };
+        }
+        return {
+          key: `observed:${entity.id}:depleted`,
+          content: `I found a berry bush at (${entity.position.x}, ${entity.position.y}), but it had no berries left.`,
+          importance: 3,
+        };
+      case "water_source":
+        return {
+          key: `observed:${entity.id}:water`,
+          content: `I spotted water at (${entity.position.x}, ${entity.position.y}).`,
+          importance: 2,
+        };
+      case "campfire":
+        if (entity.properties.lit === true) {
+          return {
+            key: `observed:${entity.id}:campfire`,
+            content: `I saw a lit campfire at (${entity.position.x}, ${entity.position.y}).`,
+            importance: 2,
+          };
+        }
+        return null;
+      case "bear":
+        if (entity.properties.state !== "dead") {
+          return {
+            key: `observed:${entity.id}:bear`,
+            content: `I saw a bear near (${entity.position.x}, ${entity.position.y}).`,
+            importance: 6,
+          };
+        }
+        return null;
+      default:
+        return null;
+    }
+  }
+
+  private rememberObservation(
+    npcId: string,
+    state: NpcAutonomyState,
+    key: string,
+    content: string,
+    importance: number,
+  ): void {
+    const lastObservedTick =
+      state.lastObservationTickByKey.get(key) ?? Number.NEGATIVE_INFINITY;
+    if (
+      this.game.currentTick - lastObservedTick <
+      OBSERVATION_MEMORY_COOLDOWN
+    ) {
+      return;
+    }
+    state.lastObservationTickByKey.set(key, this.game.currentTick);
+
+    if (!this.memoryManager) {
+      return;
+    }
+
+    this.memoryManager
+      .addMemory({
+        playerId: npcId,
+        type: "observation",
+        content,
+        importance,
+        tick: this.game.currentTick,
+      })
+      .catch((error) => {
+        console.warn(`Failed to store observation memory for ${npcId}:`, error);
+      });
+  }
+
+  private upsertRememberedTarget(
+    state: NpcAutonomyState,
+    target: RememberedTarget,
+  ): void {
+    const key = this.rememberedTargetKey(target);
+    const index = state.rememberedTargets.findIndex(
+      (candidate) => this.rememberedTargetKey(candidate) === key,
+    );
+    if (index >= 0) {
+      state.rememberedTargets[index] = {
+        ...state.rememberedTargets[index],
+        ...target,
+      };
+    } else {
+      state.rememberedTargets.push({ ...target });
+    }
+
+    state.rememberedTargets.sort(
+      (left, right) => right.lastSeenTick - left.lastSeenTick,
+    );
+    if (state.rememberedTargets.length > REMEMBERED_TARGET_LIMIT) {
+      state.rememberedTargets.length = REMEMBERED_TARGET_LIMIT;
+    }
+  }
+
+  private pruneRememberedTargets(state: NpcAutonomyState): void {
+    const cutoff = this.game.currentTick - REMEMBERED_TARGET_TTL;
+    state.rememberedTargets = state.rememberedTargets.filter(
+      (target) => target.lastSeenTick >= cutoff,
+    );
+  }
+
+  private rememberedTargetKey(target: RememberedTarget): string {
+    if (target.targetId) {
+      return `${target.targetType}:${target.targetId}`;
+    }
+    return `${target.targetType}:${target.position.x}:${target.position.y}`;
+  }
+
+  private availabilityFromOutcomeTag(
+    outcomeTag:
+      | "resource_found"
+      | "resource_depleted"
+      | "social_success"
+      | "social_unavailable"
+      | "danger"
+      | undefined,
+  ): RememberedTarget["availability"] {
+    switch (outcomeTag) {
+      case "resource_found":
+      case "social_success":
+        return "available";
+      case "resource_depleted":
+      case "social_unavailable":
+        return "unavailable";
+      case "danger":
+        return "danger";
+      default:
+        return undefined;
+    }
+  }
+
+  private hasActionFailureMemory(
+    transitions: ReadonlyArray<{
+      type: "action_started" | "action_completed" | "action_failed";
+      memory?: {
+        content: string;
+        importance: number;
+      };
+    }>,
+  ): boolean {
+    return transitions.some(
+      (transition) =>
+        transition.type === "action_failed" && transition.memory !== undefined,
+    );
+  }
+
+  private rememberActionFailure(
+    npcId: string,
+    state: NpcAutonomyState,
+    plan: NpcAutonomyDebugPlan,
+    reason: string | undefined,
+  ): void {
+    const step = plan.steps.find((candidate) => candidate.isCurrent);
+    if (!step) {
+      return;
+    }
+
+    this.appendActionHistoryEntry(state, {
+      actionId: step.actionId,
+      outcome: "failed",
+      tick: this.game.currentTick,
+      reason,
+    });
+
+    if (!this.memoryManager) {
+      return;
+    }
+
+    this.memoryManager
+      .addMemory({
+        playerId: npcId,
+        type: "observation",
+        content: `I tried to ${step.actionLabel.toLowerCase()} but failed: ${reason ?? "something went wrong"}.`,
+        importance: 4,
+        tick: this.game.currentTick,
+      })
+      .catch((error) => {
+        console.warn(
+          `Failed to store failed action memory for ${npcId}:`,
+          error,
+        );
+      });
+  }
+
+  private async retrievePlanningMemories(
+    npcId: string,
+    needs: SurvivalSnapshot,
+    inventory: Record<string, number>,
+    nearbyEntities: Array<{ type: string; distance: number; name?: string }>,
+    rememberedTargets: NpcGoalRememberedTarget[],
+    options: GoalOption[],
+  ): Promise<Memory[]> {
+    if (!this.memoryManager) {
+      return [];
+    }
+
+    const query = this.buildPlanningMemoryQuery(
+      needs,
+      inventory,
+      nearbyEntities,
+      rememberedTargets,
+      options,
+    );
+
+    try {
+      if (!query.trim()) {
+        return this.memoryManager.getMemories(npcId, {
+          limit: PLANNING_MEMORY_LIMIT,
+        });
+      }
+
+      const scored = await this.memoryManager.retrieveMemories({
+        playerId: npcId,
+        query,
+        currentTick: this.game.currentTick,
+        k: PLANNING_MEMORY_LIMIT,
+      });
+      return scored.map((memory) => memory);
+    } catch (error) {
+      console.warn(`Failed to retrieve planning memories for ${npcId}:`, error);
+      return [];
+    }
+  }
+
+  private buildPlanningMemoryQuery(
+    needs: SurvivalSnapshot,
+    inventory: Record<string, number>,
+    nearbyEntities: Array<{ type: string; distance: number; name?: string }>,
+    rememberedTargets: NpcGoalRememberedTarget[],
+    options: GoalOption[],
+  ): string {
+    const urgentNeeds = Object.entries(needs)
+      .filter(([need, value]) => need !== "health" && value < 45)
+      .sort((left, right) => left[1] - right[1])
+      .map(([need]) => need);
+
+    const inventoryItems = Object.entries(inventory)
+      .filter(([, count]) => count > 0)
+      .map(([item, count]) => `${item} x${count}`);
+
+    const nearbyTypes = nearbyEntities.map((entity) => entity.type);
+    const rememberedTypes = rememberedTargets.map((target) => {
+      const availability =
+        target.availability !== undefined ? `:${target.availability}` : "";
+      return `${target.type}${availability}`;
+    });
+    const goalIds = options.map((option) => option.id);
+
+    return [
+      urgentNeeds.length > 0
+        ? `Urgent needs: ${urgentNeeds.join(", ")}.`
+        : "No urgent needs.",
+      inventoryItems.length > 0
+        ? `Inventory: ${inventoryItems.join(", ")}.`
+        : "Inventory is empty.",
+      nearbyTypes.length > 0
+        ? `Nearby: ${nearbyTypes.join(", ")}.`
+        : "Nothing notable is nearby.",
+      rememberedTypes.length > 0
+        ? `Remembered targets: ${rememberedTypes.join(", ")}.`
+        : "No useful remembered targets.",
+      goalIds.length > 0
+        ? `Possible goals: ${goalIds.join(", ")}.`
+        : "No goals available.",
+    ].join(" ");
+  }
+
+  private buildGoalNearbyEntities(
+    npcId: string,
+    npc: AutonomyRuntimePlayer,
+  ): Array<{ type: string; distance: number; name?: string }> {
+    const pos = { x: Math.round(npc.x), y: Math.round(npc.y) };
+    const nearbyEntities = this.entityManager
+      .getNearby(pos, GOAL_SELECTION_OBSERVATION_RADIUS)
+      .map((entity) => ({
+        type: entity.type,
+        distance: manhattanDistance(entity.position, npc),
+        name: entity.id,
+      }));
+    const nearbyPlayers = this.game
+      .getPlayers()
+      .filter((player) => player.id !== npcId)
+      .map((player) => ({
+        type: "player",
+        distance: manhattanDistance(player, npc),
+        name: player.id,
+      }))
+      .filter((player) => player.distance <= GOAL_SELECTION_OBSERVATION_RADIUS);
+
+    return [...nearbyEntities, ...nearbyPlayers]
+      .sort((left, right) => left.distance - right.distance)
+      .slice(0, 5);
+  }
+
+  private rankGoalOptionsForSelection(
+    npc: AutonomyRuntimePlayer,
+    state: NpcAutonomyState,
+    nearbyEntities: Array<{ type: string; distance: number; name?: string }>,
+    options: GoalOption[],
+  ): GoalOption[] {
+    const rememberedTargets = state.rememberedTargets.map((target) => ({
+      type: target.targetType,
+      distance: manhattanDistance(target.position, npc),
+      ageTicks: Math.max(0, this.game.currentTick - target.lastSeenTick),
+      source: target.source,
+      availability: target.availability,
+      name: target.targetId,
+    }));
+
+    return options
+      .map((option, index) => {
+        const assessment = this.assessGoalOptionForSelection(
+          option.id,
+          state,
+          nearbyEntities,
+          rememberedTargets,
+        );
+        return {
+          option: {
+            ...option,
+            description: this.describeGoalOptionForSelection(
+              option.description,
+              assessment,
+            ),
+          },
+          score: assessment.score,
+          index,
+        };
+      })
+      .sort(
+        (left, right) => right.score - left.score || left.index - right.index,
+      )
+      .map((entry) => entry.option);
+  }
+
+  private buildGoalRememberedTargets(
+    npc: AutonomyRuntimePlayer,
+    state: NpcAutonomyState,
+    options: GoalOption[],
+  ): NpcGoalRememberedTarget[] {
+    const relevantTypes = this.goalRelevantTargetTypes(
+      options,
+      state.inventory,
+    );
+    const summaries = state.rememberedTargets.map((target) => ({
+      type: target.targetType,
+      distance: manhattanDistance(target.position, npc),
+      ageTicks: Math.max(0, this.game.currentTick - target.lastSeenTick),
+      source: target.source,
+      availability: target.availability,
+      name: target.targetId,
+    }));
+
+    const relevantSummaries = summaries.filter((target) =>
+      relevantTypes.has(target.type),
+    );
+    const candidates =
+      relevantSummaries.length > 0 ? relevantSummaries : summaries;
+
+    return candidates
+      .sort(
+        (left, right) =>
+          this.goalRememberedTargetScore(right, relevantTypes) -
+            this.goalRememberedTargetScore(left, relevantTypes) ||
+          left.ageTicks - right.ageTicks ||
+          left.distance - right.distance,
+      )
+      .slice(0, GOAL_REMEMBERED_TARGET_LIMIT);
+  }
+
+  private assessGoalOptionForSelection(
+    goalId: string,
+    state: NpcAutonomyState,
+    nearbyEntities: Array<{ type: string; distance: number; name?: string }>,
+    rememberedTargets: NpcGoalRememberedTarget[],
+  ): {
+    score: number;
+    inventoryHint?: string;
+    nearbyHint?: { type: string; distance: number };
+    rememberedHint?: NpcGoalRememberedTarget;
+  } {
+    const relevantTypes = this.goalRelevantTargetTypesForGoal(
+      goalId,
+      state.inventory,
+    );
+    let score = 100 - this.goalNeedValue(goalId, state.needs);
+    let inventoryHint: string | undefined;
+
+    if (goalId === "satisfy_food") {
+      if ((state.inventory.get("cooked_food") ?? 0) > 0) {
+        score += 50;
+        inventoryHint = "You already have cooked food in your inventory.";
+      } else if (
+        (state.inventory.get("raw_food") ?? 0) > 0 ||
+        (state.inventory.get("bear_meat") ?? 0) > 0
+      ) {
+        score += 40;
+        inventoryHint = "You already have edible food in your inventory.";
+      }
+    }
+
+    const nearbyHint = nearbyEntities
+      .filter((entity) => relevantTypes.includes(entity.type))
+      .sort((left, right) => left.distance - right.distance)[0];
+    if (nearbyHint) {
+      score += 35 - nearbyHint.distance * 2;
+    }
+
+    const rememberedHint = rememberedTargets
+      .filter((target) => relevantTypes.includes(target.type))
+      .sort((left, right) => {
+        const leftScore = this.goalSelectionRememberedTargetScore(left);
+        const rightScore = this.goalSelectionRememberedTargetScore(right);
+        return rightScore - leftScore;
+      })[0];
+    if (rememberedHint) {
+      score += this.goalSelectionRememberedTargetScore(rememberedHint);
+    }
+
+    return { score, inventoryHint, nearbyHint, rememberedHint };
+  }
+
+  private goalRelevantTargetTypes(
+    options: GoalOption[],
+    inventory: NpcAutonomyState["inventory"],
+  ): Map<string, number> {
+    const relevantTypes = new Map<string, number>();
+    const register = (type: string, priority: number): void => {
+      const current = relevantTypes.get(type);
+      if (current === undefined || priority < current) {
+        relevantTypes.set(type, priority);
+      }
+    };
+
+    for (const [priority, option] of options.entries()) {
+      for (const type of this.goalRelevantTargetTypesForGoal(
+        option.id,
+        inventory,
+      )) {
+        register(type, priority);
+      }
+    }
+
+    return relevantTypes;
+  }
+
+  private goalRelevantTargetTypesForGoal(
+    goalId: string,
+    inventory: NpcAutonomyState["inventory"],
+  ): string[] {
+    switch (goalId) {
+      case "satisfy_food":
+        return [
+          "berry_bush",
+          "ground_item",
+          "bear_meat",
+          "bear",
+          ...((inventory.get("raw_food") ?? 0) > 0 ? ["campfire"] : []),
+        ];
+      case "satisfy_water":
+        return ["water_source"];
+      case "satisfy_social":
+        return ["player"];
+      default:
+        return [];
+    }
+  }
+
+  private goalNeedValue(goalId: string, needs: NpcNeeds): number {
+    switch (goalId) {
+      case "satisfy_food":
+        return needs.food;
+      case "satisfy_water":
+        return needs.water;
+      case "satisfy_social":
+        return needs.social;
+      default:
+        return 50;
+    }
+  }
+
+  private goalRememberedTargetScore(
+    target: NpcGoalRememberedTarget,
+    relevantTypes: Map<string, number>,
+  ): number {
+    let score = 0;
+
+    const priority = relevantTypes.get(target.type);
+    if (priority !== undefined) {
+      score += 100 - priority * 25;
+    }
+
+    switch (target.availability) {
+      case "available":
+        score += 20;
+        break;
+      case "danger":
+        score += target.type === "bear" ? 8 : -10;
+        break;
+      case "depleted":
+      case "unavailable":
+        score -= 25;
+        break;
+    }
+
+    if (target.source === "observation") {
+      score += 3;
+    }
+
+    score -= target.distance * 1.5;
+    score -= target.ageTicks / 40;
+    return score;
+  }
+
+  private goalSelectionRememberedTargetScore(
+    target: NpcGoalRememberedTarget,
+  ): number {
+    let score = 0;
+
+    switch (target.availability) {
+      case "available":
+        score += 20;
+        break;
+      case "danger":
+        score += target.type === "bear" ? 8 : -10;
+        break;
+      case "depleted":
+      case "unavailable":
+        score -= 25;
+        break;
+    }
+
+    if (target.source === "observation") {
+      score += 3;
+    }
+
+    score -= target.distance * 1.5;
+    score -= target.ageTicks / 50;
+    return score;
+  }
+
+  private describeGoalOptionForSelection(
+    description: string,
+    assessment: {
+      inventoryHint?: string;
+      nearbyHint?: { type: string; distance: number };
+      rememberedHint?: NpcGoalRememberedTarget;
+    },
+  ): string {
+    if (assessment.inventoryHint) {
+      return `${description}. ${assessment.inventoryHint}`;
+    }
+    if (assessment.nearbyHint) {
+      return `${description}. You can already see ${assessment.nearbyHint.type} ${Math.round(assessment.nearbyHint.distance)} tiles away.`;
+    }
+    if (assessment.rememberedHint) {
+      return `${description}. You remember ${assessment.rememberedHint.type} about ${Math.round(assessment.rememberedHint.distance)} tiles away from ${Math.round(assessment.rememberedHint.ageTicks)} ticks ago.`;
+    }
+    return description;
   }
 
   private emitNpcGoalEvent(
@@ -1261,37 +2151,21 @@ export class NpcAutonomyManager {
     });
   }
 
-  private idleWander(npcId: string, _state: NpcAutonomyState): void {
+  private queueIdlePlan(npcId: string, state: NpcAutonomyState): void {
     const npc = this.game.getPlayer(npcId);
     if (!npc) return;
-    if (npc.state === "walking") return; // Already moving
+    if (npc.state === "walking" || state.currentPlan) return;
 
-    // Pick a random walkable tile within WANDER_RANGE
-    const world = this.game.world;
-    const rng = this.game.rng;
-    const cx = Math.round(npc.x);
-    const cy = Math.round(npc.y);
+    this.setIdleCooldown(npcId);
+    const idleGoal: WorldState = new Map([["has_wandered_recently", true]]);
+    this.executePlan(npcId, state, idleGoal, "idle_wander", {
+      source: "scripted",
+    });
+  }
 
-    // Simple random walk target
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const dx = rng.nextInt(WANDER_RANGE * 2 + 1) - WANDER_RANGE;
-      const dy = rng.nextInt(WANDER_RANGE * 2 + 1) - WANDER_RANGE;
-      const tx = cx + dx;
-      const ty = cy + dy;
-
-      if (world.isWalkable(tx, ty)) {
-        const moveCommand: Command = {
-          type: "move_to",
-          playerId: npcId,
-          data: { x: tx, y: ty },
-        };
-        this.game.enqueue(moveCommand);
-        break;
-      }
-    }
-
-    // Set idle cooldown
-    const wait = IDLE_WAIT_MIN + rng.nextInt(IDLE_WAIT_MAX - IDLE_WAIT_MIN);
+  private setIdleCooldown(npcId: string): void {
+    const wait =
+      IDLE_WAIT_MIN + this.game.rng.nextInt(IDLE_WAIT_MAX - IDLE_WAIT_MIN);
     this.idleCooldowns.set(npcId, this.game.currentTick + wait);
   }
 

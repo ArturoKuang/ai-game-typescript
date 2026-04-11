@@ -21,22 +21,36 @@ function makeState(overrides?: Partial<NpcAutonomyState>): NpcAutonomyState {
   return {
     needs: createDefaultNeeds(),
     inventory: createInventory(),
+    recentActionHistory: [],
+    rememberedTargets: [],
+    lastObservationTickByKey: new Map(),
     currentPlan: null,
+    currentPlanSource: null,
+    currentPlanReasoning: null,
     currentStepIndex: 0,
     currentExecution: null,
     lastPlanTick: 0,
     lastGoalSelectionTick: 0,
     consecutivePlanFailures: 0,
+    goalSelectionStartedAtTick: null,
     ...overrides,
   };
 }
 
 function makeMockGame(
-  players: Array<{ id: string; x: number; y: number; state: string; isNpc: boolean }>,
+  players: Array<{
+    id: string;
+    x: number;
+    y: number;
+    state: string;
+    isNpc: boolean;
+  }>,
   tick = 100,
 ): GameLoopInterface {
   return {
     currentTick: tick,
+    world: { isWalkable: () => true },
+    rng: { nextInt: () => 0 },
     enqueue: () => {},
     getPlayer: (id: string) => players.find((p) => p.id === id),
     getPlayers: () => players,
@@ -48,7 +62,9 @@ describe("Action Executor", () => {
   it("returns no-op when there is no plan", () => {
     const state = makeState();
     const registry = makeRegistry();
-    const game = makeMockGame([{ id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true }]);
+    const game = makeMockGame([
+      { id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true },
+    ]);
     const em = new EntityManager();
 
     const result = executeAutonomyTick("npc_1", state, registry, game, em);
@@ -65,7 +81,9 @@ describe("Action Executor", () => {
     };
     const state = makeState({ currentPlan: plan });
     const registry = makeRegistry();
-    const game = makeMockGame([{ id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true }]);
+    const game = makeMockGame([
+      { id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true },
+    ]);
     const em = new EntityManager();
 
     const result = executeAutonomyTick("npc_1", state, registry, game, em);
@@ -119,16 +137,17 @@ describe("Action Executor", () => {
       100,
     );
     const em = new EntityManager();
+    const mutableGame = game as GameLoopInterface & { currentTick: number };
 
     // Tick through the eat duration (20 ticks)
-    let result;
+    let result: ReturnType<typeof executeAutonomyTick> | undefined;
     for (let i = 0; i < 25; i++) {
-      (game as any).currentTick = 100 + i;
+      mutableGame.currentTick = 100 + i;
       result = executeAutonomyTick("npc_1", state, registry, game, em);
       if (result.planCompleted || result.planFailed) break;
     }
 
-    expect(result!.planCompleted).toBe(true);
+    expect(result?.planCompleted).toBe(true);
     expect(needs.food).toBeGreaterThan(20); // food was boosted
     expect(inv.has("raw_food")).toBe(false); // food consumed
   });
@@ -149,16 +168,17 @@ describe("Action Executor", () => {
       100,
     );
     const em = new EntityManager();
+    const mutableGame = game as GameLoopInterface & { currentTick: number };
 
     // Tick through eat duration (20 ticks)
-    let result;
+    let result: ReturnType<typeof executeAutonomyTick> | undefined;
     for (let i = 0; i < 25; i++) {
-      (game as any).currentTick = 100 + i;
+      mutableGame.currentTick = 100 + i;
       result = executeAutonomyTick("npc_1", state, registry, game, em);
       if (result.planCompleted) break;
     }
 
-    expect(result!.planCompleted).toBe(true);
+    expect(result?.planCompleted).toBe(true);
     expect(state.currentPlan).toBeNull();
   });
 
@@ -174,9 +194,19 @@ describe("Action Executor", () => {
     const enqueue = vi.fn();
     const game: GameLoopInterface = {
       currentTick: 100,
+      world: { isWalkable: () => true },
+      rng: { nextInt: () => 0 },
       enqueue,
-      getPlayer: () => ({ id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true }),
-      getPlayers: () => [{ id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true }],
+      getPlayer: () => ({
+        id: "npc_1",
+        x: 5,
+        y: 5,
+        state: "idle",
+        isNpc: true,
+      }),
+      getPlayers: () => [
+        { id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true },
+      ],
       setPlayerTarget: () => {
         throw new Error("goto should not call setPlayerTarget directly");
       },
@@ -204,6 +234,8 @@ describe("Action Executor", () => {
     const enqueue = vi.fn();
     const game: GameLoopInterface = {
       currentTick: 100,
+      world: { isWalkable: () => true },
+      rng: { nextInt: () => 0 },
       enqueue,
       getPlayer: (id: string) =>
         [
@@ -224,6 +256,48 @@ describe("Action Executor", () => {
       type: "start_convo",
       playerId: "npc_1",
       data: { targetId: "human_1" },
+    });
+  });
+
+  it("queues move_to when starting a wander step", () => {
+    const plan: Plan = {
+      goalId: "idle_wander",
+      steps: [{ actionId: "wander" }],
+      totalCost: 1,
+      createdAtTick: 90,
+    };
+    const state = makeState({ currentPlan: plan });
+    const registry = makeRegistry();
+    const enqueue = vi.fn();
+    const game: GameLoopInterface = {
+      currentTick: 100,
+      world: { isWalkable: (x: number, y: number) => x === 6 && y === 5 },
+      rng: {
+        nextInt: vi.fn().mockReturnValueOnce(6).mockReturnValueOnce(5),
+      },
+      enqueue,
+      getPlayer: () => ({
+        id: "npc_1",
+        x: 5,
+        y: 5,
+        state: "idle",
+        isNpc: true,
+      }),
+      getPlayers: () => [
+        { id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true },
+      ],
+      setPlayerTarget: () => {
+        throw new Error("wander should not call setPlayerTarget directly");
+      },
+    };
+    const em = new EntityManager();
+
+    const result = executeAutonomyTick("npc_1", state, registry, game, em);
+    expect(result.planFailed).toBe(false);
+    expect(enqueue).toHaveBeenCalledWith({
+      type: "move_to",
+      playerId: "npc_1",
+      data: { x: 6, y: 5 },
     });
   });
 });

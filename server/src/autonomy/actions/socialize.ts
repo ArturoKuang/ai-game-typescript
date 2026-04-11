@@ -79,4 +79,32 @@ export const socializeAction: ActionDefinition = {
   onEnd(_ctx: ExecutionContext, _reason): void {
     // Conversation lifecycle handled by orchestrator
   },
+
+  describeOutcomeForMemory(ctx, outcome, reason) {
+    const targetId = ctx.actionState.get("targetId") as string | undefined;
+    const targetName = targetId ?? "someone";
+    if (outcome === "completed") {
+      return {
+        content: `I started a conversation with ${targetName}.`,
+        importance: 6,
+        hint: {
+          outcomeTag: "social_success",
+          targetType: "player",
+          targetId,
+        },
+      };
+    }
+    if (outcome === "failed") {
+      return {
+        content: `I tried to start a conversation with ${targetName} but failed: ${reason ?? "they were not available"}.`,
+        importance: 5,
+        hint: {
+          outcomeTag: "social_unavailable",
+          targetType: "player",
+          targetId,
+        },
+      };
+    }
+    return null;
+  },
 };

@@ -11,19 +11,27 @@ function makeRegistry(): ActionRegistry {
   return reg;
 }
 
-function makeCtx(
-  overrides?: Partial<PlanningContext>,
-): PlanningContext {
+function makeCtx(overrides?: Partial<PlanningContext>): PlanningContext {
   const em = new EntityManager();
   return {
     npcId: "npc_1",
+    currentTick: 1000,
     currentState: new Map(),
     world: { isWalkable: () => true },
     entityManager: em,
     npcPosition: { x: 5, y: 5 },
     otherPlayers: [],
+    recentActionHistory: [],
+    rememberedTargets: [],
     ...overrides,
   };
+}
+
+function requirePlan<T>(value: T | null): T {
+  if (value === null) {
+    throw new Error("expected plan");
+  }
+  return value;
 }
 
 describe("GOAP Planner", () => {
@@ -46,9 +54,8 @@ describe("GOAP Planner", () => {
     const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const ctx = makeCtx({ currentState: current });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.steps.some((s) => s.actionId === "eat")).toBe(true);
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps.some((s) => s.actionId === "eat")).toBe(true);
   });
 
   it("plans harvest -> eat when NPC has no food but is near a bush", () => {
@@ -63,41 +70,107 @@ describe("GOAP Planner", () => {
     const registry = makeRegistry();
     const ctx = makeCtx({ currentState: current, entityManager: em });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    const actionIds = result!.steps.map((s) => s.actionId);
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    const actionIds = result.steps.map((s) => s.actionId);
     expect(actionIds).toContain("harvest");
     expect(actionIds).toContain("eat");
     // harvest should come before eat
     expect(actionIds.indexOf("harvest")).toBeLessThan(actionIds.indexOf("eat"));
   });
 
-  it("plans goto -> harvest -> eat when NPC is far from bush", () => {
+  it("plans attack_bear -> pickup_bear_meat -> eat_bear_meat when hunting is the food path", () => {
     const em = new EntityManager();
-    em.spawn("berry_bush", { x: 10, y: 10 }, { berries: 5 });
+    em.spawn("bear", { x: 6, y: 5 }, { state: "idle", hp: 20, maxHp: 20 });
 
     const current: WorldState = new Map([
+      ["near_bear", true],
       ["need_food_satisfied", false],
     ]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
+    const registry = makeRegistry();
+    const ctx = makeCtx({ currentState: current, entityManager: em });
+
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps.map((step) => step.actionId)).toEqual([
+      "attack_bear",
+      "pickup_bear_meat",
+      "eat_bear_meat",
+    ]);
+  });
+
+  it("plans goto -> harvest -> eat when NPC is far from bush", () => {
+    const em = new EntityManager();
+    const bush = em.spawn("berry_bush", { x: 10, y: 10 }, { berries: 5 });
+
+    const current: WorldState = new Map([["need_food_satisfied", false]]);
     const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const registry = makeRegistry();
     const ctx = makeCtx({
       currentState: current,
       entityManager: em,
       npcPosition: { x: 1, y: 1 },
+      rememberedTargets: [
+        {
+          targetType: "berry_bush",
+          targetId: bush.id,
+          position: bush.position,
+          lastSeenTick: 999,
+          source: "observation",
+          availability: "available",
+        },
+      ],
     });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    const actionIds = result!.steps.map((s) => s.actionId);
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    const actionIds = result.steps.map((s) => s.actionId);
     expect(actionIds).toContain("__goto");
     expect(actionIds).toContain("harvest");
     expect(actionIds).toContain("eat");
   });
 
+  it("plans goto -> attack_bear -> pickup_bear_meat -> eat_bear_meat when the bear is distant", () => {
+    const em = new EntityManager();
+    const bear = em.spawn(
+      "bear",
+      { x: 10, y: 10 },
+      {
+        state: "idle",
+        hp: 20,
+        maxHp: 20,
+      },
+    );
+
+    const current: WorldState = new Map([["need_food_satisfied", false]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
+    const registry = makeRegistry();
+    const ctx = makeCtx({
+      currentState: current,
+      entityManager: em,
+      npcPosition: { x: 1, y: 1 },
+      rememberedTargets: [
+        {
+          targetType: "bear",
+          targetId: bear.id,
+          position: bear.position,
+          lastSeenTick: 999,
+          source: "observation",
+          availability: "danger",
+        },
+      ],
+    });
+
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps.map((step) => step.actionId)).toEqual([
+      "__goto",
+      "attack_bear",
+      "pickup_bear_meat",
+      "eat_bear_meat",
+    ]);
+  });
+
   it("plans goto -> drink when water is low and the pond is distant", () => {
     const em = new EntityManager();
-    em.spawn("water_source", { x: 9, y: 8 });
+    const water = em.spawn("water_source", { x: 9, y: 8 });
     const registry = makeRegistry();
     const current: WorldState = new Map([["need_water_satisfied", false]]);
     const goal: WorldState = new Map([["need_water_satisfied", true]]);
@@ -105,14 +178,23 @@ describe("GOAP Planner", () => {
       currentState: current,
       entityManager: em,
       npcPosition: { x: 1, y: 1 },
+      rememberedTargets: [
+        {
+          targetType: "water_source",
+          targetId: water.id,
+          position: water.position,
+          lastSeenTick: 999,
+          source: "observation",
+          availability: "available",
+        },
+      ],
       world: {
         isWalkable: (x, y) => !(x === 9 && y === 9) && !(x === 10 && y === 9),
       },
     });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.steps.map((step) => step.actionId)).toEqual([
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps.map((step) => step.actionId)).toEqual([
       "__goto",
       "drink",
     ]);
@@ -130,9 +212,8 @@ describe("GOAP Planner", () => {
     const registry = makeRegistry();
     const ctx = makeCtx({ currentState: current, entityManager: em });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.steps.some((s) => s.actionId === "drink")).toBe(true);
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps.some((s) => s.actionId === "drink")).toBe(true);
   });
 
   it("plans goto -> socialize when a player is available but far away", () => {
@@ -141,20 +222,20 @@ describe("GOAP Planner", () => {
     const goal: WorldState = new Map([["need_social_satisfied", true]]);
     const ctx = makeCtx({
       currentState: current,
-      otherPlayers: [
+      rememberedTargets: [
         {
-          id: "human_1",
-          x: 10,
-          y: 5,
-          state: "idle",
-          isNpc: false,
+          targetType: "player",
+          targetId: "human_1",
+          position: { x: 10, y: 5 },
+          lastSeenTick: 999,
+          source: "observation",
+          availability: "available",
         },
       ],
     });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.steps.map((step) => step.actionId)).toEqual([
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps.map((step) => step.actionId)).toEqual([
       "__goto",
       "socialize",
     ]);
@@ -162,7 +243,11 @@ describe("GOAP Planner", () => {
 
   it("plans goto -> pickup for distant ground items", () => {
     const em = new EntityManager();
-    em.spawn("ground_item", { x: 9, y: 5 }, { itemId: "raw_food", quantity: 1 });
+    const item = em.spawn(
+      "ground_item",
+      { x: 9, y: 5 },
+      { itemId: "raw_food", quantity: 1 },
+    );
 
     const registry = makeRegistry();
     const current: WorldState = new Map();
@@ -171,11 +256,20 @@ describe("GOAP Planner", () => {
       currentState: current,
       entityManager: em,
       npcPosition: { x: 5, y: 5 },
+      rememberedTargets: [
+        {
+          targetType: "ground_item",
+          targetId: item.id,
+          position: item.position,
+          lastSeenTick: 999,
+          source: "observation",
+          availability: "available",
+        },
+      ],
     });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.steps.map((step) => step.actionId)).toEqual([
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps.map((step) => step.actionId)).toEqual([
       "__goto",
       "pickup",
     ]);
@@ -192,10 +286,150 @@ describe("GOAP Planner", () => {
     const goal: WorldState = new Map([["need_food_satisfied", true]]);
     const ctx = makeCtx({ currentState: current });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
+    const result = requirePlan(plan(current, goal, registry, ctx));
     // Should pick just eat (cost 1) rather than harvest+eat (cost 3)
-    expect(result!.steps.length).toBe(1);
-    expect(result!.steps[0].actionId).toBe("eat");
+    expect(result.steps.length).toBe(1);
+    expect(result.steps[0].actionId).toBe("eat");
+  });
+
+  it("does not plan toward a distant target that has not been observed", () => {
+    const em = new EntityManager();
+    em.spawn("berry_bush", { x: 10, y: 10 }, { berries: 5 });
+
+    const registry = makeRegistry();
+    const current: WorldState = new Map([["need_food_satisfied", false]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
+    const ctx = makeCtx({
+      currentState: current,
+      entityManager: em,
+      npcPosition: { x: 1, y: 1 },
+      rememberedTargets: [],
+    });
+
+    expect(plan(current, goal, registry, ctx)).toBeNull();
+  });
+
+  it("avoids a recently failed berry bush when picking a goto target", () => {
+    const em = new EntityManager();
+    const bushA = em.spawn("berry_bush", { x: 6, y: 5 }, { berries: 0 });
+    const bushB = em.spawn("berry_bush", { x: 9, y: 5 }, { berries: 5 });
+
+    const current: WorldState = new Map([["need_food_satisfied", false]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
+    const registry = makeRegistry();
+    const ctx = makeCtx({
+      currentState: current,
+      entityManager: em,
+      npcPosition: { x: 5, y: 5 },
+      rememberedTargets: [
+        {
+          targetType: "berry_bush",
+          targetId: bushA.id,
+          position: bushA.position,
+          lastSeenTick: 999,
+          source: "observation",
+          availability: "depleted",
+        },
+        {
+          targetType: "berry_bush",
+          targetId: bushB.id,
+          position: bushB.position,
+          lastSeenTick: 999,
+          source: "observation",
+          availability: "available",
+        },
+      ],
+      recentActionHistory: [
+        {
+          actionId: "harvest",
+          outcome: "failed",
+          tick: 995,
+          outcomeTag: "resource_depleted",
+          targetType: "berry_bush",
+          targetId: bushA.id,
+          targetPosition: bushA.position,
+        },
+      ],
+    });
+
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps[0]).toEqual({
+      actionId: "__goto",
+      targetPosition: bushB.position,
+    });
+  });
+
+  it("uses recent failure memory to pick a different food plan", () => {
+    const em = new EntityManager();
+    const bush = em.spawn("berry_bush", { x: 5, y: 6 }, { berries: 0 });
+    em.spawn("bear", { x: 6, y: 5 }, { state: "idle", hp: 20, maxHp: 20 });
+
+    const current: WorldState = new Map([
+      ["near_berry_bush", true],
+      ["near_bear", true],
+      ["need_food_satisfied", false],
+    ]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
+    const registry = makeRegistry();
+    const ctx = makeCtx({
+      currentState: current,
+      entityManager: em,
+      recentActionHistory: [
+        {
+          actionId: "harvest",
+          outcome: "failed",
+          tick: 998,
+          outcomeTag: "resource_depleted",
+          targetType: "berry_bush",
+          targetId: bush.id,
+          targetPosition: bush.position,
+        },
+      ],
+    });
+
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps.map((step) => step.actionId)).toEqual([
+      "attack_bear",
+      "pickup_bear_meat",
+      "eat_bear_meat",
+    ]);
+  });
+
+  it("prefers a remembered available target over a remembered unavailable one", () => {
+    const em = new EntityManager();
+    const bushA = em.spawn("berry_bush", { x: 6, y: 5 }, { berries: 5 });
+    const bushB = em.spawn("berry_bush", { x: 7, y: 5 }, { berries: 5 });
+
+    const current: WorldState = new Map([["need_food_satisfied", false]]);
+    const goal: WorldState = new Map([["need_food_satisfied", true]]);
+    const registry = makeRegistry();
+    const ctx = makeCtx({
+      currentState: current,
+      entityManager: em,
+      rememberedTargets: [
+        {
+          targetType: "berry_bush",
+          targetId: bushA.id,
+          position: bushA.position,
+          lastSeenTick: 999,
+          source: "observation",
+          availability: "unavailable",
+        },
+        {
+          targetType: "berry_bush",
+          targetId: bushB.id,
+          position: bushB.position,
+          lastSeenTick: 999,
+          source: "observation",
+          availability: "available",
+        },
+      ],
+    });
+
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps[0]).toEqual({
+      actionId: "__goto",
+      targetPosition: bushB.position,
+    });
   });
 });

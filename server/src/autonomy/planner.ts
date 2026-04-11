@@ -11,15 +11,28 @@ import { GOTO_ACTION_ID } from "./actions/goto.js";
 import type { ActionRegistry } from "./registry.js";
 import type {
   ActionDefinition,
-  EntityManagerInterface,
   Plan,
   PlannedStep,
   PlanningContext,
   PredicateValue,
+  RememberedTarget,
   WorldState,
 } from "./types.js";
 
 const MAX_ITERATIONS = 200;
+const ACTION_FAILURE_MEMORY_WINDOW = 250;
+const ACTION_SUCCESS_MEMORY_WINDOW = 400;
+const TARGET_FAILURE_MEMORY_WINDOW = 400;
+const TARGET_SUCCESS_MEMORY_WINDOW = 500;
+const REMEMBERED_TARGET_WINDOW = 1200;
+const SAME_ACTION_FAILURE_PENALTY = 3;
+const SAME_ACTION_SUCCESS_BONUS = 0.35;
+const SAME_TARGET_FAILURE_PENALTY = 4;
+const SAME_TARGET_SUCCESS_BONUS = 0.75;
+const DANGER_MEMORY_BONUS = 0.5;
+const REMEMBERED_AVAILABLE_BONUS = 0.8;
+const REMEMBERED_UNAVAILABLE_PENALTY = 4.5;
+const REMEMBERED_DANGER_PENALTY = 5;
 
 interface PlannerNode {
   /** Predicates not yet satisfied by currentState. */
@@ -106,6 +119,7 @@ export function plan(
 
       const actionCost =
         typeof action.cost === "function" ? action.cost(ctx) : action.cost;
+      const memoryAdjustment = memoryAdjustedActionCost(action, ctx);
 
       const step: PlannedStep = { actionId: action.id };
 
@@ -126,7 +140,7 @@ export function plan(
         }
       }
 
-      const totalStepCost = actionCost + gotoCost;
+      const totalStepCost = actionCost + gotoCost + memoryAdjustment;
       const newSteps = [...node.steps, step];
       if (gotoStep) {
         newSteps.push(gotoStep);
@@ -163,31 +177,24 @@ function resolveProximityTarget(
   if (req.type === "entity") {
     // Special case: "player" means find nearest other player
     if (req.target === "player") {
-      let closestPlayer: Position | null = null;
-      let minDist = Number.POSITIVE_INFINITY;
-      for (const player of ctx.otherPlayers) {
-        if (player.state === "conversing") continue;
-        const dist = manhattanDistance(player, ctx.npcPosition);
-        if (dist < minDist) {
-          minDist = dist;
-          closestPlayer = { x: Math.round(player.x), y: Math.round(player.y) };
-        }
-      }
-      return closestPlayer;
-    }
-
-    if (req.target === "pickupable") {
-      return findClosestEntityPosition(
-        [
-          ...ctx.entityManager.getByType("bear_meat"),
-          ...ctx.entityManager.getByType("ground_item"),
-        ],
+      return findClosestRememberedTargetPosition(
+        action.id,
+        getKnownTargets(ctx, ["player"]),
         ctx,
       );
     }
 
-    return findClosestEntityPosition(
-      ctx.entityManager.getByType(req.target),
+    if (req.target === "pickupable") {
+      return findClosestRememberedTargetPosition(
+        action.id,
+        getKnownTargets(ctx, ["bear_meat", "ground_item"]),
+        ctx,
+      );
+    }
+
+    return findClosestRememberedTargetPosition(
+      action.id,
+      getKnownTargets(ctx, [req.target]),
       ctx,
     );
   }
@@ -195,29 +202,193 @@ function resolveProximityTarget(
   return null;
 }
 
-function findClosestEntityPosition(
-  entities: EntityManagerInterface["getByType"] extends (
-    ...args: never[]
-  ) => infer T
-    ? T
-    : never,
+function getKnownTargets(
+  ctx: PlanningContext,
+  targetTypes: string[],
+): RememberedTarget[] {
+  const currentTick = ctx.currentTick ?? 0;
+  return (ctx.rememberedTargets ?? []).filter((target) => {
+    if (!targetTypes.includes(target.targetType)) {
+      return false;
+    }
+    return currentTick - target.lastSeenTick <= REMEMBERED_TARGET_WINDOW;
+  });
+}
+
+function findClosestRememberedTargetPosition(
+  actionId: string,
+  targets: RememberedTarget[],
   ctx: PlanningContext,
 ): Position | null {
-  if (entities.length === 0) return null;
+  if (targets.length === 0) return null;
 
   let closest: Position | null = null;
-  let minDist = Number.POSITIVE_INFINITY;
-  for (const entity of entities) {
-    if (entity.destroyed) continue;
-    const target = toApproachPosition(entity.position, ctx);
-    if (!target) continue;
-    const dist = manhattanDistance(target, ctx.npcPosition);
-    if (dist < minDist) {
-      minDist = dist;
-      closest = target;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const target of targets) {
+    const approachPosition = toApproachPosition(target.position, ctx);
+    if (!approachPosition) continue;
+    const dist = manhattanDistance(approachPosition, ctx.npcPosition);
+    const score =
+      dist +
+      rememberedTargetAvailabilityAdjustment(target, ctx) +
+      memoryTargetAdjustmentForRememberedTarget(actionId, target, ctx);
+    if (score < bestScore) {
+      bestScore = score;
+      closest = approachPosition;
     }
   }
   return closest;
+}
+
+function memoryAdjustedActionCost(
+  action: ActionDefinition,
+  ctx: PlanningContext,
+): number {
+  let adjustment = 0;
+  const currentTick = ctx.currentTick ?? 0;
+  const recentActionHistory = ctx.recentActionHistory ?? [];
+
+  for (const entry of recentActionHistory) {
+    const age = Math.max(0, currentTick - entry.tick);
+    if (entry.actionId === action.id) {
+      if (entry.outcome === "failed" && age <= ACTION_FAILURE_MEMORY_WINDOW) {
+        adjustment +=
+          SAME_ACTION_FAILURE_PENALTY *
+          recencyWeight(age, ACTION_FAILURE_MEMORY_WINDOW);
+      }
+      if (
+        entry.outcome === "completed" &&
+        age <= ACTION_SUCCESS_MEMORY_WINDOW
+      ) {
+        adjustment -=
+          SAME_ACTION_SUCCESS_BONUS *
+          recencyWeight(age, ACTION_SUCCESS_MEMORY_WINDOW);
+      }
+    }
+
+    if (action.id === "flee" && entry.outcomeTag === "danger") {
+      adjustment -= DANGER_MEMORY_BONUS * recencyWeight(age, 200);
+    }
+  }
+
+  return adjustment;
+}
+
+function memoryTargetAdjustment(
+  actionId: string,
+  targetType: string,
+  targetId: string,
+  ctx: PlanningContext,
+): number {
+  let adjustment = 0;
+  const currentTick = ctx.currentTick ?? 0;
+  const recentActionHistory = ctx.recentActionHistory ?? [];
+
+  for (const entry of recentActionHistory) {
+    if (entry.targetType !== targetType || entry.targetId !== targetId) {
+      continue;
+    }
+
+    const age = Math.max(0, currentTick - entry.tick);
+    if (
+      entry.actionId === actionId &&
+      entry.outcome === "failed" &&
+      age <= TARGET_FAILURE_MEMORY_WINDOW
+    ) {
+      adjustment +=
+        SAME_TARGET_FAILURE_PENALTY *
+        recencyWeight(age, TARGET_FAILURE_MEMORY_WINDOW);
+    }
+
+    if (
+      entry.actionId === actionId &&
+      entry.outcome === "completed" &&
+      age <= TARGET_SUCCESS_MEMORY_WINDOW
+    ) {
+      adjustment -=
+        SAME_TARGET_SUCCESS_BONUS *
+        recencyWeight(age, TARGET_SUCCESS_MEMORY_WINDOW);
+    }
+
+    if (
+      (entry.outcomeTag === "resource_depleted" ||
+        entry.outcomeTag === "social_unavailable") &&
+      age <= TARGET_FAILURE_MEMORY_WINDOW
+    ) {
+      adjustment +=
+        SAME_TARGET_FAILURE_PENALTY *
+        recencyWeight(age, TARGET_FAILURE_MEMORY_WINDOW);
+    }
+
+    if (
+      (entry.outcomeTag === "resource_found" ||
+        entry.outcomeTag === "social_success") &&
+      age <= TARGET_SUCCESS_MEMORY_WINDOW
+    ) {
+      adjustment -=
+        SAME_TARGET_SUCCESS_BONUS *
+        recencyWeight(age, TARGET_SUCCESS_MEMORY_WINDOW);
+    }
+  }
+
+  return adjustment;
+}
+
+function recencyWeight(age: number, window: number): number {
+  if (age >= window) {
+    return 0;
+  }
+  return 1 - age / window;
+}
+
+function rememberedTargetAdjustment(
+  target: RememberedTarget,
+  ctx: PlanningContext,
+): number {
+  const currentTick = ctx.currentTick ?? 0;
+  const age = Math.max(0, currentTick - target.lastSeenTick);
+  const weight = recencyWeight(age, REMEMBERED_TARGET_WINDOW);
+  if (weight <= 0) {
+    return 0;
+  }
+
+  let adjustment = 0;
+  if (target.availability === "available") {
+    adjustment -= REMEMBERED_AVAILABLE_BONUS * weight;
+  }
+  if (
+    target.availability === "depleted" ||
+    target.availability === "unavailable"
+  ) {
+    adjustment += REMEMBERED_UNAVAILABLE_PENALTY * weight;
+  }
+  if (target.availability === "danger") {
+    adjustment += REMEMBERED_DANGER_PENALTY * weight;
+  }
+  return adjustment;
+}
+
+function rememberedTargetAvailabilityAdjustment(
+  target: RememberedTarget,
+  ctx: PlanningContext,
+): number {
+  return rememberedTargetAdjustment(target, ctx);
+}
+
+function memoryTargetAdjustmentForRememberedTarget(
+  actionId: string,
+  target: RememberedTarget,
+  ctx: PlanningContext,
+): number {
+  if (!target.targetId) {
+    return 0;
+  }
+  return memoryTargetAdjustment(
+    actionId,
+    target.targetType,
+    target.targetId,
+    ctx,
+  );
 }
 
 function toApproachPosition(

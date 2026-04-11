@@ -5,7 +5,11 @@ import { createInventory } from "../../src/autonomy/inventory.js";
 import { createDefaultNeeds } from "../../src/autonomy/needs.js";
 import { plan } from "../../src/autonomy/planner.js";
 import { ActionRegistry } from "../../src/autonomy/registry.js";
-import type { GameLoopInterface, PlanningContext, WorldState } from "../../src/autonomy/types.js";
+import type {
+  GameLoopInterface,
+  PlanningContext,
+  WorldState,
+} from "../../src/autonomy/types.js";
 import { snapshotWorldState } from "../../src/autonomy/worldState.js";
 
 function makeRegistry(): ActionRegistry {
@@ -17,17 +21,26 @@ function makeRegistry(): ActionRegistry {
 function makeCtx(overrides?: Partial<PlanningContext>): PlanningContext {
   return {
     npcId: "npc_1",
+    currentTick: 100,
     currentState: new Map(),
     world: { isWalkable: () => true },
     entityManager: new EntityManager(),
     npcPosition: { x: 5, y: 5 },
     otherPlayers: [],
+    recentActionHistory: [],
+    rememberedTargets: [],
     ...overrides,
   };
 }
 
 function makeMockGame(
-  players: Array<{ id: string; x: number; y: number; state: string; isNpc: boolean }>,
+  players: Array<{
+    id: string;
+    x: number;
+    y: number;
+    state: string;
+    isNpc: boolean;
+  }>,
 ): GameLoopInterface {
   return {
     currentTick: 100,
@@ -38,18 +51,22 @@ function makeMockGame(
   };
 }
 
+function requirePlan<T>(value: T | null): T {
+  if (value === null) {
+    throw new Error("expected plan");
+  }
+  return value;
+}
+
 describe("Phase 3: Hostiles & Flee", () => {
   it("plans flee when near hostile", () => {
     const registry = makeRegistry();
-    const current: WorldState = new Map([
-      ["near_hostile", true],
-    ]);
+    const current: WorldState = new Map([["near_hostile", true]]);
     const goal: WorldState = new Map([["escaped_hostile", true]]);
     const ctx = makeCtx({ currentState: current });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.steps.some((s) => s.actionId === "flee")).toBe(true);
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps.some((s) => s.actionId === "flee")).toBe(true);
   });
 
   it("world state detects nearby bears as hostile", () => {
@@ -122,15 +139,18 @@ describe("Phase 3: Pickup", () => {
     const goal: WorldState = new Map([["has_raw_food", true]]);
     const ctx = makeCtx({ currentState: current, entityManager: em });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.steps.some((s) => s.actionId === "pickup")).toBe(true);
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps.some((s) => s.actionId === "pickup")).toBe(true);
   });
 
-  it("registry has flee and pickup actions", () => {
+  it("registry has flee, pickup, and bear-hunt actions", () => {
     const registry = makeRegistry();
     expect(registry.get("flee")).toBeDefined();
     expect(registry.get("pickup")).toBeDefined();
-    expect(registry.getAll().length).toBe(9); // goto, harvest, cook, drink, eat, eat_cooked, socialize, flee, pickup
+    expect(registry.get("attack_bear")).toBeDefined();
+    expect(registry.get("pickup_bear_meat")).toBeDefined();
+    expect(registry.get("eat_bear_meat")).toBeDefined();
+    expect(registry.get("wander")).toBeDefined();
+    expect(registry.getAll().length).toBe(13); // goto, harvest, attack_bear, cook, drink, eat, eat_bear_meat, eat_cooked, socialize, flee, pickup, pickup_bear_meat, wander
   });
 });

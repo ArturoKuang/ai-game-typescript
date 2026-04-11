@@ -78,4 +78,34 @@ export const harvestAction: ActionDefinition = {
   onEnd(_ctx: ExecutionContext, _reason): void {
     // No cleanup
   },
+
+  describeOutcomeForMemory(_ctx, outcome, reason) {
+    const bushId = _ctx.actionState.get("bushId") as string | undefined;
+    const bush = bushId ? _ctx.entityManager.get(bushId) : undefined;
+    if (outcome === "completed") {
+      return {
+        content: "I harvested berries from a bush and gathered raw food.",
+        importance: 5,
+        hint: {
+          outcomeTag: "resource_found",
+          targetType: "berry_bush",
+          targetId: bushId,
+          targetPosition: bush?.position,
+        },
+      };
+    }
+    if (outcome === "failed") {
+      return {
+        content: `I tried to harvest berries but failed: ${reason ?? "there were no berries to gather"}.`,
+        importance: 5,
+        hint: {
+          outcomeTag: "resource_depleted",
+          targetType: "berry_bush",
+          targetId: bushId,
+          targetPosition: bush?.position,
+        },
+      };
+    }
+    return null;
+  },
 };

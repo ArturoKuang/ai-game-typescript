@@ -49,6 +49,22 @@ export const eatAction: ActionDefinition = {
   },
 
   onEnd(_ctx: ExecutionContext, _reason): void {},
+
+  describeOutcomeForMemory(_ctx, outcome, reason) {
+    if (outcome === "completed") {
+      return {
+        content: "I ate raw food and felt less hungry.",
+        importance: 4,
+      };
+    }
+    if (outcome === "failed") {
+      return {
+        content: `I tried to eat raw food but failed: ${reason ?? "the food was gone"}.`,
+        importance: 4,
+      };
+    }
+    return null;
+  },
 };
 
 /** Eat cooked food — preferred path, restores more hunger at lower cost. */
@@ -83,4 +99,20 @@ export const eatCookedAction: ActionDefinition = {
   },
 
   onEnd(_ctx: ExecutionContext, _reason): void {},
+
+  describeOutcomeForMemory(_ctx, outcome, reason) {
+    if (outcome === "completed") {
+      return {
+        content: "I ate cooked food and felt full.",
+        importance: 4,
+      };
+    }
+    if (outcome === "failed") {
+      return {
+        content: `I tried to eat cooked food but failed: ${reason ?? "the meal was gone"}.`,
+        importance: 4,
+      };
+    }
+    return null;
+  },
 };

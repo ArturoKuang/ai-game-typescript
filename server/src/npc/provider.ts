@@ -56,12 +56,22 @@ export type NpcGoalActor = Pick<
   "id" | "name" | "description" | "personality"
 >;
 
+export interface NpcGoalRememberedTarget {
+  type: string;
+  distance: number;
+  ageTicks: number;
+  source: "observation" | "action";
+  availability?: "available" | "depleted" | "danger" | "unavailable";
+  name?: string;
+}
+
 /** Input context for NPC goal selection in the autonomy system. */
 export interface NpcGoalRequest {
   npc: NpcGoalActor;
   needs: { health: number; food: number; water: number; social: number };
   inventory: Record<string, number>;
   nearbyEntities: { type: string; distance: number; name?: string }[];
+  rememberedTargets: NpcGoalRememberedTarget[];
   recentMemories: Memory[];
   availableGoals: { id: string; description: string }[];
   currentTick: number;
@@ -182,6 +192,16 @@ export function buildGoalSelectionPrompt(request: NpcGoalRequest): string {
     .map((e) => `- ${e.type} (${Math.round(e.distance)} tiles away)`)
     .join("\n");
 
+  const rememberedLines = request.rememberedTargets
+    .slice(0, 5)
+    .map((target) => {
+      const availability =
+        target.availability !== undefined ? `, ${target.availability}` : "";
+      const source = target.source === "action" ? "from action" : "observed";
+      return `- ${target.type} (${Math.round(target.distance)} tiles away, seen ${Math.round(target.ageTicks)} ticks ago, ${source}${availability})`;
+    })
+    .join("\n");
+
   const memoryLines = request.recentMemories
     .slice(0, 3)
     .map((m, i) => `${i + 1}. ${m.content}`)
@@ -204,6 +224,9 @@ export function buildGoalSelectionPrompt(request: NpcGoalRequest): string {
     "",
     "Nearby:",
     nearbyLines || "Nothing notable nearby.",
+    "",
+    "Remembered targets:",
+    rememberedLines || "No useful remembered targets.",
     "",
     "Recent memories:",
     memoryLines || "None.",

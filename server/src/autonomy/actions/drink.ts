@@ -52,4 +52,20 @@ export const drinkAction: ActionDefinition = {
   },
 
   onEnd(_ctx: ExecutionContext, _reason): void {},
+
+  describeOutcomeForMemory(_ctx, outcome, reason) {
+    if (outcome === "completed") {
+      return {
+        content: "I drank from the pond and quenched my thirst.",
+        importance: 4,
+      };
+    }
+    if (outcome === "failed") {
+      return {
+        content: `I tried to drink water but failed: ${reason ?? "I could not reach water"}.`,
+        importance: 4,
+      };
+    }
+    return null;
+  },
 };

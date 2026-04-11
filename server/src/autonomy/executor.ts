@@ -7,6 +7,7 @@
 import type { ActionRegistry } from "./registry.js";
 import type {
   ActionExecution,
+  ActionMemoryDraft,
   EntityManagerInterface,
   ExecutionContext,
   GameLoopInterface,
@@ -22,6 +23,7 @@ export interface ExecutorTransition {
   actionId: string;
   stepIndex: number;
   reason?: string;
+  memory?: ActionMemoryDraft;
 }
 
 export interface ExecutorTickResult {
@@ -150,6 +152,8 @@ export function executeAutonomyTick(
         type: "action_completed",
         actionId: step.actionId,
         stepIndex: state.currentStepIndex,
+        memory:
+          action.describeOutcomeForMemory?.(ctx, "completed") ?? undefined,
       });
       state.currentExecution = null;
       state.currentStepIndex++;
@@ -171,6 +175,9 @@ export function executeAutonomyTick(
         actionId: step.actionId,
         stepIndex: state.currentStepIndex,
         reason: result.reason,
+        memory:
+          action.describeOutcomeForMemory?.(ctx, "failed", result.reason) ??
+          undefined,
       });
       clearCurrentPlanState(state);
       return {
@@ -218,7 +225,8 @@ function buildExecutionContext(
   game: GameLoopInterface,
   entityManager: EntityManagerInterface,
   targetPosition?: { x: number; y: number },
-  actionState: Map<string, unknown> = state.currentExecution?.actionState ?? new Map(),
+  actionState: Map<string, unknown> = state.currentExecution?.actionState ??
+    new Map(),
 ): ExecutionContext {
   return {
     npcId,

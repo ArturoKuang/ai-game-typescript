@@ -1,3 +1,4 @@
+import type { NpcInviteDecisionProvider } from "../engine/conversation.js";
 /**
  * Core types for the NPC autonomy system (GOAP-based).
  *
@@ -5,8 +6,12 @@
  * The autonomy system reads Player state and drives behavior by
  * enqueuing commands on the GameLoop.
  */
-import type { Command, GameEvent, Position, TickResult } from "../engine/types.js";
-import type { NpcInviteDecisionProvider } from "../engine/conversation.js";
+import type {
+  Command,
+  GameEvent,
+  Position,
+  TickResult,
+} from "../engine/types.js";
 
 // ---------------------------------------------------------------------------
 // Needs / Drives
@@ -33,19 +38,19 @@ export interface NeedConfig {
 
 export const DEFAULT_NEED_CONFIGS: Record<NeedType, NeedConfig> = {
   food: {
-    decayPerTick: 0.008,
+    decayPerTick: 0.006,
     urgencyThreshold: 40,
     criticalThreshold: 15,
     initialValue: 80,
   },
   water: {
-    decayPerTick: 0.012,
+    decayPerTick: 0.009,
     urgencyThreshold: 45,
     criticalThreshold: 20,
     initialValue: 85,
   },
   social: {
-    decayPerTick: 0.01,
+    decayPerTick: 0.014,
     urgencyThreshold: 35,
     criticalThreshold: 15,
     initialValue: 70,
@@ -65,6 +70,7 @@ export type WorldState = Map<string, PredicateValue>;
 
 export interface PlanningContext {
   npcId: string;
+  currentTick: number;
   currentState: WorldState;
   world: {
     isWalkable(x: number, y: number): boolean;
@@ -78,6 +84,8 @@ export interface PlanningContext {
     state: string;
     isNpc: boolean;
   }>;
+  recentActionHistory: ActionHistoryEntry[];
+  rememberedTargets: RememberedTarget[];
 }
 
 export interface ExecutionContext {
@@ -95,6 +103,24 @@ export type ActionTickResult =
   | { status: "running" }
   | { status: "completed" }
   | { status: "failed"; reason: string };
+
+export interface ActionMemoryDraft {
+  content: string;
+  importance: number;
+  hint?: ActionMemoryHint;
+}
+
+export interface ActionMemoryHint {
+  outcomeTag?:
+    | "resource_found"
+    | "resource_depleted"
+    | "social_success"
+    | "social_unavailable"
+    | "danger";
+  targetType?: string;
+  targetId?: string;
+  targetPosition?: Position;
+}
 
 export interface ActionDefinition {
   id: string;
@@ -121,6 +147,11 @@ export interface ActionDefinition {
     ctx: ExecutionContext,
     reason: "completed" | "failed" | "interrupted",
   ): void;
+  describeOutcomeForMemory?(
+    ctx: ExecutionContext,
+    outcome: "completed" | "failed" | "interrupted",
+    reason?: string,
+  ): ActionMemoryDraft | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,9 +201,32 @@ export interface ActionExecution {
   status: "running" | "completed" | "failed" | "interrupted";
 }
 
+export interface ActionHistoryEntry {
+  actionId: string;
+  outcome: "completed" | "failed" | "interrupted";
+  tick: number;
+  reason?: string;
+  outcomeTag?: ActionMemoryHint["outcomeTag"];
+  targetType?: string;
+  targetId?: string;
+  targetPosition?: Position;
+}
+
+export interface RememberedTarget {
+  targetType: string;
+  targetId?: string;
+  position: Position;
+  lastSeenTick: number;
+  source: "observation" | "action";
+  availability?: "available" | "depleted" | "danger" | "unavailable";
+}
+
 export interface NpcAutonomyState {
   needs: NpcNeeds;
   inventory: NpcInventory;
+  recentActionHistory: ActionHistoryEntry[];
+  rememberedTargets: RememberedTarget[];
+  lastObservationTickByKey: Map<string, number>;
   currentPlan: Plan | null;
   currentPlanSource: PlanSource | null;
   currentPlanReasoning: string | null;
@@ -284,6 +338,8 @@ export interface AutonomyRuntimePlayer extends AutonomyPlayerView {
  */
 export interface GameLoopInterface {
   readonly currentTick: number;
+  readonly world: AutonomyWorldInterface;
+  readonly rng: AutonomyRngInterface;
   enqueue(command: Command): void;
   getPlayer(id: string): AutonomyPlayerView | undefined;
   getPlayers(): AutonomyPlayerView[];
@@ -308,8 +364,6 @@ export interface AutonomyRngInterface {
 export interface AutonomyGameRuntime extends GameLoopInterface {
   getPlayer(id: string): AutonomyRuntimePlayer | undefined;
   getPlayers(): AutonomyRuntimePlayer[];
-  readonly world: AutonomyWorldInterface;
-  readonly rng: AutonomyRngInterface;
   emitEvent(event: GameEvent): void;
   on(type: string, handler: (event: GameEvent) => void): void;
   onAfterTick(callback: (result: TickResult) => void): void;

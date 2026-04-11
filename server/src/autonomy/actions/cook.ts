@@ -71,4 +71,20 @@ export const cookAction: ActionDefinition = {
   onEnd(_ctx: ExecutionContext, _reason): void {
     // No cleanup
   },
+
+  describeOutcomeForMemory(_ctx, outcome, reason) {
+    if (outcome === "completed") {
+      return {
+        content: "I cooked raw food at a campfire and made cooked food.",
+        importance: 4,
+      };
+    }
+    if (outcome === "failed") {
+      return {
+        content: `I tried to cook food at a campfire but failed: ${reason ?? "something went wrong"}.`,
+        importance: 4,
+      };
+    }
+    return null;
+  },
 };

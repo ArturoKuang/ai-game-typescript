@@ -132,4 +132,28 @@ export const fleeAction: ActionDefinition = {
   onEnd(_ctx: ExecutionContext, _reason): void {
     // No cleanup
   },
+
+  describeOutcomeForMemory(_ctx, outcome, reason) {
+    if (outcome === "completed") {
+      return {
+        content: "A bear was nearby, so I fled to safer ground.",
+        importance: 6,
+        hint: {
+          outcomeTag: "danger",
+          targetType: "bear",
+        },
+      };
+    }
+    if (outcome === "failed") {
+      return {
+        content: `I tried to flee from danger but failed: ${reason ?? "I could not get clear"}.`,
+        importance: 6,
+        hint: {
+          outcomeTag: "danger",
+          targetType: "bear",
+        },
+      };
+    }
+    return null;
+  },
 };

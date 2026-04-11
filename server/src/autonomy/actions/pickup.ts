@@ -41,6 +41,7 @@ export const pickupAction: ActionDefinition = {
 
     if (!pickupable) return "No items nearby to pick up";
     ctx.actionState.set("targetEntityId", pickupable.id);
+    ctx.actionState.set("targetEntityType", pickupable.type);
     return null;
   },
 
@@ -77,5 +78,39 @@ export const pickupAction: ActionDefinition = {
 
   onEnd(_ctx: ExecutionContext, _reason): void {
     // No cleanup
+  },
+
+  describeOutcomeForMemory(ctx, outcome, reason) {
+    const targetType =
+      (ctx.actionState.get("targetEntityType") as string | undefined) ?? "item";
+    const targetId = ctx.actionState.get("targetEntityId") as
+      | string
+      | undefined;
+    const targetEntity = targetId ? ctx.entityManager.get(targetId) : undefined;
+    if (outcome === "completed") {
+      return {
+        content: `I picked up a nearby ${targetType}.`,
+        importance: 4,
+        hint: {
+          outcomeTag: "resource_found",
+          targetType,
+          targetId,
+          targetPosition: targetEntity?.position,
+        },
+      };
+    }
+    if (outcome === "failed") {
+      return {
+        content: `I tried to pick up a nearby ${targetType} but failed: ${reason ?? "it was gone"}.`,
+        importance: 4,
+        hint: {
+          outcomeTag: "resource_depleted",
+          targetType,
+          targetId,
+          targetPosition: targetEntity?.position,
+        },
+      };
+    }
+    return null;
   },
 };

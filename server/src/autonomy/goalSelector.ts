@@ -20,7 +20,7 @@ const NEED_TO_GOAL: Record<
 > = {
   food: {
     goalId: "satisfy_food",
-    description: "Find food to eat (hunger is urgent)",
+    description: "Find food to eat (berries, meat, or other edible supplies)",
     predicate: ["need_food_satisfied", true],
   },
   water: {

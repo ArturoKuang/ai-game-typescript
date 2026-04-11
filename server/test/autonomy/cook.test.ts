@@ -21,9 +21,15 @@ function makeRegistry(): ActionRegistry {
 }
 
 function makeMockGame(
-  players: Array<{ id: string; x: number; y: number; state: string; isNpc: boolean }>,
+  players: Array<{
+    id: string;
+    x: number;
+    y: number;
+    state: string;
+    isNpc: boolean;
+  }>,
   tick = 100,
-): GameLoopInterface {
+): GameLoopInterface & { currentTick: number } {
   return {
     currentTick: tick,
     enqueue: () => {},
@@ -33,14 +39,24 @@ function makeMockGame(
   };
 }
 
+function requirePlan<T>(value: T | null): T {
+  if (value === null) {
+    throw new Error("expected plan");
+  }
+  return value;
+}
+
 function makeCtx(overrides?: Partial<PlanningContext>): PlanningContext {
   return {
     npcId: "npc_1",
+    currentTick: 100,
     currentState: new Map(),
     world: { isWalkable: () => true },
     entityManager: new EntityManager(),
     npcPosition: { x: 5, y: 5 },
     otherPlayers: [],
+    recentActionHistory: [],
+    rememberedTargets: [],
     ...overrides,
   };
 }
@@ -60,9 +76,8 @@ describe("Cook Action", () => {
     const registry = makeRegistry();
     const ctx = makeCtx({ currentState: current, entityManager: em });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    const actionIds = result!.steps.map((s) => s.actionId);
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    const actionIds = result.steps.map((s) => s.actionId);
 
     // Should choose the cooking path: harvest -> cook -> eat_cooked
     // because eat_cooked (cost 1) + cook (cost 2) + harvest (cost 2) = 5
@@ -73,7 +88,8 @@ describe("Cook Action", () => {
 
     // The planner should find a valid plan that satisfies hunger
     // Either cook->eat_cooked or just eat (raw)
-    const hasEat = actionIds.includes("eat") || actionIds.includes("eat_cooked");
+    const hasEat =
+      actionIds.includes("eat") || actionIds.includes("eat_cooked");
     expect(hasEat).toBe(true);
   });
 
@@ -90,9 +106,8 @@ describe("Cook Action", () => {
     const registry = makeRegistry();
     const ctx = makeCtx({ currentState: current, entityManager: em });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    const actionIds = result!.steps.map((s) => s.actionId);
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    const actionIds = result.steps.map((s) => s.actionId);
 
     // With raw_food already in hand:
     // - eat raw: cost 2
@@ -111,11 +126,10 @@ describe("Cook Action", () => {
     const registry = makeRegistry();
     const ctx = makeCtx({ currentState: current });
 
-    const result = plan(current, goal, registry, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.steps).toHaveLength(1);
-    expect(result!.steps[0].actionId).toBe("eat_cooked");
-    expect(result!.totalCost).toBe(1); // cheaper than raw eat (2)
+    const result = requirePlan(plan(current, goal, registry, ctx));
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0].actionId).toBe("eat_cooked");
+    expect(result.totalCost).toBe(1); // cheaper than raw eat (2)
   });
 
   it("executes cook action converting raw_food to cooked_food", () => {
@@ -136,12 +150,18 @@ describe("Cook Action", () => {
     const state: NpcAutonomyState = {
       needs,
       inventory: inv,
+      recentActionHistory: [],
+      rememberedTargets: [],
+      lastObservationTickByKey: new Map(),
       currentPlan: cookPlan,
+      currentPlanSource: null,
+      currentPlanReasoning: null,
       currentStepIndex: 0,
       currentExecution: null,
       lastPlanTick: 0,
       lastGoalSelectionTick: 0,
       consecutivePlanFailures: 0,
+      goalSelectionStartedAtTick: null,
     };
 
     const registry = makeRegistry();
@@ -151,14 +171,14 @@ describe("Cook Action", () => {
     );
 
     // Tick through cook duration (60 ticks)
-    let result;
+    let result: ReturnType<typeof executeAutonomyTick> | null = null;
     for (let i = 0; i < 65; i++) {
-      (game as any).currentTick = 100 + i;
+      game.currentTick = 100 + i;
       result = executeAutonomyTick("npc_1", state, registry, game, em);
       if (result.planCompleted || result.planFailed) break;
     }
 
-    expect(result!.planCompleted).toBe(true);
+    expect(result?.planCompleted).toBe(true);
     expect(inv.get("raw_food")).toBeUndefined(); // consumed
     expect(inv.get("cooked_food")).toBe(1); // produced
   });
@@ -180,12 +200,18 @@ describe("Cook Action", () => {
     const stateCooked: NpcAutonomyState = {
       needs: needsCooked,
       inventory: invCooked,
+      recentActionHistory: [],
+      rememberedTargets: [],
+      lastObservationTickByKey: new Map(),
       currentPlan: cookedPlan,
+      currentPlanSource: null,
+      currentPlanReasoning: null,
       currentStepIndex: 0,
       currentExecution: null,
       lastPlanTick: 0,
       lastGoalSelectionTick: 0,
       consecutivePlanFailures: 0,
+      goalSelectionStartedAtTick: null,
     };
 
     // Test raw food
@@ -204,23 +230,29 @@ describe("Cook Action", () => {
     const stateRaw: NpcAutonomyState = {
       needs: needsRaw,
       inventory: invRaw,
+      recentActionHistory: [],
+      rememberedTargets: [],
+      lastObservationTickByKey: new Map(),
       currentPlan: rawPlan,
+      currentPlanSource: null,
+      currentPlanReasoning: null,
       currentStepIndex: 0,
       currentExecution: null,
       lastPlanTick: 0,
       lastGoalSelectionTick: 0,
       consecutivePlanFailures: 0,
+      goalSelectionStartedAtTick: null,
     };
 
     const registry = makeRegistry();
     const em = new EntityManager();
-    const game = makeMockGame(
-      [{ id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true }],
-    );
+    const game = makeMockGame([
+      { id: "npc_1", x: 5, y: 5, state: "idle", isNpc: true },
+    ]);
 
     // Execute both
     for (let i = 0; i < 25; i++) {
-      (game as any).currentTick = 100 + i;
+      game.currentTick = 100 + i;
       executeAutonomyTick("npc_1", stateCooked, registry, game, em);
       executeAutonomyTick("npc_1", stateRaw, registry, game, em);
     }
