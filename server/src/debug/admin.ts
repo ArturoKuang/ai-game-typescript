@@ -1,12 +1,19 @@
 import type { Pool } from "pg";
+import type { NpcAutonomyManager } from "../autonomy/manager.js";
+import type {
+  NpcAutonomyDebugState,
+  SurvivalSnapshot,
+} from "../autonomy/types.js";
 import type { Conversation, Message } from "../engine/conversation.js";
-import type { GameLoop } from "../engine/gameLoop.js";
+import type { GameLoop, GameMode } from "../engine/gameLoop.js";
 import type {
   Command,
+  MapData,
   Orientation,
   Player,
   Position,
 } from "../engine/types.js";
+import { snapshotMapData } from "../stateSnapshots.js";
 import type { ScenarioDef } from "./scenarios.js";
 
 export class DebugRouteError extends Error {
@@ -35,6 +42,7 @@ export class DebugGameAdmin {
   constructor(
     private readonly game: GameLoop,
     private readonly pool?: Pool,
+    private readonly autonomyManager?: NpcAutonomyManager,
   ) {}
 
   async spawnPlayer(params: {
@@ -113,12 +121,10 @@ export class DebugGameAdmin {
     playerCount: number;
     tick: number;
   }> {
-    // Scenario loading is intentionally admin-only: it resets and respawns a
-    // whole fixture rather than replaying one player command at a time.
-    for (const player of this.game.getPlayers()) {
-      this.game.removePlayer(player.id);
-    }
-
+    const mapData = this.snapshotWorld();
+    this.game.reset();
+    this.autonomyManager?.reset();
+    this.game.loadWorld(mapData);
     scenario.setup(this.game);
 
     for (const player of this.game.getPlayers()) {
@@ -131,6 +137,43 @@ export class DebugGameAdmin {
       playerCount: this.game.playerCount,
       tick: this.game.currentTick,
     };
+  }
+
+  resetSimulation(): { ok: true; tick: number; playerCount: number } {
+    const mapData = this.snapshotWorld();
+    this.game.reset();
+    this.autonomyManager?.reset();
+    this.game.loadWorld(mapData);
+    return {
+      ok: true,
+      tick: this.game.currentTick,
+      playerCount: this.game.playerCount,
+    };
+  }
+
+  setSimulationMode(params: {
+    mode: GameMode;
+    tickRate?: number;
+  }): { mode: GameMode; tickRate: number } {
+    this.game.mode = params.mode;
+    if (typeof params.tickRate === "number") {
+      this.game.tickRate = params.tickRate;
+    }
+    return { mode: this.game.mode, tickRate: this.game.tickRate };
+  }
+
+  setNpcNeeds(
+    npcId: string,
+    overrides: Partial<SurvivalSnapshot>,
+  ): NpcAutonomyDebugState {
+    if (!this.autonomyManager) {
+      throw new DebugRouteError(503, "Autonomy manager unavailable");
+    }
+    try {
+      return this.autonomyManager.setDebugNeeds(npcId, overrides);
+    } catch (error) {
+      throw new DebugRouteError(404, errorMessage(error));
+    }
   }
 
   startConversation(player1Id: string, player2Id: string): Conversation {
@@ -237,6 +280,10 @@ export class DebugGameAdmin {
   private enqueueAndFlush(command: Command): void {
     this.game.enqueue(command);
     this.game.processPendingCommands();
+  }
+
+  private snapshotWorld(): MapData {
+    return snapshotMapData(this.game.world);
   }
 }
 

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { type Server, createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import express, { type Express } from "express";
+import express, { type Express, type RequestHandler } from "express";
 import type { Pool } from "pg";
 import { EntityManager } from "../autonomy/entityManager.js";
 import { NpcAutonomyManager } from "../autonomy/manager.js";
@@ -48,6 +48,7 @@ interface BaseRuntimeServices {
   port: number;
   serverRoot: string;
   game: GameLoop;
+  debugAccess: DebugAccessConfig;
 }
 
 interface NpcServices {
@@ -69,6 +70,11 @@ interface PersistedDeadNpcServices {
   deadNpcIds: Set<string>;
 }
 
+interface DebugAccessConfig {
+  enabled: boolean;
+  token: string | null;
+}
+
 const DEFAULT_BOOT_NPC_COUNT = 4;
 
 export interface GameServerRuntime {
@@ -86,6 +92,7 @@ export interface GameServerRuntime {
   wsServer: GameWebSocketServer;
   claudeCommand: string;
   resolvedClaudeCommand: string | null;
+  debugAccess: DebugAccessConfig;
 }
 
 export async function createGameServerRuntime(options?: {
@@ -112,6 +119,7 @@ export async function createGameServerRuntime(options?: {
       memoryManager,
       npcStore,
       persistedDeadNpcs,
+      debugAccess: base.debugAccess,
     });
 
   initializeWorldActors(base.game, npcStore, deadNpcIds);
@@ -127,6 +135,7 @@ export async function createGameServerRuntime(options?: {
     provider,
     claudeCommand,
     resolvedClaudeCommand,
+    debugAccess: base.debugAccess,
   });
 
   base.game.start();
@@ -146,6 +155,7 @@ export async function createGameServerRuntime(options?: {
     wsServer,
     claudeCommand,
     resolvedClaudeCommand,
+    debugAccess: base.debugAccess,
   };
 }
 
@@ -177,9 +187,10 @@ function createBaseRuntime(
   const app = express();
   const server = createServer(app);
   const port = Number.parseInt(env.PORT || "3001", 10);
+  const debugAccess = resolveDebugAccess(env);
   const game = new GameLoop({ mode: "realtime", tickRate: 20 });
   app.use(express.json());
-  return { app, server, port, serverRoot, game };
+  return { app, server, port, serverRoot, game, debugAccess };
 }
 
 function resolveServerRoot(moduleUrl: string): string {
@@ -275,12 +286,18 @@ function createWebSocketRuntime(
   entityManager: EntityManager,
   autonomyManager: NpcAutonomyManager,
   bearManager: BearManager,
+  provider: ResilientNpcProvider,
+  debugAccess: DebugAccessConfig,
 ): GameWebSocketServer {
   const wsServer = new GameWebSocketServer(
     server,
     game,
     entityManager,
     autonomyManager,
+    {
+      debugToken: debugAccess.token,
+      providerDiagnostics: provider,
+    },
   );
   wsServer.setBearManager(bearManager);
   return wsServer;
@@ -294,6 +311,7 @@ function createGameplayRuntime(options: {
   memoryManager: MemoryManager;
   npcStore: NpcPersistenceStore;
   persistedDeadNpcs: Awaited<ReturnType<NpcPersistenceStore["getDeadNpcs"]>>;
+  debugAccess: DebugAccessConfig;
 }): GameplayServices {
   const entityManager = createEntityManager(options.mapData);
   const autonomyManager = new NpcAutonomyManager(options.game, entityManager, {
@@ -309,6 +327,8 @@ function createGameplayRuntime(options: {
     entityManager,
     autonomyManager,
     bearManager,
+    options.provider,
+    options.debugAccess,
   );
 
   return {
@@ -388,6 +408,7 @@ function registerHttpRoutes(
     provider: ResilientNpcProvider;
     claudeCommand: string;
     resolvedClaudeCommand: string | null;
+    debugAccess: DebugAccessConfig;
   },
 ): void {
   app.get("/health", async (_req, res) => {
@@ -408,18 +429,21 @@ function registerHttpRoutes(
     });
   });
 
-  app.use(
-    "/api/debug",
-    createDebugRouter(
-      runtime.game,
-      runtime.memoryManager,
-      runtime.pool,
-      runtime.autonomyManager,
-      runtime.bearManager,
-      runtime.wsServer,
-      runtime.provider,
-    ),
-  );
+  if (runtime.debugAccess.enabled) {
+    app.use(
+      "/api/debug",
+      createDebugAuthMiddleware(runtime.debugAccess.token),
+      createDebugRouter(
+        runtime.game,
+        runtime.memoryManager,
+        runtime.pool,
+        runtime.autonomyManager,
+        runtime.bearManager,
+        runtime.wsServer,
+        runtime.provider,
+      ),
+    );
+  }
 
   app.get("/data/map.json", (_req, res) => {
     try {
@@ -429,6 +453,36 @@ function registerHttpRoutes(
       res.status(404).json({ error: "Map not found" });
     }
   });
+}
+
+function createDebugAuthMiddleware(token: string | null): RequestHandler {
+  if (!token) {
+    return (_req, _res, next) => next();
+  }
+
+  return (req, res, next) => {
+    const headerToken =
+      typeof req.header("x-debug-token") === "string"
+        ? req.header("x-debug-token")
+        : undefined;
+    const authHeader =
+      typeof req.header("authorization") === "string"
+        ? req.header("authorization")
+        : undefined;
+    const bearerToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice("Bearer ".length)
+      : undefined;
+    const queryToken =
+      typeof req.query.debugToken === "string"
+        ? req.query.debugToken
+        : undefined;
+    const provided = headerToken ?? bearerToken ?? queryToken ?? null;
+    if (provided !== token) {
+      res.status(401).json({ error: "Debug access denied" });
+      return;
+    }
+    next();
+  };
 }
 
 async function createPersistence(
@@ -497,6 +551,16 @@ async function resolvePool(env: NodeJS.ProcessEnv): Promise<Pool | undefined> {
 
   await runMigrations(candidatePool);
   return candidatePool;
+}
+
+function resolveDebugAccess(env: NodeJS.ProcessEnv): DebugAccessConfig {
+  const enabledSetting = env.DEBUG_API_ENABLED?.trim().toLowerCase();
+  const enabled =
+    enabledSetting === "true" ||
+    enabledSetting === "1" ||
+    (enabledSetting === undefined && env.NODE_ENV !== "production");
+  const token = env.DEBUG_API_TOKEN?.trim() || null;
+  return { enabled, token };
 }
 
 function resolveMapPath(serverRoot: string): string {

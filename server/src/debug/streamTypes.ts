@@ -2,13 +2,17 @@ import type {
   NpcAutonomyDebugPlan,
   NpcAutonomyDebugState,
 } from "../autonomy/types.js";
+import type { ConversationRoom } from "../conversations/domain/types.js";
 import type { Conversation } from "../engine/conversation.js";
 import type { PublicPlayer } from "../network/publicPlayer.js";
+import type { ProviderDiagnosticsSnapshot } from "../npc/resilientProvider.js";
+import type { DebugWorldEntityData } from "../stateSnapshots.js";
 
 export type DebugFeedSeverity = "info" | "warning" | "error";
 
 export type DebugFeedEventType =
   | "conversation_started"
+  | "conversation_walking"
   | "conversation_active"
   | "conversation_ended"
   | "conversation_message"
@@ -20,11 +24,7 @@ export type DebugFeedEventType =
   | "action_failed"
   | "error";
 
-export type DebugFeedSubjectType =
-  | "conversation"
-  | "npc"
-  | "player"
-  | "system";
+export type DebugFeedSubjectType = "conversation" | "npc" | "player" | "system";
 
 export interface DebugFeedEventPayload {
   tick: number;
@@ -57,11 +57,39 @@ export interface DebugActionDefinition {
   };
 }
 
+export interface DebugClientSummary {
+  clientId: string;
+  playerId: string | null;
+  label: string;
+  role: "player" | "dashboard" | "spectator";
+  connectedAt: string;
+  debugSubscribed: boolean;
+  canCaptureScreenshot: boolean;
+}
+
+export interface DebugSystemSnapshot {
+  mode: "stepped" | "realtime";
+  tickRate: number;
+  world: {
+    width: number;
+    height: number;
+  };
+  entities: DebugWorldEntityData[];
+  connectedClients: DebugClientSummary[];
+  providerDiagnostics?: ProviderDiagnosticsSnapshot;
+  lastScreenshot?: {
+    clientId: string;
+    capturedAt: string;
+  };
+}
+
 export interface DebugDashboardBootstrap {
   tick: number;
   players: PublicPlayer[];
   conversations: Conversation[];
+  conversationRooms: ConversationRoom[];
   autonomyStates: Record<string, NpcAutonomyDebugState>;
   recentEvents: DebugFeedEvent[];
   actionDefinitions: Record<string, DebugActionDefinition>;
+  system: DebugSystemSnapshot;
 }

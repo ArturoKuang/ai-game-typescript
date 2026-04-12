@@ -236,6 +236,7 @@ export interface NpcAutonomyState {
   lastGoalSelectionTick: number;
   consecutivePlanFailures: number;
   goalSelectionStartedAtTick: number | null;
+  planHistory: NpcAutonomyDebugPlanHistoryEntry[];
 }
 
 export interface NpcAutonomyDebugPlanStep {
@@ -252,6 +253,18 @@ export interface NpcAutonomyDebugPlan {
   createdAtTick: number;
   source: PlanSource;
   llmGenerated: boolean;
+  reasoning?: string;
+  steps: NpcAutonomyDebugPlanStep[];
+}
+
+export interface NpcAutonomyDebugPlanHistoryEntry {
+  goalId: string;
+  source: PlanSource;
+  startedTick: number;
+  endedTick: number | null;
+  outcome: "running" | "completed" | "failed" | "interrupted";
+  failReason?: string;
+  message: string;
   reasoning?: string;
   steps: NpcAutonomyDebugPlanStep[];
 }
@@ -287,6 +300,7 @@ export interface NpcAutonomyDebugState {
   consecutivePlanFailures: number;
   goalSelectionInFlight: boolean;
   goalSelectionStartedAtTick: number | null;
+  planHistory: NpcAutonomyDebugPlanHistoryEntry[];
 }
 
 // ---------------------------------------------------------------------------

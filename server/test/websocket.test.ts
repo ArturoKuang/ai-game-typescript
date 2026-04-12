@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { createServer, type Server } from "node:http";
+import { type Server, createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -19,7 +19,10 @@ interface SocketHarness {
   messages: ServerMessage[];
 }
 
-async function createHarnesses(count: number, url: string): Promise<SocketHarness[]> {
+async function createHarnesses(
+  count: number,
+  url: string,
+): Promise<SocketHarness[]> {
   const harnesses = await Promise.all(
     Array.from({ length: count }, async () => {
       const ws = new WebSocket(url);
@@ -200,7 +203,9 @@ describe("WebSocket protocol", () => {
     wsServer = new GameWebSocketServer(server, game);
     game.on("*", (event) => wsServer!.broadcastGameEvent(event));
 
-    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server!.listen(0, "127.0.0.1", resolve),
+    );
     const port = (server.address() as AddressInfo).port;
     sockets = await createHarnesses(1, `ws://127.0.0.1:${port}`);
 
@@ -209,7 +214,10 @@ describe("WebSocket protocol", () => {
       messages,
       (message) => message.type === "state",
     )) as Extract<ServerMessage, { type: "state" }>;
-    const snapshotPlayer = stateMessage.data.players[0] as Record<string, unknown>;
+    const snapshotPlayer = stateMessage.data.players[0] as Record<
+      string,
+      unknown
+    >;
     assertNoInternalPlayerFields(snapshotPlayer);
 
     sendMessage(ws, {
@@ -224,13 +232,86 @@ describe("WebSocket protocol", () => {
     assertNoInternalPlayerFields(joinedMessage.data as Record<string, unknown>);
   });
 
+  it("requires the debug token before subscribing to the dashboard stream", async () => {
+    try {
+      const probe = createServer();
+      await new Promise<void>((resolve, reject) => {
+        probe.once("error", reject);
+        probe.listen(0, "127.0.0.1", () => {
+          probe.close();
+          resolve();
+        });
+      });
+    } catch {
+      console.log("Skipping: socket binding not permitted in this environment");
+      return;
+    }
+
+    game = new GameLoop({ mode: "stepped", tickRate: 20 });
+    game.loadWorld({
+      width: 5,
+      height: 5,
+      tiles: [
+        ["wall", "wall", "wall", "wall", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "wall", "wall", "wall", "wall"],
+      ],
+      activities: [],
+      spawnPoints: [{ x: 1, y: 1 }],
+    });
+
+    server = createServer();
+    wsServer = new GameWebSocketServer(server, game, undefined, undefined, {
+      debugToken: "secret-token",
+    });
+    game.on("*", (event) => wsServer!.broadcastGameEvent(event));
+
+    await new Promise<void>((resolve) =>
+      server!.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (server.address() as AddressInfo).port;
+    sockets = await createHarnesses(1, `ws://127.0.0.1:${port}`);
+
+    const [dashboard] = sockets;
+    sendMessage(dashboard.ws, { type: "subscribe_debug" });
+
+    const denied = (await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "error" &&
+        message.data.message === "Debug subscription denied",
+    )) as Extract<ServerMessage, { type: "error" }>;
+    expect(denied.data.message).toBe("Debug subscription denied");
+
+    await waitForSilence();
+    expect(
+      dashboard.messages.some((message) => message.type === "debug_bootstrap"),
+    ).toBe(false);
+
+    sendMessage(dashboard.ws, {
+      type: "subscribe_debug",
+      data: { token: "secret-token" },
+    });
+    const bootstrap = (await waitForMessage(
+      dashboard.messages,
+      (message) => message.type === "debug_bootstrap",
+    )) as Extract<ServerMessage, { type: "debug_bootstrap" }>;
+    expect(bootstrap.data.system.mode).toBe("stepped");
+    expect(bootstrap.data.system.tickRate).toBe(20);
+  });
+
   it("delivers conversation updates and messages only to participants", async () => {
     // Skip in environments where socket binding is blocked (e.g., sandbox)
     try {
       const probe = createServer();
       await new Promise<void>((resolve, reject) => {
         probe.once("error", reject);
-        probe.listen(0, "127.0.0.1", () => { probe.close(); resolve(); });
+        probe.listen(0, "127.0.0.1", () => {
+          probe.close();
+          resolve();
+        });
       });
     } catch {
       console.log("Skipping: socket binding not permitted in this environment");
@@ -260,7 +341,9 @@ describe("WebSocket protocol", () => {
     wsServer = new GameWebSocketServer(server, game);
     game.on("*", (event) => wsServer!.broadcastGameEvent(event));
 
-    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server!.listen(0, "127.0.0.1", resolve),
+    );
     const port = (server.address() as AddressInfo).port;
     sockets = await createHarnesses(3, `ws://127.0.0.1:${port}`);
 
@@ -271,11 +354,13 @@ describe("WebSocket protocol", () => {
     sendMessage(observer.ws, { type: "join", data: { name: "Observer" } });
     const aliceJoin = await waitForMessage(
       alice.messages,
-      (message) => message.type === "player_joined" && message.data.name === "Alice",
+      (message) =>
+        message.type === "player_joined" && message.data.name === "Alice",
     );
     const bobJoin = await waitForMessage(
       bob.messages,
-      (message) => message.type === "player_joined" && message.data.name === "Bob",
+      (message) =>
+        message.type === "player_joined" && message.data.name === "Bob",
     );
     await waitForDispatch();
     game.tick();
@@ -286,6 +371,9 @@ describe("WebSocket protocol", () => {
     const observerConvoUpdatesBefore = observer.messages.filter(
       (message) => message.type === "convo_update",
     ).length;
+    const observerRoomUpdatesBefore = observer.messages.filter(
+      (message) => message.type === "convo_room_update",
+    ).length;
 
     sendMessage(alice.ws, { type: "start_convo", data: { targetId: bobId } });
     await waitForDispatch();
@@ -293,15 +381,34 @@ describe("WebSocket protocol", () => {
 
     const inviteUpdate = (await waitForMessage(
       bob.messages,
-      (message) => message.type === "convo_update" && message.data.state === "invited",
+      (message) =>
+        message.type === "convo_update" && message.data.state === "invited",
     )) as Extract<ServerMessage, { type: "convo_update" }>;
 
     expect(inviteUpdate.data.player1Id).toBe(aliceId);
     expect(inviteUpdate.data.player2Id).toBe(bobId);
+    const inviteRoomUpdate = (await waitForMessage(
+      bob.messages,
+      (message) =>
+        message.type === "convo_room_update" &&
+        message.data.id === inviteUpdate.data.id &&
+        message.data.state === "forming",
+    )) as Extract<ServerMessage, { type: "convo_room_update" }>;
+    expect(
+      inviteRoomUpdate.data.participants.map(
+        (participant) => participant.playerId,
+      ),
+    ).toEqual([aliceId, bobId]);
     await waitForSilence();
     expect(
-      observer.messages.filter((message) => message.type === "convo_update").length,
+      observer.messages.filter((message) => message.type === "convo_update")
+        .length,
     ).toBe(observerConvoUpdatesBefore);
+    expect(
+      observer.messages.filter(
+        (message) => message.type === "convo_room_update",
+      ).length,
+    ).toBe(observerRoomUpdatesBefore);
 
     sendMessage(bob.ws, {
       type: "accept_convo",
@@ -312,15 +419,32 @@ describe("WebSocket protocol", () => {
 
     await waitForMessage(
       alice.messages,
-      (message) => message.type === "convo_update" && message.data.state === "active",
+      (message) =>
+        message.type === "convo_update" && message.data.state === "active",
+    );
+    await waitForMessage(
+      alice.messages,
+      (message) =>
+        message.type === "convo_room_update" &&
+        message.data.id === inviteUpdate.data.id &&
+        message.data.state === "active",
     );
     await waitForSilence();
     expect(
-      observer.messages.filter((message) => message.type === "convo_update").length,
+      observer.messages.filter((message) => message.type === "convo_update")
+        .length,
     ).toBe(observerConvoUpdatesBefore);
+    expect(
+      observer.messages.filter(
+        (message) => message.type === "convo_room_update",
+      ).length,
+    ).toBe(observerRoomUpdatesBefore);
 
     const observerMessagesBefore = observer.messages.filter(
       (message) => message.type === "message",
+    ).length;
+    const observerRoomMessagesBefore = observer.messages.filter(
+      (message) => message.type === "room_message",
     ).length;
     sendMessage(alice.ws, { type: "say", data: { content: "secret" } });
     await waitForDispatch();
@@ -328,19 +452,37 @@ describe("WebSocket protocol", () => {
 
     const aliceTranscript = await waitForMessage(
       alice.messages,
-      (message) => message.type === "message" && message.data.content === "secret",
+      (message) =>
+        message.type === "message" && message.data.content === "secret",
     );
     const bobTranscript = await waitForMessage(
       bob.messages,
-      (message) => message.type === "message" && message.data.content === "secret",
+      (message) =>
+        message.type === "message" && message.data.content === "secret",
+    );
+    const aliceRoomTranscript = await waitForMessage(
+      alice.messages,
+      (message) =>
+        message.type === "room_message" && message.data.content === "secret",
+    );
+    const bobRoomTranscript = await waitForMessage(
+      bob.messages,
+      (message) =>
+        message.type === "room_message" && message.data.content === "secret",
     );
 
     expect(aliceTranscript.type).toBe("message");
     expect(bobTranscript.type).toBe("message");
+    expect(aliceRoomTranscript.type).toBe("room_message");
+    expect(bobRoomTranscript.type).toBe("room_message");
     await waitForSilence();
     expect(
       observer.messages.filter((message) => message.type === "message").length,
     ).toBe(observerMessagesBefore);
+    expect(
+      observer.messages.filter((message) => message.type === "room_message")
+        .length,
+    ).toBe(observerRoomMessagesBefore);
   });
 
   it("streams debug bootstrap and global conversation events to debug subscribers", async () => {
@@ -381,7 +523,9 @@ describe("WebSocket protocol", () => {
     wsServer = new GameWebSocketServer(server, game);
     game.on("*", (event) => wsServer!.broadcastGameEvent(event));
 
-    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server!.listen(0, "127.0.0.1", resolve),
+    );
     const port = (server.address() as AddressInfo).port;
     sockets = await createHarnesses(3, `ws://127.0.0.1:${port}`);
 
@@ -392,11 +536,13 @@ describe("WebSocket protocol", () => {
 
     const aliceJoin = await waitForMessage(
       alice.messages,
-      (message) => message.type === "player_joined" && message.data.name === "Alice",
+      (message) =>
+        message.type === "player_joined" && message.data.name === "Alice",
     );
     const bobJoin = await waitForMessage(
       bob.messages,
-      (message) => message.type === "player_joined" && message.data.name === "Bob",
+      (message) =>
+        message.type === "player_joined" && message.data.name === "Bob",
     );
     await waitForDispatch();
     game.tick();
@@ -411,6 +557,7 @@ describe("WebSocket protocol", () => {
       expect.arrayContaining(["Alice", "Bob"]),
     );
     expect(bootstrap.data.conversations).toHaveLength(0);
+    expect(bootstrap.data.conversationRooms).toHaveLength(0);
 
     sendMessage(alice.ws, {
       type: "start_convo",
@@ -425,9 +572,17 @@ describe("WebSocket protocol", () => {
         message.type === "debug_conversation_upsert" &&
         message.data.state === "invited",
     )) as Extract<ServerMessage, { type: "debug_conversation_upsert" }>;
+    const invitedRoom = (await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_conversation_room_upsert" &&
+        message.data.id === invited.data.id &&
+        message.data.state === "forming",
+    )) as Extract<ServerMessage, { type: "debug_conversation_room_upsert" }>;
 
     expect(invited.data.player1Id).toBe(aliceJoin.data.id);
     expect(invited.data.player2Id).toBe(bobJoin.data.id);
+    expect(invitedRoom.data.participants).toHaveLength(2);
 
     sendMessage(bob.ws, {
       type: "accept_convo",
@@ -436,10 +591,27 @@ describe("WebSocket protocol", () => {
     await waitForDispatch();
     game.tick();
 
+    const walkingEvent = (await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_event" &&
+        message.data.relatedConversationId === invited.data.id &&
+        message.data.type === "conversation_walking",
+    )) as Extract<ServerMessage, { type: "debug_event" }>;
+
+    expect(walkingEvent.data.title).toBe("Walking to meet");
+
     await waitForMessage(
       dashboard.messages,
       (message) =>
         message.type === "debug_conversation_upsert" &&
+        message.data.id === invited.data.id &&
+        message.data.state === "active",
+    );
+    await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_conversation_room_upsert" &&
         message.data.id === invited.data.id &&
         message.data.state === "active",
     );
@@ -454,8 +626,15 @@ describe("WebSocket protocol", () => {
         message.type === "debug_conversation_message" &&
         message.data.content === "secret",
     )) as Extract<ServerMessage, { type: "debug_conversation_message" }>;
+    const debugRoomMessage = (await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_conversation_room_message" &&
+        message.data.content === "secret",
+    )) as Extract<ServerMessage, { type: "debug_conversation_room_message" }>;
 
     expect(debugMessage.data.convoId).toBe(invited.data.id);
+    expect(debugRoomMessage.data.roomId).toBe(invited.data.id);
 
     const debugEvent = (await waitForMessage(
       dashboard.messages,
@@ -466,6 +645,113 @@ describe("WebSocket protocol", () => {
     )) as Extract<ServerMessage, { type: "debug_event" }>;
 
     expect(debugEvent.data.message).toContain("secret");
+  });
+
+  it("emits a single decline event instead of duplicate conversation-ended feed items", async () => {
+    try {
+      const probe = createServer();
+      await new Promise<void>((resolve, reject) => {
+        probe.once("error", reject);
+        probe.listen(0, "127.0.0.1", () => {
+          probe.close();
+          resolve();
+        });
+      });
+    } catch {
+      console.log("Skipping: socket binding not permitted in this environment");
+      return;
+    }
+
+    game = new GameLoop({ mode: "stepped", tickRate: 20 });
+    game.loadWorld({
+      width: 5,
+      height: 5,
+      tiles: [
+        ["wall", "wall", "wall", "wall", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "wall", "wall", "wall", "wall"],
+      ],
+      activities: [],
+      spawnPoints: [
+        { x: 1, y: 1 },
+        { x: 2, y: 1 },
+      ],
+    });
+
+    server = createServer();
+    wsServer = new GameWebSocketServer(server, game);
+    game.on("*", (event) => wsServer!.broadcastGameEvent(event));
+
+    await new Promise<void>((resolve) =>
+      server!.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (server.address() as AddressInfo).port;
+    sockets = await createHarnesses(3, `ws://127.0.0.1:${port}`);
+
+    const [alice, bob, dashboard] = sockets;
+    sendMessage(alice.ws, { type: "join", data: { name: "Alice" } });
+    sendMessage(bob.ws, { type: "join", data: { name: "Bob" } });
+    const aliceJoin = await waitForMessage(
+      alice.messages,
+      (message) =>
+        message.type === "player_joined" && message.data.name === "Alice",
+    );
+    const bobJoin = await waitForMessage(
+      bob.messages,
+      (message) =>
+        message.type === "player_joined" && message.data.name === "Bob",
+    );
+    await waitForDispatch();
+    game.tick();
+
+    sendMessage(dashboard.ws, { type: "subscribe_debug" });
+    await waitForMessage(
+      dashboard.messages,
+      (message) => message.type === "debug_bootstrap",
+    );
+
+    sendMessage(alice.ws, {
+      type: "start_convo",
+      data: { targetId: bobJoin.data.id },
+    });
+    await waitForDispatch();
+    game.tick();
+
+    const invited = (await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_conversation_upsert" &&
+        message.data.state === "invited" &&
+        message.data.player1Id === aliceJoin.data.id,
+    )) as Extract<ServerMessage, { type: "debug_conversation_upsert" }>;
+
+    sendMessage(bob.ws, {
+      type: "decline_convo",
+      data: { convoId: invited.data.id },
+    });
+    await waitForDispatch();
+    game.tick();
+
+    const declineEvent = (await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_event" &&
+        message.data.relatedConversationId === invited.data.id &&
+        message.data.title === "Conversation declined",
+    )) as Extract<ServerMessage, { type: "debug_event" }>;
+
+    expect(declineEvent.data.message).toContain("declined");
+    await waitForSilence();
+    expect(
+      dashboard.messages.filter(
+        (message) =>
+          message.type === "debug_event" &&
+          message.data.relatedConversationId === invited.data.id &&
+          message.data.type === "conversation_ended",
+      ),
+    ).toHaveLength(1);
   });
 
   it("includes dead NPCs in debug bootstrap with their death reason", async () => {
@@ -506,22 +792,27 @@ describe("WebSocket protocol", () => {
       isNpc: true,
     });
 
-    const autonomyManager = new NpcAutonomyManager(
-      game,
-      new EntityManager(),
-      { npcStore: new InMemoryNpcStore() },
-    );
+    const autonomyManager = new NpcAutonomyManager(game, new EntityManager(), {
+      npcStore: new InMemoryNpcStore(),
+    });
     autonomyManager.getState("npc_alice").needs.water = 0.001;
 
     server = createServer();
-    wsServer = new GameWebSocketServer(server, game, undefined, autonomyManager);
+    wsServer = new GameWebSocketServer(
+      server,
+      game,
+      undefined,
+      autonomyManager,
+    );
     game.on("*", (event) => wsServer!.broadcastGameEvent(event));
 
     game.tick();
 
     expect(game.getPlayer("npc_alice")).toBeUndefined();
 
-    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server!.listen(0, "127.0.0.1", resolve),
+    );
     const port = (server.address() as AddressInfo).port;
     sockets = await createHarnesses(1, `ws://127.0.0.1:${port}`);
 
@@ -550,5 +841,89 @@ describe("WebSocket protocol", () => {
     expect(bootstrap.data.autonomyStates.npc_alice.death?.message).toContain(
       "water reached 0",
     );
+  });
+
+  it("removes non-dead NPC autonomy state from live dashboards and late bootstraps", async () => {
+    try {
+      const probe = createServer();
+      await new Promise<void>((resolve, reject) => {
+        probe.once("error", reject);
+        probe.listen(0, "127.0.0.1", () => {
+          probe.close();
+          resolve();
+        });
+      });
+    } catch {
+      console.log("Skipping: socket binding not permitted in this environment");
+      return;
+    }
+
+    game = new GameLoop({ mode: "stepped", tickRate: 20 });
+    game.loadWorld({
+      width: 5,
+      height: 5,
+      tiles: [
+        ["wall", "wall", "wall", "wall", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "floor", "floor", "floor", "wall"],
+        ["wall", "wall", "wall", "wall", "wall"],
+      ],
+      activities: [],
+      spawnPoints: [{ x: 1, y: 1 }],
+    });
+
+    const autonomyManager = new NpcAutonomyManager(game, new EntityManager(), {
+      npcStore: new InMemoryNpcStore(),
+    });
+    game.spawnPlayer({
+      id: "npc_alice",
+      name: "Alice NPC",
+      description: "Helpful NPC",
+      x: 2,
+      y: 2,
+      isNpc: true,
+    });
+
+    server = createServer();
+    wsServer = new GameWebSocketServer(
+      server,
+      game,
+      undefined,
+      autonomyManager,
+    );
+    game.on("*", (event) => wsServer!.broadcastGameEvent(event));
+
+    await new Promise<void>((resolve) =>
+      server!.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (server.address() as AddressInfo).port;
+    sockets = await createHarnesses(2, `ws://127.0.0.1:${port}`);
+
+    const [dashboard, lateDashboard] = sockets;
+    sendMessage(dashboard.ws, { type: "subscribe_debug" });
+    const initialBootstrap = (await waitForMessage(
+      dashboard.messages,
+      (message) => message.type === "debug_bootstrap",
+    )) as Extract<ServerMessage, { type: "debug_bootstrap" }>;
+    expect(initialBootstrap.data.autonomyStates.npc_alice).toBeDefined();
+
+    game.removePlayer("npc_alice");
+
+    const removal = (await waitForMessage(
+      dashboard.messages,
+      (message) =>
+        message.type === "debug_autonomy_remove" &&
+        message.data.npcId === "npc_alice",
+    )) as Extract<ServerMessage, { type: "debug_autonomy_remove" }>;
+    expect(removal.data.npcId).toBe("npc_alice");
+
+    sendMessage(lateDashboard.ws, { type: "subscribe_debug" });
+    const lateBootstrap = (await waitForMessage(
+      lateDashboard.messages,
+      (message) => message.type === "debug_bootstrap",
+    )) as Extract<ServerMessage, { type: "debug_bootstrap" }>;
+
+    expect(lateBootstrap.data.autonomyStates.npc_alice).toBeUndefined();
   });
 });
