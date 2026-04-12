@@ -2,6 +2,21 @@ import {
   appendConversationMessage,
   upsertConversationSnapshot,
 } from "./conversationDebugState.js";
+import {
+  appendRoomMessageSnapshot,
+  canPlayerAcceptRoomInvite,
+  canPlayerDeclineRoomInvite,
+  canPlayerEndRoom,
+  getOccupiedConversationPlayerIds,
+  getPlayerConversationRoom,
+  getRenderableConversations,
+  getRoomCounterpartyIds,
+  getRoomDisplayState,
+  isIncomingRoomInvite,
+  legacyConversationFromRoomSnapshot,
+  upsertRoomFromConversationSnapshot,
+  upsertRoomSnapshot,
+} from "./conversationRooms.js";
 /**
  * Client entry point — orchestrates rendering, networking, input, and prediction.
  *
@@ -151,11 +166,31 @@ async function start() {
   function getSelfConversation(): Conversation | undefined {
     if (!gameState || !selfId) return undefined;
     const currentSelfId = selfId;
+    const room = getPlayerConversationRoom({
+      rooms: gameState.conversationRooms,
+      conversations: gameState.conversations,
+      playerId: currentSelfId,
+    });
+    const projectedConversation = room
+      ? legacyConversationFromRoomSnapshot(room)
+      : null;
+    if (projectedConversation) {
+      return projectedConversation;
+    }
     return gameState.conversations.find(
       (conversation) =>
         conversationIncludesPlayer(conversation, currentSelfId) &&
         conversation.state !== "ended",
     );
+  }
+
+  function getSelfConversationRoom() {
+    if (!gameState || !selfId) return undefined;
+    return getPlayerConversationRoom({
+      rooms: gameState.conversationRooms,
+      conversations: gameState.conversations,
+      playerId: selfId,
+    });
   }
 
   function getPlayerName(playerId: string): string {
@@ -173,19 +208,26 @@ async function start() {
     return selfId ? getPlayer(selfId) : undefined;
   }
 
+  function formatParticipantNames(playerIds: readonly string[]): string {
+    if (playerIds.length === 0) {
+      return "everyone";
+    }
+    return playerIds.map((playerId) => getPlayerName(playerId)).join(", ");
+  }
+
   function findNearestTalkTargetId(): string | undefined {
     if (!gameState) return undefined;
     const selfPlayer = getSelfPlayer();
     if (!selfPlayer) return undefined;
 
     // Can't start a new conversation while already in one
-    const occupied = new Set<string>();
-    for (const convo of gameState.conversations) {
-      if (convo.state === "ended") continue;
-      if (conversationIncludesPlayer(convo, selfPlayer.id)) return undefined;
-      occupied.add(convo.player1Id);
-      occupied.add(convo.player2Id);
+    if (getSelfConversationRoom()) {
+      return undefined;
     }
+    const occupied = getOccupiedConversationPlayerIds({
+      rooms: gameState.conversationRooms,
+      conversations: gameState.conversations,
+    });
 
     const candidates = gameState.players
       .filter(
@@ -295,18 +337,16 @@ async function start() {
   function refreshConversationUi(): void {
     if (!gameState) return;
 
+    const currentRoom = getSelfConversationRoom();
     const currentConversation = getSelfConversation();
     const talkablePlayerIds = new Set<string>();
     const attackablePlayerIds = new Set<string>();
-    const selfBusy = Boolean(currentConversation);
-    const occupiedPlayerIds = new Set<string>();
+    const selfBusy = Boolean(currentRoom);
+    const occupiedPlayerIds = getOccupiedConversationPlayerIds({
+      rooms: gameState.conversationRooms,
+      conversations: gameState.conversations,
+    });
     const selfPlayer = getSelfPlayer();
-
-    for (const conversation of gameState.conversations) {
-      if (conversation.state === "ended") continue;
-      occupiedPlayerIds.add(conversation.player1Id);
-      occupiedPlayerIds.add(conversation.player2Id);
-    }
 
     for (const player of gameState.players) {
       if (!selfId || player.id === selfId) continue;
@@ -328,7 +368,10 @@ async function start() {
     );
 
     ui.updateConversationList(
-      gameState.conversations,
+      getRenderableConversations({
+        rooms: gameState.conversationRooms,
+        conversations: gameState.conversations,
+      }),
       currentConversation?.id ?? null,
     );
     ui.setActiveConversation(currentConversation ?? null);
@@ -350,10 +393,19 @@ async function start() {
     }
 
     if (selfPlayer) {
-      const activity = currentConversation
-        ? currentConversation.state === "active"
-          ? `Talking with ${getPlayerName(getConversationPartnerId(currentConversation, selfPlayer.id))}`
-          : currentConversation.state === "walking"
+      const currentParticipantIds =
+        selfId && currentRoom
+          ? getRoomCounterpartyIds(currentRoom, selfId)
+          : [];
+      const currentParticipantsLabel = formatParticipantNames(
+        currentParticipantIds,
+      );
+      const roomDisplayState =
+        currentRoom && selfId ? getRoomDisplayState(currentRoom, selfId) : null;
+      const activity = currentRoom
+        ? roomDisplayState === "active"
+          ? `Talking with ${currentParticipantsLabel}`
+          : roomDisplayState === "walking"
             ? "Walking to meet"
             : "Awaiting reply"
         : selfPlayer.state === "walking"
@@ -366,7 +418,7 @@ async function start() {
       ui.updateActorBadge("Not joined", "Press Join to enter");
     }
 
-    if (!selfId || !currentConversation) {
+    if (!selfId || !currentConversation || !currentRoom) {
       ui.renderConversationPanel({
         title: "No active conversation",
         status: "Start a conversation from the player list to chat.",
@@ -378,48 +430,58 @@ async function start() {
       return;
     }
 
-    const partnerId = getConversationPartnerId(currentConversation, selfId);
-    const partnerName = getPlayerName(partnerId);
-    const partner = getPlayer(partnerId);
+    const currentCounterpartyIds = getRoomCounterpartyIds(currentRoom, selfId);
+    const participantLabel = formatParticipantNames(currentCounterpartyIds);
+    const roomDisplayState = getRoomDisplayState(currentRoom, selfId);
 
-    if (currentConversation.state === "invited") {
-      const incomingInvite = currentConversation.player2Id === selfId;
+    if (roomDisplayState === "invited") {
+      const incomingInvite = isIncomingRoomInvite(currentRoom, selfId);
       ui.renderConversationPanel({
         title: incomingInvite
-          ? `Invite from ${partnerName}`
-          : `Waiting on ${partnerName}`,
+          ? `Invite from ${participantLabel}`
+          : `Waiting on ${participantLabel}`,
         status: incomingInvite
-          ? `${partnerName} invited you to chat.`
-          : `Waiting for ${partnerName} to respond.`,
+          ? `${participantLabel} invited you to chat.`
+          : `Waiting for ${participantLabel} to respond.`,
         chatEnabled: false,
         chatPlaceholder: "Accept a conversation to chat",
-        showInviteActions: incomingInvite,
+        showInviteActions:
+          canPlayerAcceptRoomInvite(currentRoom, selfId) ||
+          canPlayerDeclineRoomInvite(currentRoom, selfId),
         showEndAction: false,
       });
       return;
     }
 
-    if (currentConversation.state === "walking") {
+    if (roomDisplayState === "walking") {
       ui.renderConversationPanel({
-        title: `Meeting ${partnerName}`,
-        status: `Walking to meet ${partnerName}.`,
+        title: `Meeting ${participantLabel}`,
+        status: `Walking to meet ${participantLabel}.`,
         chatEnabled: false,
-        chatPlaceholder: `Walking to meet ${partnerName}`,
+        chatPlaceholder: `Walking to meet ${participantLabel}`,
         showInviteActions: false,
         showEndAction: false,
       });
       return;
     }
 
+    const expectedSpeakerIds = currentRoom.turn.expectedSpeakerIds.filter(
+      (playerId) => playerId !== selfId,
+    );
+    const activeStatus =
+      expectedSpeakerIds.length === 1
+        ? `${getPlayerName(expectedSpeakerIds[0])} is thinking...`
+        : expectedSpeakerIds.length > 1
+          ? `Waiting for ${formatParticipantNames(expectedSpeakerIds)}.`
+          : `Conversation with ${participantLabel} is active.`;
+
     ui.renderConversationPanel({
-      title: `Talking with ${partnerName}`,
-      status: partner?.isWaitingForResponse
-        ? `${partnerName} is thinking...`
-        : `Conversation with ${partnerName} is active.`,
+      title: `Talking with ${participantLabel}`,
+      status: activeStatus,
       chatEnabled: true,
-      chatPlaceholder: `Message ${partnerName}`,
+      chatPlaceholder: `Message ${participantLabel}`,
       showInviteActions: false,
-      showEndAction: true,
+      showEndAction: canPlayerEndRoom(currentRoom, selfId),
     });
   }
 
@@ -435,6 +497,7 @@ async function start() {
     switch (msg.type) {
       case "state": {
         gameState = msg.data;
+        gameState.conversationRooms ??= [];
         ui.setStatus(
           `Connected | Tick: ${gameState.tick} | Players: ${gameState.players.length}`,
         );
@@ -598,6 +661,10 @@ async function start() {
           msg.data,
         );
         gameState.conversations = gameStateResult.conversations;
+        gameState.conversationRooms = upsertRoomFromConversationSnapshot(
+          gameState.conversationRooms,
+          msg.data,
+        );
         const previous = gameStateResult.previous;
         for (const systemMessage of describeConversationUpdate(
           previous,
@@ -609,12 +676,31 @@ async function start() {
         break;
       }
 
+      case "convo_room_update": {
+        if (!gameState) break;
+        gameState.conversationRooms = upsertRoomSnapshot(
+          gameState.conversationRooms,
+          msg.data,
+        );
+        refreshConversationUi();
+        break;
+      }
+
       case "message": {
         if (gameState) {
           gameState.conversations = appendConversationMessage(
             gameState.conversations,
             msg.data,
           );
+          const updatedConversation = gameState.conversations.find(
+            (conversation) => conversation.id === msg.data.convoId,
+          );
+          if (updatedConversation) {
+            gameState.conversationRooms = upsertRoomFromConversationSnapshot(
+              gameState.conversationRooms,
+              updatedConversation,
+            );
+          }
         }
         const sender = gameState?.players.find(
           (p) => p.id === msg.data.playerId,
@@ -627,6 +713,16 @@ async function start() {
           msg.data.convoId,
         );
         renderer.showChatBubble(msg.data.playerId, msg.data.content);
+        refreshConversationUi();
+        break;
+      }
+
+      case "room_message": {
+        if (!gameState) break;
+        gameState.conversationRooms = appendRoomMessageSnapshot(
+          gameState.conversationRooms,
+          msg.data,
+        );
         refreshConversationUi();
         break;
       }
@@ -736,12 +832,13 @@ async function start() {
   });
 
   ui.onAcceptConversation(() => {
-    const conversation = getSelfConversation();
+    const room = getSelfConversationRoom();
+    const conversation = room ? legacyConversationFromRoomSnapshot(room) : null;
     if (
+      room &&
       conversation &&
       selfId &&
-      conversation.state === "invited" &&
-      conversation.player2Id === selfId
+      canPlayerAcceptRoomInvite(room, selfId)
     ) {
       client.send({
         type: "accept_convo",
@@ -751,12 +848,13 @@ async function start() {
   });
 
   ui.onDeclineConversation(() => {
-    const conversation = getSelfConversation();
+    const room = getSelfConversationRoom();
+    const conversation = room ? legacyConversationFromRoomSnapshot(room) : null;
     if (
+      room &&
       conversation &&
       selfId &&
-      conversation.state === "invited" &&
-      conversation.player2Id === selfId
+      canPlayerDeclineRoomInvite(room, selfId)
     ) {
       client.send({
         type: "decline_convo",
@@ -766,8 +864,8 @@ async function start() {
   });
 
   ui.onEndConversation(() => {
-    const conversation = getSelfConversation();
-    if (conversation?.state === "active") {
+    const room = getSelfConversationRoom();
+    if (room && selfId && canPlayerEndRoom(room, selfId)) {
       client.send({ type: "end_convo" });
     }
   });

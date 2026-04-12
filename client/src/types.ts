@@ -77,11 +77,74 @@ export interface Conversation {
   summary?: string;
 }
 
+export type ConversationRoomState = "forming" | "active" | "ended";
+export type RoomParticipantRole = "host" | "member";
+export type RoomInviteStatus = "pending" | "accepted" | "declined" | "left";
+export type RoomPresenceStatus = "approaching" | "present" | "away";
+export type RoomTurnMode = "open" | "nominated" | "cooldown";
+
+export interface RoomParticipant {
+  playerId: string;
+  role: RoomParticipantRole;
+  inviteStatus: RoomInviteStatus;
+  presenceStatus: RoomPresenceStatus;
+  invitedBy?: string;
+  invitedTick: number;
+  joinedTick?: number;
+  declinedTick?: number;
+  leftTick?: number;
+  lastReadSequence: number;
+  lastSpokeTick?: number;
+}
+
+export interface RoomMessage {
+  id: number;
+  roomId: number;
+  playerId: string;
+  content: string;
+  tick: number;
+  sequence: number;
+}
+
+export interface RoomTranscriptState {
+  nextSequence: number;
+  messages: RoomMessage[];
+  lastMessageTick?: number;
+}
+
+export interface RoomTurnState {
+  mode: RoomTurnMode;
+  expectedSpeakerIds: string[];
+  activeSpeakerIds: string[];
+  lastSpeakerId?: string;
+  cooldownUntilTick?: number;
+}
+
+export interface ConversationRoom {
+  id: number;
+  createdBy: string;
+  state: ConversationRoomState;
+  maxParticipants: number;
+  minActiveParticipants: number;
+  anchor?: Position;
+  radius: number;
+  version: number;
+  participants: RoomParticipant[];
+  transcript: RoomTranscriptState;
+  turn: RoomTurnState;
+  createdTick: number;
+  activatedTick?: number;
+  endedTick?: number;
+  endedReason?: ConversationEndReason;
+  summary?: string;
+}
+
 export type PlanSource = "scripted" | "llm" | "emergency";
 
 export type DebugFeedSeverity = "info" | "warning" | "error";
 export type DebugFeedEventType =
   | "conversation_started"
+  | "conversation_walking"
   | "conversation_active"
   | "conversation_ended"
   | "conversation_message"
@@ -92,11 +155,7 @@ export type DebugFeedEventType =
   | "action_completed"
   | "action_failed"
   | "error";
-export type DebugFeedSubjectType =
-  | "conversation"
-  | "npc"
-  | "player"
-  | "system";
+export type DebugFeedSubjectType = "conversation" | "npc" | "player" | "system";
 
 export interface NpcAutonomyDebugPlanStep {
   index: number;
@@ -112,6 +171,18 @@ export interface NpcAutonomyDebugPlan {
   createdAtTick: number;
   source: PlanSource;
   llmGenerated: boolean;
+  reasoning?: string;
+  steps: NpcAutonomyDebugPlanStep[];
+}
+
+export interface NpcAutonomyDebugPlanHistoryEntry {
+  goalId: string;
+  source: PlanSource;
+  startedTick: number;
+  endedTick: number | null;
+  outcome: "running" | "completed" | "failed" | "interrupted";
+  failReason?: string;
+  message: string;
   reasoning?: string;
   steps: NpcAutonomyDebugPlanStep[];
 }
@@ -154,6 +225,7 @@ export interface NpcAutonomyDebugState {
   consecutivePlanFailures: number;
   goalSelectionInFlight: boolean;
   goalSelectionStartedAtTick: number | null;
+  planHistory: NpcAutonomyDebugPlanHistoryEntry[];
 }
 
 export interface DebugFeedEvent {
@@ -184,13 +256,85 @@ export interface DebugActionDefinition {
   };
 }
 
+export interface DebugClientSummary {
+  clientId: string;
+  playerId: string | null;
+  label: string;
+  role: "player" | "dashboard" | "spectator";
+  connectedAt: string;
+  debugSubscribed: boolean;
+  canCaptureScreenshot: boolean;
+}
+
+export interface DebugSystemSnapshot {
+  mode: "stepped" | "realtime";
+  tickRate: number;
+  world: {
+    width: number;
+    height: number;
+  };
+  entities: Array<{
+    id: string;
+    type: string;
+    position: Position;
+    properties: Record<string, boolean | number | string>;
+    destroyed: boolean;
+  }>;
+  connectedClients: DebugClientSummary[];
+  providerDiagnostics?: {
+    provider: string;
+    primaryProvider: string;
+    fallbackProvider: string;
+    primaryAvailable: boolean;
+    recoveryMs: number;
+    primaryFailedAt?: string;
+    nextRetryAt?: string;
+    nextRetryInMs?: number;
+    lastError?: {
+      name: string;
+      message: string;
+      stack?: string;
+      failureCode?: string;
+      exitCode?: number | null;
+      signal?: string | null;
+      command?: string;
+      args?: string[];
+      cwd?: string;
+      stdout?: string;
+      stderr?: string;
+    };
+    events: Array<{
+      timestamp: string;
+      phase: "reply" | "reflection" | "goal";
+      outcome:
+        | "primary_failure"
+        | "fallback_used"
+        | "primary_skipped"
+        | "primary_recovered";
+      message: string;
+      primaryProvider: string;
+      fallbackProvider: string;
+      npcId?: string;
+      partnerId?: string;
+      conversationId?: number;
+      cooldownRemainingMs?: number;
+    }>;
+  };
+  lastScreenshot?: {
+    clientId: string;
+    capturedAt: string;
+  };
+}
+
 export interface DebugDashboardBootstrap {
   tick: number;
   players: PublicPlayer[];
   conversations: Conversation[];
+  conversationRooms: ConversationRoom[];
   autonomyStates: Record<string, NpcAutonomyDebugState>;
   recentEvents: DebugFeedEvent[];
   actionDefinitions: Record<string, DebugActionDefinition>;
+  system: DebugSystemSnapshot;
 }
 
 /** A dynamic world entity (berry bush, bench, etc.) rendered on the map. */
@@ -211,6 +355,8 @@ export interface FullGameState {
   players: PublicPlayer[];
   /** Active and historical conversations streamed from the server. */
   conversations: Conversation[];
+  /** Room-native conversation snapshots during the migration to many-to-many rooms. */
+  conversationRooms: ConversationRoom[];
   /** Map activities mirrored from the server snapshot for sidebar/rendering use. */
   activities: Activity[];
   /** Dynamic world entities from the autonomy system. */
@@ -250,17 +396,32 @@ export type ServerMessage =
   | { type: "player_joined"; data: PublicPlayer }
   | { type: "player_left"; data: PlayerLeftData }
   | { type: "convo_update"; data: Conversation }
+  | { type: "convo_room_update"; data: ConversationRoom }
   | { type: "message"; data: Message }
+  | { type: "room_message"; data: RoomMessage }
   | { type: "entity_update"; data: WorldEntity }
   | { type: "entity_removed"; data: { entityId: string } }
   | { type: "npc_needs"; data: NpcNeedsData }
   | { type: "player_survival"; data: PlayerSurvivalData }
-  | { type: "combat_event"; data: { eventType: string; [key: string]: unknown } }
-  | { type: "inventory_update"; data: { playerId: string; items: Record<string, number>; capacity: number } }
+  | {
+      type: "combat_event";
+      data: { eventType: string; [key: string]: unknown };
+    }
+  | {
+      type: "inventory_update";
+      data: {
+        playerId: string;
+        items: Record<string, number>;
+        capacity: number;
+      };
+    }
   | { type: "debug_bootstrap"; data: DebugDashboardBootstrap }
   | { type: "debug_conversation_upsert"; data: Conversation }
   | { type: "debug_conversation_message"; data: Message }
+  | { type: "debug_conversation_room_upsert"; data: ConversationRoom }
+  | { type: "debug_conversation_room_message"; data: RoomMessage }
   | { type: "debug_autonomy_upsert"; data: NpcAutonomyDebugState }
+  | { type: "debug_autonomy_remove"; data: { npcId: string } }
   | { type: "debug_event"; data: DebugFeedEvent }
   | { type: "error"; data: { message: string } }
   | { type: "capture_screenshot" };
@@ -270,7 +431,7 @@ export type MoveDirection = "up" | "down" | "left" | "right";
 
 export type ClientMessage =
   | { type: "join"; data: { name: string; description?: string } }
-  | { type: "subscribe_debug" }
+  | { type: "subscribe_debug"; data?: { token?: string } }
   | { type: "move"; data: { x: number; y: number } }
   | { type: "move_direction"; data: { direction: MoveDirection } }
   | { type: "input_start"; data: { direction: MoveDirection } }
@@ -280,7 +441,7 @@ export type ClientMessage =
   | { type: "accept_convo"; data: { convoId: number } }
   | { type: "decline_convo"; data: { convoId: number } }
   | { type: "end_convo" }
-  | { type: "attack"; data: { targetId: string } }
+  | { type: "attack"; data: { targetId?: string } }
   | { type: "pickup"; data: { entityId: string } }
   | { type: "eat"; data: { item: string } }
   | { type: "pickup_nearby" }
