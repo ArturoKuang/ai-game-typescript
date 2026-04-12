@@ -10,6 +10,7 @@ import {
   TextStyle,
   Texture,
 } from "pixi.js";
+import { loadOptionalAsset } from "./optionalAsset.js";
 import {
   type ActorAnimationState,
   type ActorTextureSet,
@@ -223,13 +224,18 @@ export class GameRenderer {
       antialias: false,
     });
 
-    this.atlas = await Assets.load({
-      src: ATLAS_PATH,
-      data: {
-        scaleMode: "nearest",
-      },
-    });
     this.terrainTextures = createTerrainTextureSet();
+    this.atlas = await loadOptionalAsset(
+      (asset: { src: string; data: { scaleMode: "nearest" } }) =>
+        Assets.load(asset) as Promise<Texture>,
+      {
+        src: ATLAS_PATH,
+        data: {
+          scaleMode: "nearest",
+        },
+      },
+      `Sprite atlas unavailable at ${ATLAS_PATH}; using generated fallback visuals instead.`,
+    );
 
     const primalTint = new ColorMatrixFilter();
     primalTint.matrix = [
@@ -257,10 +263,6 @@ export class GameRenderer {
   }
 
   renderMap(tiles: TileType[][]): void {
-    if (!this.atlas) {
-      throw new Error("Renderer atlas has not loaded");
-    }
-
     this.mapTiles = tiles;
     this.mapWidth = tiles[0]?.length ?? 0;
     this.mapHeight = tiles.length;
@@ -512,12 +514,21 @@ export class GameRenderer {
     }
 
     const noise = hashCoord(x, y, 7);
-    if (!this.isPathTile(x, y) && noise % 7 === 0) {
+    if (!this.isPathTile(x, y) && this.atlas && noise % 7 === 0) {
       const detailTexture = this.pickTile(TILESET.weeds, noise);
       this.addTileSprite(this.detailContainer, detailTexture, x, y, 0.6);
-    } else if (!this.isPathTile(x, y) && noise % 19 === 0) {
+    } else if (!this.isPathTile(x, y) && this.atlas && noise % 19 === 0) {
       const flowerTexture = this.pickTile(TILESET.flowers, noise);
       this.addTileSprite(this.detailContainer, flowerTexture, x, y, 0.7);
+    } else if (!this.isPathTile(x, y) && !this.atlas && noise % 17 === 0) {
+      this.addSceneProp(
+        "grass_clump",
+        x + 0.22 + ((noise >> 4) % 4) * 0.12,
+        y + 0.78,
+        noise % 2,
+      );
+    } else if (!this.isPathTile(x, y) && !this.atlas && noise % 29 === 0) {
+      this.addSceneProp("flower_bed", x + 0.5, y + 0.82, (noise >> 2) % 3);
     }
   }
 
@@ -676,6 +687,11 @@ export class GameRenderer {
   }
 
   private renderWallDecoration(x: number, y: number): void {
+    if (!this.atlas) {
+      this.addFallbackWallOutcrop(x, y);
+      return;
+    }
+
     const seed = hashCoord(x, y, 301);
 
     if (seed % 3 !== 0) {
@@ -688,6 +704,52 @@ export class GameRenderer {
     }
 
     this.addSceneProp("stone_cluster", x + 0.5, y + 0.55, seed % 2);
+  }
+
+  private addFallbackWallOutcrop(x: number, y: number): void {
+    const seed = hashCoord(x, y, 301);
+    const outcrop = new Graphics();
+    outcrop.x = x * TILE_SIZE + TILE_SIZE / 2;
+    outcrop.y = y * TILE_SIZE + TILE_SIZE * 0.92;
+    outcrop.zIndex = Math.round(outcrop.y);
+
+    outcrop.roundRect(
+      -TILE_SIZE * 0.46,
+      -TILE_SIZE * 0.72,
+      TILE_SIZE * 0.92,
+      TILE_SIZE * 0.78,
+      14,
+    );
+    outcrop.fill({ color: 0x3a291d, alpha: 0.98 });
+
+    outcrop.roundRect(
+      -TILE_SIZE * 0.36,
+      -TILE_SIZE * 0.66,
+      TILE_SIZE * 0.72,
+      TILE_SIZE * 0.24,
+      10,
+    );
+    outcrop.fill({ color: 0x6b4a2b, alpha: 0.94 });
+
+    outcrop.circle(-TILE_SIZE * 0.14, -TILE_SIZE * 0.27, TILE_SIZE * 0.11);
+    outcrop.fill({ color: 0x8a6a3d, alpha: 0.68 });
+
+    outcrop.circle(TILE_SIZE * 0.12, -TILE_SIZE * 0.18, TILE_SIZE * 0.09);
+    outcrop.fill({ color: 0x9cbf5a, alpha: 0.22 });
+
+    outcrop.rect(-TILE_SIZE * 0.18, -TILE_SIZE * 0.1, TILE_SIZE * 0.36, 6);
+    outcrop.fill({ color: 0x1b1410, alpha: 0.18 });
+
+    this.worldObjectContainer.addChild(outcrop);
+
+    if (seed % 5 === 0) {
+      this.addSceneProp(
+        "grass_clump",
+        x + 0.2 + ((seed >> 5) % 5) * 0.08,
+        y + 0.78,
+        seed % 2,
+      );
+    }
   }
 
   private renderSceneScenery(): void {
@@ -862,6 +924,31 @@ export class GameRenderer {
     y: number,
     orientation: "horizontal" | "vertical",
   ): void {
+    if (!this.atlas) {
+      const fence = new Graphics();
+      fence.x = x * TILE_SIZE + TILE_SIZE / 2;
+      fence.y = y * TILE_SIZE + TILE_SIZE * 0.92;
+      fence.zIndex = Math.round(fence.y);
+
+      fence.roundRect(
+        -TILE_SIZE * 0.38,
+        -TILE_SIZE * 0.2,
+        TILE_SIZE * 0.76,
+        8,
+        4,
+      );
+      fence.fill({ color: 0x8a6a3d, alpha: 0.94 });
+      fence.rect(-TILE_SIZE * 0.26, -TILE_SIZE * 0.48, 6, TILE_SIZE * 0.42);
+      fence.fill({ color: 0x6b4a2b, alpha: 0.96 });
+      fence.rect(TILE_SIZE * 0.2, -TILE_SIZE * 0.48, 6, TILE_SIZE * 0.42);
+      fence.fill({ color: 0x6b4a2b, alpha: 0.96 });
+      if (orientation === "vertical") {
+        fence.rotation = Math.PI / 2;
+      }
+      this.worldObjectContainer.addChild(fence);
+      return;
+    }
+
     const texture = this.atlasTexture(TILESET.fenceHorizontal);
     const sprite = new Sprite(texture);
     sprite.anchor.set(0.5, 0.78);
