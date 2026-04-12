@@ -8,7 +8,7 @@
  *
  * @see docs/debug-api.md for full request/response examples
  */
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Response, Router } from "express";
 import type { Pool } from "pg";
@@ -18,10 +18,7 @@ import type { GameLoop } from "../engine/gameLoop.js";
 import type { GameWebSocketServer } from "../network/websocket.js";
 import type { MemoryManager } from "../npc/memory.js";
 import type { NpcProviderDiagnosticsSource } from "../npc/resilientProvider.js";
-import {
-  serializeDebugWorldEntity,
-  snapshotMapData,
-} from "../stateSnapshots.js";
+import { serializeDebugWorldEntity } from "../stateSnapshots.js";
 import { DebugGameAdmin, DebugRouteError, errorMessage } from "./admin.js";
 import { renderAsciiMap } from "./asciiMap.js";
 import { SCENARIOS, listScenarios } from "./scenarios.js";
@@ -36,17 +33,23 @@ export function createDebugRouter(
   providerDiagnostics?: NpcProviderDiagnosticsSource,
 ): Router {
   const router = Router();
-  const admin = new DebugGameAdmin(game, pool);
+  const admin = new DebugGameAdmin(game, pool, autonomyManager);
 
-  registerReadRoutes(router, game, autonomyManager, providerDiagnostics);
-  registerCommandRoutes(router, game, admin);
+  registerReadRoutes(
+    router,
+    game,
+    autonomyManager,
+    providerDiagnostics,
+    wsServer,
+  );
+  registerCommandRoutes(router, game, admin, wsServer);
 
   if (memoryManager) {
     registerMemoryRoutes(router, game, memoryManager);
   }
 
   if (autonomyManager) {
-    registerAutonomyRoutes(router, game, autonomyManager);
+    registerAutonomyRoutes(router, admin, autonomyManager);
   }
 
   if (bearManager) {
@@ -65,6 +68,7 @@ function registerReadRoutes(
   game: GameLoop,
   autonomyManager?: NpcAutonomyManager,
   providerDiagnostics?: NpcProviderDiagnosticsSource,
+  wsServer?: GameWebSocketServer,
 ): void {
   router.get("/state", (_req, res) => {
     res.json({
@@ -106,8 +110,8 @@ function registerReadRoutes(
   });
 
   router.get("/log", (req, res) => {
-    const since = parseOptionalInteger(req.query.since);
-    const limit = parseIntegerOrFallback(req.query.limit, 50);
+    const since = parseOptionalInteger(req.query.since, "since");
+    const limit = parseIntegerOrFallback(req.query.limit, 50, "limit");
     const playerId =
       typeof req.query.playerId === "string" ? req.query.playerId : undefined;
     const types = parseCsvQuery(req.query.type);
@@ -140,15 +144,24 @@ function registerReadRoutes(
     }
     res.json(providerDiagnostics.getDiagnostics());
   });
+
+  router.get("/clients", (_req, res) => {
+    if (!wsServer) {
+      res.status(404).json({ error: "Client diagnostics unavailable" });
+      return;
+    }
+    res.json(wsServer.getDebugClients());
+  });
 }
 
 function registerCommandRoutes(
   router: Router,
   game: GameLoop,
   admin: DebugGameAdmin,
+  wsServer?: GameWebSocketServer,
 ): void {
   router.post("/tick", (req, res) => {
-    const count = req.body?.count ?? 1;
+    const count = parsePositiveInteger(req.body?.count ?? 1, "count");
     const allEvents = [];
     for (let i = 0; i < count; i++) {
       const result = game.tick();
@@ -162,18 +175,22 @@ function registerCommandRoutes(
       const { id, name, x, y, isNpc, description, personality, speed } =
         req.body ?? {};
       ensureRouteCondition(
-        id && name && x !== undefined && y !== undefined,
+        typeof id === "string" &&
+          typeof name === "string" &&
+          isFiniteLikeNumber(x) &&
+          isFiniteLikeNumber(y),
         "Missing required fields: id, name, x, y",
       );
       return admin.spawnPlayer({
         id,
         name,
-        x,
-        y,
+        x: parseFiniteNumber(x, "x"),
+        y: parseFiniteNumber(y, "y"),
         isNpc,
         description,
         personality,
-        speed,
+        speed:
+          speed === undefined ? undefined : parsePositiveNumber(speed, "speed"),
       });
     });
   });
@@ -182,10 +199,18 @@ function registerCommandRoutes(
     handleRoute(res, () => {
       const { playerId, x, y } = req.body ?? {};
       ensureRouteCondition(
-        playerId && x !== undefined && y !== undefined,
+        typeof playerId === "string" &&
+          isFiniteLikeNumber(x) &&
+          isFiniteLikeNumber(y),
         "Missing required fields: playerId, x, y",
       );
-      return { path: admin.movePlayer(playerId, x, y) };
+      return {
+        path: admin.movePlayer(
+          playerId,
+          parseFiniteNumber(x, "x"),
+          parseFiniteNumber(y, "y"),
+        ),
+      };
     });
   });
 
@@ -204,10 +229,9 @@ function registerCommandRoutes(
   });
 
   router.post("/reset", (_req, res) => {
-    const mapData = snapshotMapData(game.world);
-    game.reset();
-    game.loadWorld(mapData);
-    res.json({ ok: true });
+    const result = admin.resetSimulation();
+    resyncDebugSubscribers(wsServer);
+    res.json(result);
   });
 
   router.post("/scenario", (req, res) => {
@@ -217,7 +241,9 @@ function registerCommandRoutes(
         name && SCENARIOS[name],
         `Unknown scenario. Available: ${Object.keys(SCENARIOS).join(", ")}`,
       );
-      return admin.loadScenario(name, SCENARIOS[name]);
+      const result = await admin.loadScenario(name, SCENARIOS[name]);
+      resyncDebugSubscribers(wsServer);
+      return result;
     });
   });
 
@@ -252,12 +278,29 @@ function registerCommandRoutes(
   });
 
   router.post("/mode", (req, res) => {
-    const { mode, tickRate } = req.body ?? {};
-    if (mode && (mode === "stepped" || mode === "realtime")) {
-      game.mode = mode;
-    }
-    res.json({ mode: game.mode, tickRate: game.tickRate });
+    handleRoute(res, () => {
+      const { mode, tickRate } = req.body ?? {};
+      ensureRouteCondition(
+        mode === "stepped" || mode === "realtime",
+        "Missing/invalid field: mode (stepped|realtime)",
+      );
+      return admin.setSimulationMode({
+        mode,
+        tickRate:
+          tickRate === undefined
+            ? undefined
+            : parsePositiveNumber(tickRate, "tickRate"),
+      });
+    });
   });
+}
+
+function resyncDebugSubscribers(wsServer?: GameWebSocketServer): void {
+  if (!wsServer) {
+    return;
+  }
+  wsServer.resetDebugState();
+  wsServer.broadcastDebugBootstrap();
 }
 
 function registerMemoryRoutes(
@@ -269,7 +312,7 @@ function registerMemoryRoutes(
     handleRoute(
       res,
       async () => {
-        const limit = parseOptionalInteger(req.query.limit);
+        const limit = parseOptionalInteger(req.query.limit, "limit");
         const type =
           typeof req.query.type === "string" ? req.query.type : undefined;
         return memoryManager.getMemories(req.params.playerId, {
@@ -287,7 +330,7 @@ function registerMemoryRoutes(
       async () => {
         const query = typeof req.query.q === "string" ? req.query.q : undefined;
         ensureRouteCondition(query, "Missing query parameter: q");
-        const k = parseIntegerOrFallback(req.query.k, 5);
+        const k = parseIntegerOrFallback(req.query.k, 5, "k");
         return memoryManager.searchMemories({
           playerId: req.params.playerId,
           query,
@@ -350,7 +393,7 @@ function registerMemoryRoutes(
 
 function registerAutonomyRoutes(
   router: Router,
-  game: GameLoop,
+  admin: DebugGameAdmin,
   autonomyManager: NpcAutonomyManager,
 ): void {
   router.get("/autonomy/state", (_req, res) => {
@@ -371,19 +414,24 @@ function registerAutonomyRoutes(
   });
 
   router.post("/autonomy/:npcId/needs", (req, res) => {
-    const state = autonomyManager.getState(req.params.npcId);
-    const player = game.getPlayer(req.params.npcId);
-    const { health, food, water, social } = req.body ?? {};
-    if (health !== undefined && player) {
-      const maxHp = player.maxHp ?? 100;
-      player.hp = Math.max(0, Math.min(maxHp, (health / 100) * maxHp));
-    }
-    if (food !== undefined) state.needs.food = food;
-    if (water !== undefined) state.needs.water = water;
-    if (social !== undefined) state.needs.social = social;
-    res.json(
-      autonomyManager.getDebugState(req.params.npcId)?.needs ?? state.needs,
-    );
+    handleRoute(res, () => {
+      const { health, food, water, social } = req.body ?? {};
+      const debugState = admin.setNpcNeeds(req.params.npcId, {
+        health:
+          health === undefined
+            ? undefined
+            : parseBoundedPercent(health, "health"),
+        food:
+          food === undefined ? undefined : parseBoundedPercent(food, "food"),
+        water:
+          water === undefined ? undefined : parseBoundedPercent(water, "water"),
+        social:
+          social === undefined
+            ? undefined
+            : parseBoundedPercent(social, "social"),
+      });
+      return debugState.needs;
+    });
   });
 
   router.get("/entities", (_req, res) => {
@@ -438,36 +486,53 @@ function registerScreenshotRoutes(
     handleRoute(
       res,
       async () => {
-        const png = await wsServer.requestScreenshot();
+        const clientId =
+          typeof req.body?.clientId === "string"
+            ? req.body.clientId
+            : undefined;
+        const capture = await wsServer.requestScreenshot({
+          clientId,
+          timeoutMs:
+            req.body?.timeoutMs === undefined
+              ? undefined
+              : parsePositiveInteger(req.body.timeoutMs, "timeoutMs"),
+        });
         ensureRouteCondition(
-          png,
-          "No connected client or capture timed out",
+          capture,
+          "No connected gameplay client or capture timed out",
           503,
         );
 
-        const tmpDir = process.env.TMPDIR || "/tmp";
-        const outPath = join(tmpDir, "claude", "qa-screenshot.png");
-        try {
-          const base64 = png.replace(/^data:image\/png;base64,/, "");
-          writeFileSync(outPath, Buffer.from(base64, "base64"));
-        } catch {
-          // ignore write errors — the API response is the primary output
-        }
-        return { ok: true, savedTo: outPath };
+        const outDir = join(process.env.TMPDIR || "/tmp", "ai-town-debug");
+        mkdirSync(outDir, { recursive: true });
+        const outPath = join(
+          outDir,
+          `screenshot-${capture.clientId}-${Date.now()}.png`,
+        );
+        const base64 = capture.png.replace(/^data:image\/png;base64,/, "");
+        writeFileSync(outPath, Buffer.from(base64, "base64"));
+        return {
+          ok: true,
+          clientId: capture.clientId,
+          capturedAt: capture.capturedAt,
+          savedTo: outPath,
+        };
       },
       500,
     );
   });
 
-  router.get("/screenshot", (_req, res) => {
-    const png = wsServer.getLatestScreenshot();
-    if (!png) {
+  router.get("/screenshot", (req, res) => {
+    const clientId =
+      typeof req.query.clientId === "string" ? req.query.clientId : undefined;
+    const capture = wsServer.getLatestScreenshot(clientId);
+    if (!capture) {
       res.status(404).json({
         error: "No screenshot available. POST /capture-screenshot first.",
       });
       return;
     }
-    const base64 = png.replace(/^data:image\/png;base64,/, "");
+    const base64 = capture.png.replace(/^data:image\/png;base64,/, "");
     res.type("image/png").send(Buffer.from(base64, "base64"));
   });
 }
@@ -499,12 +564,85 @@ function ensureRouteCondition(
   }
 }
 
-function parseOptionalInteger(value: unknown): number | undefined {
-  return typeof value === "string" ? Number.parseInt(value, 10) : undefined;
+function isFiniteLikeNumber(value: unknown): boolean {
+  return (
+    (typeof value === "number" && Number.isFinite(value)) ||
+    (typeof value === "string" && value.trim().length > 0)
+  );
 }
 
-function parseIntegerOrFallback(value: unknown, fallback: number): number {
-  return typeof value === "string" ? Number.parseInt(value, 10) : fallback;
+function parseFiniteNumber(value: unknown, name: string): number {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value)
+        : Number.NaN;
+  if (!Number.isFinite(parsed)) {
+    throw new DebugRouteError(400, `Invalid ${name}: expected number`);
+  }
+  return parsed;
+}
+
+function parseOptionalInteger(
+  value: unknown,
+  name: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return parseRequiredInteger(value, name);
+}
+
+function parseIntegerOrFallback(
+  value: unknown,
+  fallback: number,
+  name: string,
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  return parseRequiredInteger(value, name);
+}
+
+function parseRequiredInteger(value: unknown, name: string): number {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^-?\d+$/.test(value)) {
+    return Number.parseInt(value, 10);
+  }
+  throw new DebugRouteError(400, `Invalid ${name}: expected integer`);
+}
+
+function parsePositiveInteger(value: unknown, name: string): number {
+  const parsed = parseRequiredInteger(value, name);
+  if (parsed <= 0) {
+    throw new DebugRouteError(
+      400,
+      `Invalid ${name}: expected positive integer`,
+    );
+  }
+  return parsed;
+}
+
+function parsePositiveNumber(value: unknown, name: string): number {
+  const parsed = parseFiniteNumber(value, name);
+  if (parsed <= 0) {
+    throw new DebugRouteError(400, `Invalid ${name}: expected positive number`);
+  }
+  return parsed;
+}
+
+function parseBoundedPercent(value: unknown, name: string): number {
+  const parsed = parseFiniteNumber(value, name);
+  if (parsed < 0 || parsed > 100) {
+    throw new DebugRouteError(
+      400,
+      `Invalid ${name}: expected value between 0 and 100`,
+    );
+  }
+  return parsed;
 }
 
 function parseCsvQuery(value: unknown): string[] | undefined {

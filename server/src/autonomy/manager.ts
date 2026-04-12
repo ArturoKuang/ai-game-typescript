@@ -53,6 +53,7 @@ import type {
   NeedType,
   NpcAutonomyDebugDeath,
   NpcAutonomyDebugPlan,
+  NpcAutonomyDebugPlanHistoryEntry,
   NpcAutonomyDebugState,
   NpcAutonomyState,
   NpcNeeds,
@@ -93,6 +94,7 @@ const PLANNING_MEMORY_LIMIT = 5;
 const GOAL_REMEMBERED_TARGET_LIMIT = 5;
 /** Bounded recent action history used by the planner as working memory. */
 const ACTION_HISTORY_LIMIT = 20;
+const PLAN_HISTORY_LIMIT = 30;
 const REMEMBERED_TARGET_LIMIT = 40;
 const REMEMBERED_TARGET_TTL = 2000;
 const OBSERVATION_RADIUS = 6;
@@ -290,6 +292,7 @@ export class NpcAutonomyManager {
         lastGoalSelectionTick: 0,
         consecutivePlanFailures: 0,
         goalSelectionStartedAtTick: null,
+        planHistory: [],
       };
       this.states.set(npcId, state);
     }
@@ -339,6 +342,48 @@ export class NpcAutonomyManager {
       };
     }
     return result;
+  }
+
+  setDebugNeeds(
+    npcId: string,
+    overrides: Partial<SurvivalSnapshot>,
+  ): NpcAutonomyDebugState {
+    const player = this.game.getPlayer(npcId);
+    if (!player?.isNpc) {
+      throw new Error(`NPC ${npcId} not found`);
+    }
+
+    const state = this.getState(npcId);
+    if (typeof overrides.health === "number") {
+      const maxHp = player.maxHp ?? DEFAULT_PLAYER_MAX_HP;
+      const clampedHealth = Math.max(0, Math.min(100, overrides.health));
+      player.hp = (clampedHealth / 100) * maxHp;
+    }
+    if (typeof overrides.food === "number") {
+      state.needs.food = Math.max(0, Math.min(100, overrides.food));
+    }
+    if (typeof overrides.water === "number") {
+      state.needs.water = Math.max(0, Math.min(100, overrides.water));
+    }
+    if (typeof overrides.social === "number") {
+      state.needs.social = Math.max(0, Math.min(100, overrides.social));
+    }
+
+    if (
+      this.maybeKillForDepletedSurvival(
+        npcId,
+        this.buildNpcSurvivalSnapshot(npcId, state, player),
+      )
+    ) {
+      const deadState = this.getDebugState(npcId);
+      if (!deadState) {
+        throw new Error(`Failed to capture debug state for ${npcId}`);
+      }
+      return deadState;
+    }
+
+    this.flushNpcOutputs(npcId, state, player, true);
+    return this.buildDebugState(npcId, state);
   }
 
   /** Get the entity manager (for debug API). */
@@ -1094,6 +1139,7 @@ export class NpcAutonomyManager {
       consecutivePlanFailures: state.consecutivePlanFailures,
       goalSelectionInFlight: this.goalSelectionInFlight.has(npcId),
       goalSelectionStartedAtTick: state.goalSelectionStartedAtTick,
+      planHistory: this.buildDebugPlanHistory(state),
     };
   }
 
@@ -1973,20 +2019,147 @@ export class NpcAutonomyManager {
       plan?: NpcAutonomyDebugPlan;
     },
   ): void {
+    const message = this.describeNpcOutcome(
+      npcId,
+      params.verb,
+      this.formatGoal(params.goalId),
+      params,
+    );
+    this.recordPlanHistoryEvent(npcId, params, message);
     this.emitDebugEvent(
       this.createNpcDebugEvent(npcId, {
         type: params.type,
         severity: params.severity,
         title: params.title,
-        message: this.describeNpcOutcome(
-          npcId,
-          params.verb,
-          this.formatGoal(params.goalId),
-          params,
-        ),
+        message,
         plan: params.plan,
       }),
     );
+  }
+
+  private recordPlanHistoryEvent(
+    npcId: string,
+    params: {
+      type: DebugFeedEventPayload["type"];
+      severity: DebugFeedEventPayload["severity"];
+      goalId: string;
+      detail?: string;
+      plan?: NpcAutonomyDebugPlan;
+    },
+    message: string,
+  ): void {
+    const state = this.states.get(npcId);
+    if (!state || !params.plan) {
+      return;
+    }
+
+    if (params.type === "plan_started") {
+      this.closeRunningPlanHistoryEntry(state, {
+        endedTick: this.game.currentTick,
+        outcome: "interrupted",
+        message: `${this.formatGoal(params.goalId)} was replaced by a new plan.`,
+      });
+      this.pushPlanHistoryEntry(state, {
+        goalId: params.plan.goalId,
+        source: params.plan.source,
+        startedTick: this.game.currentTick,
+        endedTick: null,
+        outcome: "running",
+        message,
+        reasoning: params.plan.reasoning,
+        steps: this.clonePlanHistorySteps(params.plan),
+      });
+      return;
+    }
+
+    if (params.type !== "plan_cleared" && params.type !== "plan_failed") {
+      return;
+    }
+
+    this.closeRunningPlanHistoryEntry(state, {
+      endedTick: this.game.currentTick,
+      outcome:
+        params.type === "plan_failed"
+          ? "failed"
+          : params.severity === "info"
+            ? "completed"
+            : "interrupted",
+      message,
+      failReason: params.detail,
+      plan: params.plan,
+    });
+  }
+
+  private closeRunningPlanHistoryEntry(
+    state: NpcAutonomyState,
+    params: {
+      endedTick: number;
+      outcome: NpcAutonomyDebugPlanHistoryEntry["outcome"];
+      message: string;
+      failReason?: string;
+      plan?: NpcAutonomyDebugPlan;
+    },
+  ): void {
+    const running = [...state.planHistory]
+      .reverse()
+      .find((entry) => entry.outcome === "running");
+
+    if (running) {
+      running.endedTick = params.endedTick;
+      running.outcome = params.outcome;
+      running.message = params.message;
+      running.failReason = params.failReason;
+      if (params.plan) {
+        running.goalId = params.plan.goalId;
+        running.source = params.plan.source;
+        running.reasoning = params.plan.reasoning;
+        running.steps = this.clonePlanHistorySteps(params.plan);
+      }
+      return;
+    }
+
+    if (!params.plan) {
+      return;
+    }
+
+    this.pushPlanHistoryEntry(state, {
+      goalId: params.plan.goalId,
+      source: params.plan.source,
+      startedTick: params.endedTick,
+      endedTick: params.endedTick,
+      outcome: params.outcome,
+      failReason: params.failReason,
+      message: params.message,
+      reasoning: params.plan.reasoning,
+      steps: this.clonePlanHistorySteps(params.plan),
+    });
+  }
+
+  private pushPlanHistoryEntry(
+    state: NpcAutonomyState,
+    entry: NpcAutonomyDebugPlanHistoryEntry,
+  ): void {
+    state.planHistory.push(entry);
+    if (state.planHistory.length > PLAN_HISTORY_LIMIT) {
+      state.planHistory.splice(
+        0,
+        state.planHistory.length - PLAN_HISTORY_LIMIT,
+      );
+    }
+  }
+
+  private clonePlanHistorySteps(
+    plan: Pick<NpcAutonomyDebugPlan, "steps">,
+  ): NpcAutonomyDebugPlanHistoryEntry["steps"] {
+    return plan.steps.map((step) => ({
+      index: step.index,
+      actionId: step.actionId,
+      actionLabel: step.actionLabel,
+      targetPosition: step.targetPosition
+        ? { ...step.targetPosition }
+        : undefined,
+      isCurrent: step.isCurrent,
+    }));
   }
 
   private emitNpcActionEvent(
@@ -2117,6 +2290,20 @@ export class NpcAutonomyManager {
     };
   }
 
+  private buildDebugPlanHistory(
+    state: NpcAutonomyState,
+  ): NpcAutonomyDebugState["planHistory"] {
+    return state.planHistory.map((entry) => ({
+      ...entry,
+      steps: entry.steps.map((step) => ({
+        ...step,
+        targetPosition: step.targetPosition
+          ? { ...step.targetPosition }
+          : undefined,
+      })),
+    }));
+  }
+
   private recordDeadNpcState(
     player: {
       id: string;
@@ -2145,6 +2332,7 @@ export class NpcAutonomyManager {
       consecutivePlanFailures: state.consecutivePlanFailures,
       goalSelectionInFlight: false,
       goalSelectionStartedAtTick: null,
+      planHistory: this.buildDebugPlanHistory(state),
     };
 
     this.deadDebugStates.set(player.id, deadState);

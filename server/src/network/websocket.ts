@@ -17,7 +17,13 @@ import type { EntityManager } from "../autonomy/entityManager.js";
 import type { NpcAutonomyManager } from "../autonomy/manager.js";
 import type { NpcAutonomyDebugState } from "../autonomy/types.js";
 import type { BearManager } from "../bears/bearManager.js";
+import { roomFromLegacyConversation } from "../conversations/domain/compat.js";
 import type {
+  ConversationRoom,
+  RoomMessage,
+} from "../conversations/domain/types.js";
+import type {
+  DebugClientSummary,
   DebugDashboardBootstrap,
   DebugFeedEvent,
   DebugFeedEventPayload,
@@ -30,7 +36,12 @@ import {
 } from "../engine/conversation.js";
 import type { GameLoop } from "../engine/gameLoop.js";
 import type { Command, GameEvent, Player } from "../engine/types.js";
-import { serializeWorldEntity } from "../stateSnapshots.js";
+import type { NpcProviderDiagnosticsSource } from "../npc/resilientProvider.js";
+import {
+  serializeDebugWorldEntities,
+  serializeWorldEntity,
+  snapshotConversationRooms,
+} from "../stateSnapshots.js";
 import type {
   ClientMessage,
   FullGameState,
@@ -42,16 +53,36 @@ import { createJoinPreviewPlayer, toPublicPlayer } from "./publicPlayer.js";
 /** Per-connection metadata tracking which player (if any) this socket controls.
  *  A client starts with playerId=null and gets assigned one on "join". */
 interface ClientInfo {
+  clientId: string;
   /** Player ID this socket controls, or null before the "join" message. */
   playerId: string | null;
   /** True when this connection requested the debug dashboard stream. */
   debugSubscribed: boolean;
+  connectedAt: string;
   ws: WebSocket;
+}
+
+interface ScreenshotCapture {
+  clientId: string;
+  capturedAt: string;
+  png: string;
+}
+
+interface ScreenshotWaiter {
+  targetClientId: string | null;
+  resolve: (capture: ScreenshotCapture | null) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+interface GameWebSocketServerOptions {
+  debugToken?: string | null;
+  providerDiagnostics?: NpcProviderDiagnosticsSource;
 }
 
 /** Monotonic counter for assigning human player IDs (human_1, human_2, …).
  *  Never resets — ensures unique IDs even across reconnects within the same process. */
 let humanCounter = 0;
+let debugClientCounter = 0;
 const DEBUG_EVENT_BUFFER_MAX = 300;
 
 export class GameWebSocketServer {
@@ -69,23 +100,30 @@ export class GameWebSocketServer {
   /** Optional bear manager for routing combat commands. */
   private bearManager?: BearManager;
   /** Latest screenshot captured from a connected client (base64 PNG data URL). */
-  private latestScreenshot: string | null = null;
+  private latestScreenshot: ScreenshotCapture | null = null;
   /** Resolvers waiting for a screenshot to arrive. */
-  private screenshotWaiters: Array<(png: string) => void> = [];
+  private screenshotWaiters: ScreenshotWaiter[] = [];
   /** Recent debug feed events used to bootstrap newly connected dashboards. */
   private debugEvents: DebugFeedEvent[] = [];
   /** Monotonic sequence for debug feed item IDs. */
   private nextDebugEventId = 1;
+  /** Optional token required for debug subscriptions. */
+  private readonly debugToken: string | null;
+  /** Optional provider diagnostics surfaced in debug bootstraps. */
+  private readonly providerDiagnostics?: NpcProviderDiagnosticsSource;
 
   constructor(
     server: Server,
     game: GameLoop,
     entityManager?: EntityManager,
     autonomyManager?: NpcAutonomyManager,
+    options?: GameWebSocketServerOptions,
   ) {
     this.game = game;
     this.entityManager = entityManager;
     this.autonomyManager = autonomyManager;
+    this.debugToken = options?.debugToken?.trim() || null;
+    this.providerDiagnostics = options?.providerDiagnostics;
     this.wss = new WebSocketServer({ server });
 
     this.wss.on("connection", (ws) => this.onConnection(ws));
@@ -210,8 +248,15 @@ export class GameWebSocketServer {
   }
 
   private onConnection(ws: WebSocket): void {
-    const info: ClientInfo = { playerId: null, debugSubscribed: false, ws };
+    const info: ClientInfo = {
+      clientId: `client_${++debugClientCounter}`,
+      playerId: null,
+      debugSubscribed: false,
+      connectedAt: new Date().toISOString(),
+      ws,
+    };
     this.clients.set(ws, info);
+    this.broadcastDebugBootstrap();
 
     this.send(ws, { type: "state", data: this.buildFullState(info.playerId) });
 
@@ -227,13 +272,14 @@ export class GameWebSocketServer {
     ws.on("close", () => {
       this.handleConnectionClose(info);
       this.clients.delete(ws);
+      this.broadcastDebugBootstrap();
     });
   }
 
   private onMessage(ws: WebSocket, info: ClientInfo, msg: ClientMessage): void {
     switch (msg.type) {
       case "subscribe_debug": {
-        this.handleDebugSubscription(ws, info);
+        this.handleDebugSubscription(ws, info, msg.data?.token);
         return;
       }
 
@@ -309,7 +355,9 @@ export class GameWebSocketServer {
       }
 
       case "attack": {
-        this.handleAttackMessage(info.playerId, msg.data.targetId);
+        if (typeof msg.data.targetId === "string") {
+          this.handleAttackMessage(info.playerId, msg.data.targetId);
+        }
         return;
       }
 
@@ -334,7 +382,7 @@ export class GameWebSocketServer {
 
       case "screenshot_data": {
         if (msg.data?.png) {
-          this.handleScreenshotData(msg.data.png);
+          this.handleScreenshotData(ws, msg.data.png);
         }
         return;
       }
@@ -349,6 +397,9 @@ export class GameWebSocketServer {
     if (!event.playerId) {
       return;
     }
+    const player =
+      (event.data?.player as Player | undefined) ??
+      this.game.getPlayer(event.playerId);
     const reason = event.data?.reason === "death" ? "death" : undefined;
     const cause =
       typeof event.data?.cause === "string" ? event.data.cause : undefined;
@@ -368,6 +419,9 @@ export class GameWebSocketServer {
         depletedNeed,
       },
     });
+    if (player?.isNpc && reason !== "death") {
+      this.broadcastDebugAutonomyRemoval(event.playerId);
+    }
   }
 
   private broadcastPlayerEventUpdate(event: GameEvent): void {
@@ -399,14 +453,41 @@ export class GameWebSocketServer {
     if (!conversation) {
       return;
     }
-    this.sendToPlayers(resolveConversationParticipantIds(event, conversation), {
+    const participantIds = resolveConversationParticipantIds(
+      event,
+      conversation,
+    );
+    const room = this.projectConversationRoom(conversation);
+    const roomMessage = this.projectRoomMessage(conversation, message);
+
+    this.sendToPlayers(participantIds, {
       type: "message",
       data: message,
     });
+    this.sendToPlayers(participantIds, {
+      type: "convo_room_update",
+      data: room,
+    });
+    if (roomMessage) {
+      this.sendToPlayers(participantIds, {
+        type: "room_message",
+        data: roomMessage,
+      });
+    }
     this.broadcastToDebugSubscribers({
       type: "debug_conversation_message",
       data: message,
     });
+    this.broadcastToDebugSubscribers({
+      type: "debug_conversation_room_upsert",
+      data: room,
+    });
+    if (roomMessage) {
+      this.broadcastToDebugSubscribers({
+        type: "debug_conversation_room_message",
+        data: roomMessage,
+      });
+    }
     this.publishDebugEventIfPresent(
       this.buildDebugEventFromGameEvent(event, conversation),
     );
@@ -462,13 +543,41 @@ export class GameWebSocketServer {
     );
   }
 
+  private projectConversationRoom(
+    conversation: Conversation,
+  ): ConversationRoom {
+    return roomFromLegacyConversation(conversation);
+  }
+
+  private projectRoomMessage(
+    conversation: Conversation,
+    message: Message,
+  ): RoomMessage | null {
+    const room = this.projectConversationRoom(conversation);
+    return (
+      room.transcript.messages.find(
+        (roomMessage) =>
+          roomMessage.id === message.id &&
+          roomMessage.playerId === message.playerId,
+      ) ?? null
+    );
+  }
+
   private sendConversationUpdate(
     event: GameEvent,
     conversation: Conversation,
   ): void {
-    this.sendToPlayers(resolveConversationParticipantIds(event, conversation), {
+    const participantIds = resolveConversationParticipantIds(
+      event,
+      conversation,
+    );
+    this.sendToPlayers(participantIds, {
       type: "convo_update",
       data: conversation,
+    });
+    this.sendToPlayers(participantIds, {
+      type: "convo_room_update",
+      data: this.projectConversationRoom(conversation),
     });
   }
 
@@ -479,6 +588,10 @@ export class GameWebSocketServer {
     this.broadcastToDebugSubscribers({
       type: "debug_conversation_upsert",
       data: conversation,
+    });
+    this.broadcastToDebugSubscribers({
+      type: "debug_conversation_room_upsert",
+      data: this.projectConversationRoom(conversation),
     });
     this.publishDebugEventIfPresent(
       this.buildDebugEventFromGameEvent(event, conversation),
@@ -495,6 +608,14 @@ export class GameWebSocketServer {
   }
 
   private handleConnectionClose(info: ClientInfo): void {
+    this.screenshotWaiters = this.screenshotWaiters.filter((waiter) => {
+      if (waiter.targetClientId === info.clientId) {
+        clearTimeout(waiter.timer);
+        waiter.resolve(null);
+        return false;
+      }
+      return true;
+    });
     const { playerId } = info;
     if (!playerId) {
       return;
@@ -513,9 +634,18 @@ export class GameWebSocketServer {
     });
   }
 
-  private handleDebugSubscription(ws: WebSocket, info: ClientInfo): void {
+  private handleDebugSubscription(
+    ws: WebSocket,
+    info: ClientInfo,
+    token?: string,
+  ): void {
+    if (this.debugToken && token !== this.debugToken) {
+      this.sendError(ws, "Debug subscription denied");
+      return;
+    }
     info.debugSubscribed = true;
     this.sendDebugBootstrap(ws);
+    this.broadcastDebugBootstrap();
   }
 
   private handleJoinMessage(
@@ -557,6 +687,7 @@ export class GameWebSocketServer {
       }),
     });
     this.sendInitialInventory(ws, playerId);
+    this.broadcastDebugBootstrap();
   }
 
   private pickHumanSpawnPoint(): { x: number; y: number } {
@@ -693,7 +824,13 @@ export class GameWebSocketServer {
     });
   }
 
-  private handleAttackMessage(playerId: string | null, targetId: string): void {
+  private handleAttackMessage(
+    playerId: string | null,
+    targetId: string | undefined,
+  ): void {
+    if (!targetId) {
+      return;
+    }
     this.enqueueIfPlayerJoined(playerId, (joinedPlayerId) => ({
       type: "attack",
       playerId: joinedPlayerId,
@@ -744,6 +881,11 @@ export class GameWebSocketServer {
               conversation.player2Id === playerId,
           )
       : [];
+    const conversationRooms = snapshotConversationRooms(
+      conversations.map((conversation) =>
+        roomFromLegacyConversation(conversation),
+      ),
+    );
 
     const entities = this.entityManager
       ? this.entityManager
@@ -756,6 +898,7 @@ export class GameWebSocketServer {
       world: { width: this.game.world.width, height: this.game.world.height },
       players: this.game.getPlayers().map((player) => toPublicPlayer(player)),
       conversations,
+      conversationRooms,
       activities: this.game.world.getActivities(),
       entities,
     };
@@ -767,18 +910,44 @@ export class GameWebSocketServer {
         ([npcId, state]) => [npcId, state],
       ),
     ) as Record<string, NpcAutonomyDebugState>;
+    const conversations = this.game.conversations.getAllConversations();
+    const conversationRooms = snapshotConversationRooms(
+      conversations.map((conversation) =>
+        roomFromLegacyConversation(conversation),
+      ),
+    );
 
     return {
       tick: this.game.currentTick,
       players: this.game.getPlayers().map((player) => toPublicPlayer(player)),
-      conversations: this.game.conversations.getAllConversations(),
+      conversations,
+      conversationRooms,
       autonomyStates,
       recentEvents: [...this.debugEvents],
       actionDefinitions: this.autonomyManager?.getActionDefinitions() ?? {},
+      system: {
+        mode: this.game.mode,
+        tickRate: this.game.tickRate,
+        world: { width: this.game.world.width, height: this.game.world.height },
+        entities: serializeDebugWorldEntities(
+          this.entityManager?.getAll() ?? [],
+        ),
+        connectedClients: this.getDebugClients(),
+        providerDiagnostics: this.providerDiagnostics?.getDiagnostics(),
+        lastScreenshot: this.latestScreenshot
+          ? {
+              clientId: this.latestScreenshot.clientId,
+              capturedAt: this.latestScreenshot.capturedAt,
+            }
+          : undefined,
+      },
     };
   }
 
   private sendDebugBootstrap(ws: WebSocket): void {
+    if (!this.hasLoadedWorld()) {
+      return;
+    }
     this.send(ws, {
       type: "debug_bootstrap",
       data: this.buildDebugBootstrap(),
@@ -849,6 +1018,16 @@ export class GameWebSocketServer {
           message: `${participantLabel} started a conversation.`,
         };
       case "convo_accepted":
+        return {
+          tick: event.tick,
+          type: "conversation_walking",
+          severity: "info",
+          subjectType: "conversation",
+          subjectId: String(conversation.id),
+          relatedConversationId: conversation.id,
+          title: "Walking to meet",
+          message: `${participantLabel} are walking to meet.`,
+        };
       case "convo_active":
         return {
           tick: event.tick,
@@ -861,7 +1040,20 @@ export class GameWebSocketServer {
           message: `${participantLabel} are now talking.`,
         };
       case "convo_declined":
+        return {
+          tick: event.tick,
+          type: "conversation_ended",
+          severity: "info",
+          subjectType: "conversation",
+          subjectId: String(conversation.id),
+          relatedConversationId: conversation.id,
+          title: "Conversation declined",
+          message: `${participantLabel} declined the conversation.`,
+        };
       case "convo_ended": {
+        if (conversation.endedReason === "declined") {
+          return null;
+        }
         const reason =
           typeof conversation.endedReason === "string"
             ? ` (${conversation.endedReason.replaceAll("_", " ")})`
@@ -987,10 +1179,16 @@ export class GameWebSocketServer {
     };
   }
 
-  private send(ws: WebSocket, message: ServerMessage): void {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(message));
+  private isSocketOpen(ws: WebSocket): boolean {
+    return ws.readyState === WebSocket.OPEN;
+  }
+
+  private send(ws: WebSocket, message: ServerMessage): boolean {
+    if (!this.isSocketOpen(ws)) {
+      return false;
     }
+    ws.send(JSON.stringify(message));
+    return true;
   }
 
   private sendError(ws: WebSocket, message: string): void {
@@ -1016,44 +1214,147 @@ export class GameWebSocketServer {
     return this.clients.size;
   }
 
-  /** Request a screenshot from the first connected client. Returns the base64 PNG data URL. */
-  requestScreenshot(timeoutMs = 5000): Promise<string | null> {
-    // Find a connected client to ask
-    let sent = false;
-    for (const [ws] of this.clients) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "capture_screenshot" }));
-        sent = true;
-        break;
+  getDebugClients(): DebugClientSummary[] {
+    return [...this.clients.values()].map((info) => ({
+      clientId: info.clientId,
+      playerId: info.playerId,
+      label:
+        info.playerId !== null
+          ? this.getPlayerLabel(info.playerId)
+          : info.debugSubscribed
+            ? "Debug dashboard"
+            : "Spectator client",
+      role:
+        info.playerId !== null
+          ? "player"
+          : info.debugSubscribed
+            ? "dashboard"
+            : "spectator",
+      connectedAt: info.connectedAt,
+      debugSubscribed: info.debugSubscribed,
+      canCaptureScreenshot: this.isCaptureCapable(info),
+    }));
+  }
+
+  broadcastDebugBootstrap(): void {
+    if (!this.hasLoadedWorld()) {
+      return;
+    }
+    this.broadcastToDebugSubscribers({
+      type: "debug_bootstrap",
+      data: this.buildDebugBootstrap(),
+    });
+  }
+
+  resetDebugState(): void {
+    this.debugEvents = [];
+    this.nextDebugEventId = 1;
+  }
+
+  broadcastDebugAutonomyRemoval(npcId: string): void {
+    this.broadcastToDebugSubscribers({
+      type: "debug_autonomy_remove",
+      data: { npcId },
+    });
+  }
+
+  private isCaptureCapable(info: ClientInfo): boolean {
+    return info.playerId !== null && this.isSocketOpen(info.ws);
+  }
+
+  private hasLoadedWorld(): boolean {
+    try {
+      void this.game.world;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private getCaptureClient(targetClientId?: string): ClientInfo | null {
+    if (targetClientId) {
+      for (const info of this.clients.values()) {
+        if (info.clientId === targetClientId && this.isCaptureCapable(info)) {
+          return info;
+        }
+      }
+      return null;
+    }
+
+    for (const info of this.clients.values()) {
+      if (this.isCaptureCapable(info)) {
+        return info;
       }
     }
-    if (!sent) return Promise.resolve(null);
+    return null;
+  }
+
+  /** Request a screenshot from a connected gameplay client. */
+  requestScreenshot(options?: {
+    clientId?: string;
+    timeoutMs?: number;
+  }): Promise<ScreenshotCapture | null> {
+    const client = this.getCaptureClient(options?.clientId);
+    if (!client || !this.send(client.ws, { type: "capture_screenshot" })) {
+      return Promise.resolve(null);
+    }
 
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
-        const idx = this.screenshotWaiters.indexOf(
-          resolve as (png: string) => void,
+        this.screenshotWaiters = this.screenshotWaiters.filter(
+          (waiter) => waiter.resolve !== waiterResolve,
         );
-        if (idx >= 0) this.screenshotWaiters.splice(idx, 1);
         resolve(null);
-      }, timeoutMs);
+      }, options?.timeoutMs ?? 5000);
 
-      this.screenshotWaiters.push((png: string) => {
+      const waiterResolve = (capture: ScreenshotCapture | null) => {
         clearTimeout(timer);
-        resolve(png);
+        resolve(capture);
+      };
+
+      this.screenshotWaiters.push({
+        targetClientId: client.clientId,
+        resolve: waiterResolve,
+        timer,
       });
     });
   }
 
   /** Get the latest screenshot without requesting a new one. */
-  getLatestScreenshot(): string | null {
+  getLatestScreenshot(clientId?: string): ScreenshotCapture | null {
+    if (!this.latestScreenshot) {
+      return null;
+    }
+    if (clientId && this.latestScreenshot.clientId !== clientId) {
+      return null;
+    }
     return this.latestScreenshot;
   }
 
   /** Called when a client sends screenshot data. */
-  private handleScreenshotData(png: string): void {
-    this.latestScreenshot = png;
-    const waiter = this.screenshotWaiters.shift();
-    if (waiter) waiter(png);
+  private handleScreenshotData(ws: WebSocket, png: string): void {
+    const info = this.clients.get(ws);
+    if (!info) {
+      return;
+    }
+    const capture = {
+      clientId: info.clientId,
+      capturedAt: new Date().toISOString(),
+      png,
+    } satisfies ScreenshotCapture;
+    this.latestScreenshot = capture;
+    this.broadcastDebugBootstrap();
+    const waiter = this.screenshotWaiters.find(
+      (item) =>
+        item.targetClientId === null || item.targetClientId === info.clientId,
+    );
+    if (!waiter) {
+      return;
+    }
+    this.screenshotWaiters = this.screenshotWaiters.filter(
+      (item) => item !== waiter,
+    );
+    clearTimeout(waiter.timer);
+    waiter.resolve(capture);
   }
 }

@@ -226,7 +226,15 @@ export class GameLoop {
 
     this.players_.delete(id);
     this.heldKeys_.delete(id);
-    this.emit({ tick: this.tick_, type: "despawn", playerId: id, data });
+    this.emit({
+      tick: this.tick_,
+      type: "despawn",
+      playerId: id,
+      data: {
+        ...data,
+        player: { ...player },
+      },
+    });
   }
 
   getPlayer(id: string): Player | undefined {
@@ -1236,6 +1244,14 @@ export class GameLoop {
 
   get tickRate(): number {
     return this.tickRate_;
+  }
+
+  set tickRate(rate: number) {
+    this.tickRate_ = rate;
+    if (this.mode_ === "realtime") {
+      this.stop();
+      this.start();
+    }
   }
 
   get rng(): SeededRNG {

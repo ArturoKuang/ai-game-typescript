@@ -7,6 +7,10 @@
  */
 import type { NpcAutonomyDebugState } from "../autonomy/types.js";
 import type {
+  ConversationRoom,
+  RoomMessage,
+} from "../conversations/domain/types.js";
+import type {
   DebugDashboardBootstrap,
   DebugFeedEvent,
 } from "../debug/streamTypes.js";
@@ -58,17 +62,32 @@ export type ServerMessage =
   | { type: "player_joined"; data: PublicPlayer }
   | { type: "player_left"; data: PlayerLeftData }
   | { type: "convo_update"; data: Conversation }
+  | { type: "convo_room_update"; data: ConversationRoom }
   | { type: "message"; data: Message }
+  | { type: "room_message"; data: RoomMessage }
   | { type: "entity_update"; data: WorldEntityData }
   | { type: "entity_removed"; data: { entityId: string } }
   | { type: "npc_needs"; data: NpcNeedsData }
   | { type: "player_survival"; data: PlayerSurvivalData }
-  | { type: "combat_event"; data: { eventType: string; [key: string]: unknown } }
-  | { type: "inventory_update"; data: { playerId: string; items: Record<string, number>; capacity: number } }
+  | {
+      type: "combat_event";
+      data: { eventType: string; playerId?: string; [key: string]: unknown };
+    }
+  | {
+      type: "inventory_update";
+      data: {
+        playerId: string;
+        items: Record<string, number>;
+        capacity: number;
+      };
+    }
   | { type: "debug_bootstrap"; data: DebugDashboardBootstrap }
   | { type: "debug_conversation_upsert"; data: Conversation }
   | { type: "debug_conversation_message"; data: Message }
+  | { type: "debug_conversation_room_upsert"; data: ConversationRoom }
+  | { type: "debug_conversation_room_message"; data: RoomMessage }
   | { type: "debug_autonomy_upsert"; data: NpcAutonomyDebugState }
+  | { type: "debug_autonomy_remove"; data: { npcId: string } }
   | { type: "debug_event"; data: DebugFeedEvent }
   | { type: "error"; data: { message: string } }
   | { type: "capture_screenshot" };
@@ -84,6 +103,7 @@ export interface FullGameState {
   world: { width: number; height: number };
   players: PublicPlayer[];
   conversations: Conversation[];
+  conversationRooms: ConversationRoom[];
   activities: Activity[];
   entities?: WorldEntityData[];
 }
@@ -94,7 +114,7 @@ export type MoveDirection = "up" | "down" | "left" | "right";
 
 export type ClientMessage =
   | { type: "join"; data: { name: string; description?: string } }
-  | { type: "subscribe_debug" }
+  | { type: "subscribe_debug"; data?: { token?: string } }
   | { type: "move"; data: { x: number; y: number } }
   | { type: "move_direction"; data: { direction: MoveDirection } }
   | { type: "input_start"; data: { direction: MoveDirection } }
@@ -104,7 +124,7 @@ export type ClientMessage =
   | { type: "accept_convo"; data: { convoId: number } }
   | { type: "decline_convo"; data: { convoId: number } }
   | { type: "end_convo" }
-  | { type: "attack"; data: { targetId: string } }
+  | { type: "attack"; data: { targetId?: string } }
   | { type: "pickup"; data: { entityId: string } }
   | { type: "pickup_nearby" }
   | { type: "eat"; data: { item: string } }
